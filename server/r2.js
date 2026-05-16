@@ -36,3 +36,12 @@ export const createGetUrl = async ({ key, expiresIn = 60 * 60 * 24 }) => getSign
   }),
   { expiresIn },
 )
+
+export const putObject = async ({ key, body, contentType = 'application/octet-stream' }) => getR2Client().send(
+  new PutObjectCommand({
+    Bucket: getEnv('R2_BUCKET'),
+    Key: key,
+    Body: body,
+    ContentType: contentType,
+  }),
+)

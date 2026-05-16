@@ -62,7 +62,7 @@ TTS_SHARE_TTL_DAYS=7
 
 可复制 `.env.example` 到 `.env.local` 用于 `npx vercel dev` 本地调试。
 
-Cloudflare R2 bucket 需要允许部署域名对预签名 URL 执行 `PUT` 上传音频/清单，手机播放时通过服务端换取短期 `GET` 预签名 URL。
+音频和清单会先上传到 Vercel API，再由服务端写入 R2，因此不需要为浏览器直传配置 R2 `PUT` CORS；手机播放时服务端会换取短期 `GET` 预签名 URL。
 
 ## Vercel 部署
 

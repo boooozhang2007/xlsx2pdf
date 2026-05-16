@@ -17,6 +17,7 @@ import { apiJson, fetchAudioBlob } from './api'
 import { clampInt } from './utils'
 import {
   DEFAULT_TTS_CONFIG,
+  blobToBase64,
   chunkWords,
   downloadNamedBlob,
   getSpeechSupport,
@@ -292,13 +293,15 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
       const tracks = []
       for (let index = 0; index < audioItems.length; index += 1) {
         const item = audioItems[index]
-        setStatus(`正在上传第 ${index + 1} / ${audioItems.length} 段到 R2…`)
-        const uploadResponse = await fetch(start.audio[index].uploadUrl, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'audio/mpeg' },
-          body: item.blob,
+        setStatus(`正在通过服务端上传第 ${index + 1} / ${audioItems.length} 段到 R2…`)
+        await apiJson('/api/share/upload', {
+          method: 'POST',
+          body: JSON.stringify({
+            key: start.audio[index].key,
+            contentType: 'audio/mpeg',
+            base64: await blobToBase64(item.blob),
+          }),
         })
-        if (!uploadResponse.ok) throw new Error(`R2 音频上传失败：${uploadResponse.status}`)
         tracks.push({
           key: start.audio[index].key,
           label: item.label,
@@ -320,12 +323,14 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
         tracks,
       }
 
-      const manifestResponse = await fetch(start.manifest.uploadUrl, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json; charset=utf-8' },
-        body: JSON.stringify(manifest),
+      await apiJson('/api/share/upload', {
+        method: 'POST',
+        body: JSON.stringify({
+          key: start.manifest.key,
+          contentType: 'application/json; charset=utf-8',
+          text: JSON.stringify(manifest),
+        }),
       })
-      if (!manifestResponse.ok) throw new Error(`R2 清单上传失败：${manifestResponse.status}`)
 
       await apiJson('/api/share/finalize', { method: 'POST', body: JSON.stringify({ shareId: start.shareId }) })
 

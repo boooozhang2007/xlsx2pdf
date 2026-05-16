@@ -77,3 +77,14 @@ export const downloadNamedBlob = (blob, name) => {
   anchor.remove()
   URL.revokeObjectURL(url)
 }
+
+export const blobToBase64 = (blob) =>
+  new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      const result = String(reader.result || '')
+      resolve(result.includes(',') ? result.split(',').pop() : result)
+    }
+    reader.onerror = () => reject(reader.error)
+    reader.readAsDataURL(blob)
+  })

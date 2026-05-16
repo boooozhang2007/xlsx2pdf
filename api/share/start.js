@@ -1,6 +1,6 @@
 import crypto from 'node:crypto'
 import { createShareToken, readJsonBody, rejectMethod, requireSession, sendJson } from '../../server/auth.js'
-import { createPutUrl, getShareTtlMs } from '../../server/r2.js'
+import { getShareTtlMs } from '../../server/r2.js'
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return rejectMethod(res, 'POST')
@@ -17,7 +17,7 @@ export default async function handler(req, res) {
     const audio = []
     for (let index = 0; index < count; index += 1) {
       const key = `${prefix}/audio-${String(index + 1).padStart(3, '0')}.mp3`
-      audio.push({ key, uploadUrl: await createPutUrl({ key, contentType: 'audio/mpeg' }) })
+      audio.push({ key })
     }
 
     return sendJson(res, 200, {
@@ -25,10 +25,7 @@ export default async function handler(req, res) {
       shareId,
       expiresAt,
       token: createShareToken({ key: manifestKey, expiresAt }),
-      manifest: {
-        key: manifestKey,
-        uploadUrl: await createPutUrl({ key: manifestKey, contentType: 'application/json; charset=utf-8' }),
-      },
+      manifest: { key: manifestKey },
       audio,
     })
   } catch (error) {
