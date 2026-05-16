@@ -63,7 +63,7 @@ TTS_SHARE_TTL_DAYS=3650
 可复制 `.env.example` 到 `.env.local` 用于 `npx vercel dev` 本地调试。
 
 音频和清单会先上传到 Vercel API，再由服务端写入 R2，因此不需要为浏览器直传配置 R2 `PUT` CORS；手机播放时服务端会换取短期 `GET` 预签名 URL。
-R2 中每次二维码分享会保存为一个可浏览前缀，例如 `tts-shares/<shareId>/manifest.json` 和 `tts-shares/<shareId>/batch-001/word-0001-cheat.mp3`。
+R2 中每次二维码分享会保存为一个可浏览前缀，并按“批次号 + 首尾单词 + 词数”命名，例如 `tts-shares/<shareId>/manifest.json`、`tts-shares/<shareId>/001_cheat-to-energy_30w/001_cheat-to-energy_30w.mp3`；Edge-TTS 分段时会保存在同一批次文件夹下，如 `001_cheat.mp3`、`002_share.mp3`。
 播放页长期保存依赖两部分：`TTS_SHARE_TTL_DAYS` 控制只读 token 有效期（默认 3650 天），`/listen` 页面会把已打开链接保存到当前浏览器 localStorage，便于之后继续播放或下载。
 
 ## Vercel 部署

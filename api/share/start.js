@@ -9,8 +9,18 @@ const sanitizeName = (value, fallback) => {
     .replace(/['’]/g, '')
     .replace(/[^a-z0-9._-]+/g, '-')
     .replace(/^-+|-+$/g, '')
-    .slice(0, 60)
+    .slice(0, 24)
   return slug || fallback
+}
+
+const pad3 = (value) => String(Math.max(1, Number.parseInt(value, 10) || 1)).padStart(3, '0')
+
+const buildBatchLabel = ({ batchNo, firstWord, lastWord, wordCount }) => {
+  const first = sanitizeName(firstWord, 'word')
+  const last = sanitizeName(lastWord, first)
+  const count = `${Math.max(1, Number.parseInt(wordCount, 10) || 1)}w`
+  if (first === last) return `${pad3(batchNo)}_${first}_${count}`
+  return `${pad3(batchNo)}_${first}-to-${last}_${count}`
 }
 
 export default async function handler(req, res) {
@@ -31,12 +41,18 @@ export default async function handler(req, res) {
       const file = files[index] || {}
       const batchNo = Math.max(1, Number.parseInt(file.sourceIndex, 10) + 1 || index + 1)
       const segmentNo = Math.max(1, Number.parseInt(file.segmentIndex, 10) + 1 || 1)
-      const batchFolder = `batch-${String(batchNo).padStart(3, '0')}`
+      const batchLabel = buildBatchLabel({
+        batchNo,
+        firstWord: file.batchFirstWord || file.word,
+        lastWord: file.batchLastWord || file.word,
+        wordCount: file.batchWordCount || 1,
+      })
+      const folder = `${prefix}/${batchLabel}`
       const fileName = file.segmented
-        ? `word-${String(segmentNo).padStart(4, '0')}-${sanitizeName(file.word, 'word')}.mp3`
-        : `batch-${String(batchNo).padStart(3, '0')}.mp3`
-      const key = `${prefix}/${batchFolder}/${fileName}`
-      audio.push({ key, folder: `${prefix}/${batchFolder}`, fileName })
+        ? `${pad3(segmentNo)}_${sanitizeName(file.word, 'word')}.mp3`
+        : `${batchLabel}.mp3`
+      const key = `${folder}/${fileName}`
+      audio.push({ key, folder, fileName, batchLabel })
     }
 
     return sendJson(res, 200, {

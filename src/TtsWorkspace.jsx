@@ -51,6 +51,43 @@ const defaultVoices = {
 
 const getAudioEndpoint = (provider) => (provider === 'edge' ? '/api/tts/edge' : '/api/tts/azure')
 
+const pad3 = (value) => String(Math.max(1, Number.parseInt(value, 10) || 1)).padStart(3, '0')
+
+const sanitizeFilePart = (value, fallback = 'word') => {
+  const slug = String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/['’]/g, '')
+    .replace(/[^a-z0-9._-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 24)
+    .replace(/^-+|-+$/g, '')
+  return slug || fallback
+}
+
+const buildBatchMeta = (batch, index, offset = 0) => {
+  const firstWord = batch[0] || 'word'
+  const lastWord = batch[batch.length - 1] || firstWord
+  const wordCount = batch.length || 1
+  const firstSlug = sanitizeFilePart(firstWord)
+  const lastSlug = sanitizeFilePart(lastWord, firstSlug)
+  const batchNo = index + 1
+  const slug = firstSlug === lastSlug
+    ? `${pad3(batchNo)}_${firstSlug}_${wordCount}w`
+    : `${pad3(batchNo)}_${firstSlug}-to-${lastSlug}_${wordCount}w`
+  const rangeText = offset + 1 === offset + wordCount ? `第 ${offset + 1} 个` : `第 ${offset + 1}-${offset + wordCount} 个`
+
+  return {
+    batchNo,
+    firstWord,
+    lastWord,
+    wordCount,
+    fileStem: slug,
+    title: `B${pad3(batchNo)} · ${firstWord}${firstWord === lastWord ? '' : ` → ${lastWord}`}`,
+    subtitle: `${rangeText} · ${wordCount} 词`,
+  }
+}
+
 const SelectField = ({ label, value, onChange, children }) => (
   <label className="field">
     <span>{label}</span>
@@ -179,6 +216,7 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
   const [busy, setBusy] = useState(false)
   const [qrUrl, setQrUrl] = useState('')
   const [shareUrl, setShareUrl] = useState('')
+  const [shareSummary, setShareSummary] = useState(null)
   const [localSpeaking, setLocalSpeaking] = useState(false)
   const [localWord, setLocalWord] = useState('')
   const ttsFileRef = useRef(null)
@@ -186,6 +224,14 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
 
   const words = useMemo(() => uniqueKeepOrder(splitWords(wordText)), [wordText])
   const batches = useMemo(() => chunkWords(words, config.batchSize), [words, config.batchSize])
+  const batchMetas = useMemo(() => {
+    let offset = 0
+    return batches.map((batch, index) => {
+      const meta = buildBatchMeta(batch, index, offset)
+      offset += batch.length
+      return meta
+    })
+  }, [batches])
   const currentVoiceList = (voices[config.provider] || []).filter((voice) => voice.accent === config.accent)
   const currentVoice = config.provider === 'edge' ? config.edgeVoice : config.azureVoice
   const isEdge = isEdgeBrowser()
@@ -244,6 +290,7 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
     setAudioItems([])
     setShareUrl('')
     setQrUrl('')
+    setShareSummary(null)
     setStatus('已退出单词朗读板块。')
   }
 
@@ -278,14 +325,16 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
   })
 
   const generateEdgeSegmentedBatch = async (batch, index) => {
+    const meta = batchMetas[index] || buildBatchMeta(batch, index)
     const data = await apiJson('/api/tts/edge', {
       method: 'POST',
       body: JSON.stringify({ ...buildPayload(batch), segmented: true }),
     })
-    const segments = (data.segments || []).map((segment) => {
+    const segments = (data.segments || []).map((segment, segmentIndex) => {
       const blob = base64ToBlob(segment.audioBase64, segment.contentType || 'audio/mpeg')
       return {
         word: segment.text,
+        fileStem: `${pad3(segmentIndex + 1)}_${sanitizeFilePart(segment.text)}`,
         blob,
         url: URL.createObjectURL(blob),
       }
@@ -294,7 +343,8 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
     return {
       id: `${Date.now()}-${index}`,
       words: batch,
-      label: `第 ${index + 1} 段 · ${batch.length} 词`,
+      label: meta.title,
+      ...meta,
       provider: 'edge',
       pauseMs: config.pauseMs,
       segments,
@@ -304,13 +354,15 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
   const generateBatch = async (batch, index) => {
     if (config.provider === 'edge') return generateEdgeSegmentedBatch(batch, index)
 
+    const meta = batchMetas[index] || buildBatchMeta(batch, index)
     const blob = await fetchAudioBlob(getAudioEndpoint(config.provider), buildPayload(batch))
     return {
       id: `${Date.now()}-${index}`,
       blob,
       url: URL.createObjectURL(blob),
       words: batch,
-      label: `第 ${index + 1} 段 · ${batch.length} 词`,
+      label: meta.title,
+      ...meta,
       provider: config.provider,
     }
   }
@@ -321,7 +373,10 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
     setStatus('正在生成首段试听音频…')
     try {
       const item = await generateBatch(batches[0], 0)
-      setAudioItems((current) => [item, ...current])
+      setAudioItems([item])
+      setShareUrl('')
+      setQrUrl('')
+      setShareSummary(null)
       setStatus('试听音频已生成，可在线播放。')
     } catch (error) {
       setStatus(error.message || '试听生成失败。')
@@ -336,6 +391,7 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
     setAudioItems([])
     setShareUrl('')
     setQrUrl('')
+    setShareSummary(null)
     setStatus(`准备生成 ${batches.length} 段音频…`)
     const items = []
     try {
@@ -393,24 +449,36 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
         if (item.segments?.length) {
           return item.segments.map((segment, segmentIndex) => ({
             blob: segment.blob,
-            label: `${item.label} · ${segment.word}`,
+            label: `${item.title || item.label} · ${pad3(segmentIndex + 1)} ${segment.word}`,
             words: [segment.word],
             provider: item.provider,
             delayAfterMs: item.pauseMs || 0,
             segmented: true,
             sourceIndex: itemIndex,
             segmentIndex,
+            batchTitle: item.title || item.label,
+            batchSubtitle: item.subtitle,
+            batchLabel: item.fileStem,
+            batchFirstWord: item.firstWord || item.words?.[0],
+            batchLastWord: item.lastWord || item.words?.[item.words.length - 1],
+            batchWordCount: item.wordCount || item.words?.length || 1,
           }))
         }
         return [{
           blob: item.blob,
-          label: item.label,
+          label: item.title || item.label,
           words: item.words,
           provider: item.provider,
           delayAfterMs: 0,
           segmented: false,
           sourceIndex: itemIndex,
           segmentIndex: 0,
+          batchTitle: item.title || item.label,
+          batchSubtitle: item.subtitle,
+          batchLabel: item.fileStem,
+          batchFirstWord: item.firstWord || item.words?.[0],
+          batchLastWord: item.lastWord || item.words?.[item.words.length - 1],
+          batchWordCount: item.wordCount || item.words?.length || 1,
         }]
       })
       if (uploadUnits.length) uploadUnits[uploadUnits.length - 1].delayAfterMs = 0
@@ -424,6 +492,9 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
             segmentIndex: unit.segmentIndex,
             segmented: unit.segmented,
             word: unit.words?.[0] || unit.label,
+            batchFirstWord: unit.batchFirstWord,
+            batchLastWord: unit.batchLastWord,
+            batchWordCount: unit.batchWordCount,
           })),
         }),
       })
@@ -446,10 +517,31 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
           words: unit.words,
           provider: unit.provider,
           delayAfterMs: unit.delayAfterMs,
+          sourceIndex: unit.sourceIndex,
+          segmentIndex: unit.segmentIndex,
+          segmented: unit.segmented,
+          batchTitle: unit.batchTitle,
+          batchSubtitle: unit.batchSubtitle,
+          batchLabel: start.audio[index].batchLabel || unit.batchLabel,
           folder: start.audio[index].folder,
           fileName: start.audio[index].fileName,
         })
       }
+
+      const shareBatches = audioItems.map((item, itemIndex) => {
+        const groupedTracks = tracks.filter((track) => track.sourceIndex === itemIndex)
+        return {
+          sourceIndex: itemIndex,
+          title: item.title || item.label,
+          subtitle: item.subtitle,
+          batchLabel: item.fileStem || groupedTracks[0]?.batchLabel || '',
+          firstWord: item.firstWord || item.words?.[0],
+          lastWord: item.lastWord || item.words?.[item.words.length - 1],
+          wordCount: item.wordCount || item.words?.length || 1,
+          trackCount: groupedTracks.length,
+          folder: groupedTracks[0]?.folder || '',
+        }
+      })
 
       const manifest = {
         title: `${fileName.replace(/\.[^.]+$/, '') || '单词朗读'} · ${new Date().toLocaleString('zh-CN')}`,
@@ -462,6 +554,7 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
         createdAt: new Date().toISOString(),
         expiresAt: start.expiresAt,
         storagePrefix: start.prefix,
+        batches: shareBatches,
         tracks,
       }
 
@@ -480,6 +573,11 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
       const dataUrl = await QRCode.toDataURL(url, { width: 360, margin: 1 })
       setShareUrl(url)
       setQrUrl(dataUrl)
+      setShareSummary({
+        prefix: start.prefix,
+        batches: shareBatches,
+        samples: tracks.slice(0, 5),
+      })
       setStatus('二维码已生成，手机扫码即可播放。')
     } catch (error) {
       setStatus(error.message || '二维码生成失败。请检查 R2 环境变量和 CORS。')
@@ -652,25 +750,68 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
           </div>
         </div>
 
+        {batchMetas.length ? (
+          <div className="batchPlan">
+            <div className="sectionHeaderCompact">
+              <div>
+                <h3>批次规划</h3>
+                <p>生成、下载和 R2 文件夹都会沿用这些批次名，方便之后查找。</p>
+              </div>
+              <span>{batchMetas.length} 个批次</span>
+            </div>
+            <div className="batchPlanGrid">
+              {batchMetas.slice(0, 10).map((batch) => (
+                <div className="batchChip" key={batch.fileStem} title={`${batch.firstWord} → ${batch.lastWord}`}>
+                  <strong>B{pad3(batch.batchNo)}</strong>
+                  <span>{batch.firstWord === batch.lastWord ? batch.firstWord : `${batch.firstWord} → ${batch.lastWord}`}</span>
+                  <em>{batch.wordCount} 词</em>
+                </div>
+              ))}
+              {batchMetas.length > 10 ? <div className="batchChip muted">+{batchMetas.length - 10} 个批次</div> : null}
+            </div>
+          </div>
+        ) : null}
+
         <div className="audioGrid">
           <div className="audioList">
-            <h3>在线播放试听</h3>
+            <div className="sectionHeaderCompact">
+              <div>
+                <h3>在线播放试听</h3>
+                <p>列表按批次显示，不再混成一串无意义文件。</p>
+              </div>
+              <span>{audioItems.length ? `${audioItems.length} 个批次` : '尚未生成'}</span>
+            </div>
             {audioItems.length ? (
               audioItems.map((item, index) => (
                 <div className="audioItem" key={item.id}>
-                  <div>
-                    <strong>{item.label}</strong>
-                    <span>
-                      {item.words.slice(0, 8).join(' · ')}
-                      {item.segments?.length ? ` · Edge 分段 ${item.segments.length} 个，停顿 ${item.pauseMs}ms` : ''}
-                    </span>
+                  <div className="audioItemHead">
+                    <div className="batchIndexBadge">{pad3(item.batchNo || index + 1)}</div>
+                    <div>
+                      <strong>{item.title || item.label}</strong>
+                      <span className="batchMetaLine">
+                        {item.subtitle || `${item.words.length} 词`}
+                        {item.segments?.length ? ` · Edge 分段 ${item.segments.length} 个，停顿 ${item.pauseMs}ms` : ''}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="wordRibbon">
+                    {item.words.slice(0, 12).map((word, wordIndex) => (
+                      <span key={`${word}-${wordIndex}`}>{word}</span>
+                    ))}
+                    {item.words.length > 12 ? <span>+{item.words.length - 12}</span> : null}
                   </div>
                   {item.segments?.length ? (
-                    <SegmentedAudioPlayer item={item} />
+                    <>
+                      <SegmentedAudioPlayer item={item} />
+                      <small className="fileHint">
+                        R2 保存为文件夹：{item.fileStem}/001_{sanitizeFilePart(item.segments[0]?.word)}.mp3 …
+                      </small>
+                    </>
                   ) : (
                     <>
                       <audio src={item.url} controls preload="metadata" />
-                      <button type="button" onClick={() => downloadNamedBlob(item.blob, `words-${index + 1}.mp3`)}>
+                      <small className="fileHint">保存名：{item.fileStem || `words-${index + 1}`}.mp3</small>
+                      <button type="button" onClick={() => downloadNamedBlob(item.blob, `${item.fileStem || `words-${index + 1}`}.mp3`)}>
                         下载 MP3
                       </button>
                     </>
@@ -686,7 +827,7 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
           </div>
 
           <div className="qrPanel">
-            <h3>手机播放</h3>
+            <h3>手机播放与保存</h3>
             {qrUrl ? (
               <>
                 <img src={qrUrl} alt="手机播放二维码" />
@@ -694,6 +835,19 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
                   打开播放链接
                 </a>
                 <p>二维码链接带只读签名 token，不需要手机再次输入密码。</p>
+                {shareSummary ? (
+                  <div className="storagePreview">
+                    <strong>R2 保存结构</strong>
+                    <code>{shareSummary.prefix}/</code>
+                    {shareSummary.batches.slice(0, 3).map((batch) => (
+                      <div className="storageRow" key={batch.batchLabel || batch.title}>
+                        <span>{batch.batchLabel}/</span>
+                        <small>{batch.trackCount} 个音频 · {batch.firstWord} → {batch.lastWord}</small>
+                      </div>
+                    ))}
+                    {shareSummary.batches.length > 3 ? <small>另有 {shareSummary.batches.length - 3} 个批次…</small> : null}
+                  </div>
+                ) : null}
               </>
             ) : (
               <p>批量生成音频后，点击“生成手机二维码”上传到 R2 并创建移动播放页。</p>

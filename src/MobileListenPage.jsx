@@ -40,6 +40,11 @@ const safeFileName = (value, fallback = 'audio') => String(value || fallback)
   .replace(/\s+/g, '-')
   .slice(0, 80)
 
+const safeMp3Name = (value, fallback = 'audio') => {
+  const name = safeFileName(value, fallback) || `${fallback}.mp3`
+  return /\.mp3$/i.test(name) ? name : `${name}.mp3`
+}
+
 function SavedLibrary({ saved, onDelete }) {
   if (!saved.length) {
     return (
@@ -67,6 +72,7 @@ function SavedLibrary({ saved, onDelete }) {
           <div className="savedShare" key={item.token}>
             <a href={`/listen?token=${encodeURIComponent(item.token)}`}>
               <strong>{item.title || '单词朗读'}</strong>
+              {item.summary ? <small className="savedSummary">{item.summary}</small> : null}
               <small>
                 {item.totalWords || 0} 个单词 · {item.trackCount || 0} 段 · 保存于 {new Date(item.savedAt).toLocaleDateString('zh-CN')}
               </small>
@@ -97,12 +103,45 @@ function MobileListenPage() {
   const tracks = manifest?.tracks || []
   const currentTrack = tracks[currentIndex]
   const savedCurrent = token && saved.some((item) => item.token === token)
+  const groupedTracks = useMemo(() => {
+    const manifestBatches = manifest?.batches || []
+    const batchBySource = new Map(manifestBatches.map((batch) => [String(batch.sourceIndex), batch]))
+    const batchByLabel = new Map(manifestBatches.filter((batch) => batch.batchLabel).map((batch) => [batch.batchLabel, batch]))
+    const groups = []
+    const groupMap = new Map()
+
+    tracks.forEach((track, index) => {
+      const meta = batchBySource.get(String(track.sourceIndex)) || batchByLabel.get(track.batchLabel)
+      const key = String(track.sourceIndex ?? track.batchLabel ?? track.folder ?? index)
+      let group = groupMap.get(key)
+      if (!group) {
+        group = {
+          key,
+          title: track.batchTitle || meta?.title || track.batchLabel || `第 ${groups.length + 1} 批`,
+          subtitle: track.batchSubtitle || meta?.subtitle || `${meta?.wordCount || track.words?.length || 1} 词`,
+          batchLabel: track.batchLabel || meta?.batchLabel || '',
+          tracks: [],
+        }
+        groupMap.set(key, group)
+        groups.push(group)
+      }
+      group.tracks.push({ track, index })
+    })
+
+    return groups
+  }, [manifest, tracks])
 
   const persistCurrent = (loadedManifest = manifest, loadedExpiresAt = expiresAt) => {
     if (!token || !loadedManifest) return
+    const summary = (loadedManifest.batches || [])
+      .slice(0, 2)
+      .map((batch) => batch.title || batch.batchLabel)
+      .filter(Boolean)
+      .join(' / ')
     const nextItem = {
       token,
       title: loadedManifest.title || '单词朗读',
+      summary: summary || loadedManifest.tracks?.[0]?.label || '',
       totalWords: loadedManifest.totalWords || 0,
       trackCount: loadedManifest.tracks?.length || 0,
       expiresAt: loadedExpiresAt || loadedManifest.expiresAt || null,
@@ -235,7 +274,13 @@ function MobileListenPage() {
         <small>
           第 {currentIndex + 1} / {tracks.length} 段
         </small>
-        <h2>{currentTrack?.label || '准备播放'}</h2>
+        <h2>{currentTrack?.batchTitle || currentTrack?.label || '准备播放'}</h2>
+        {currentTrack ? (
+          <p className="mobileTrackMeta">
+            {currentTrack.batchTitle && currentTrack.label !== currentTrack.batchTitle ? `${currentTrack.label} · ` : ''}
+            {currentTrack.fileName || currentTrack.batchLabel || ''}
+          </p>
+        ) : null}
         <audio ref={audioRef} src={currentTrack?.url || ''} preload="metadata" controls />
         <div className="mobileControls">
           <button type="button" onClick={() => jumpTo(Math.max(0, currentIndex - 1))} disabled={currentIndex <= 0}>
@@ -257,7 +302,7 @@ function MobileListenPage() {
           <button
             className="mobileDownload"
             type="button"
-            onClick={() => downloadUrl(currentTrack.url, `${safeFileName(currentTrack.fileName || currentTrack.label)}.mp3`)}
+            onClick={() => downloadUrl(currentTrack.url, safeMp3Name(currentTrack.fileName || currentTrack.label))}
           >
             <Download size={16} /> 下载当前音频
           </button>
@@ -265,18 +310,30 @@ function MobileListenPage() {
       </section>
 
       <section className="mobileList">
-        {tracks.map((track, index) => (
-          <div className={index === currentIndex ? 'mobileTrack active' : 'mobileTrack'} key={track.key || index}>
-            <button type="button" onClick={() => jumpTo(index)}>
-              <span>{track.label || `第 ${index + 1} 段`}</span>
+        {groupedTracks.map((group) => (
+          <div className="mobileBatch" key={group.key}>
+            <div className="mobileBatchHeader">
+              <strong>{group.title}</strong>
               <small>
-                {track.words?.slice(0, 4).join(' · ')}
-                {track.delayAfterMs ? ` · 后停顿 ${track.delayAfterMs}ms` : ''}
+                {group.subtitle}
+                {group.batchLabel ? ` · ${group.batchLabel}` : ''}
               </small>
-            </button>
-            <button type="button" onClick={() => downloadUrl(track.url, `${safeFileName(track.fileName || track.label)}.mp3`)}>
-              <Download size={15} />
-            </button>
+            </div>
+            {group.tracks.map(({ track, index }) => (
+              <div className={index === currentIndex ? 'mobileTrack active' : 'mobileTrack'} key={track.key || index}>
+                <button type="button" onClick={() => jumpTo(index)}>
+                  <span>{track.label || `第 ${index + 1} 段`}</span>
+                  <small>
+                    {track.words?.slice(0, 4).join(' · ')}
+                    {track.delayAfterMs ? ` · 后停顿 ${track.delayAfterMs}ms` : ''}
+                    {track.fileName ? ` · ${track.fileName}` : ''}
+                  </small>
+                </button>
+                <button type="button" onClick={() => downloadUrl(track.url, safeMp3Name(track.fileName || track.label))}>
+                  <Download size={15} />
+                </button>
+              </div>
+            ))}
           </div>
         ))}
       </section>
