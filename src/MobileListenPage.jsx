@@ -9,6 +9,7 @@ function MobileListenPage() {
   const [currentIndex, setCurrentIndex] = useState(0)
   const [playing, setPlaying] = useState(false)
   const audioRef = useRef(null)
+  const timerRef = useRef(null)
 
   const tracks = manifest?.tracks || []
   const currentTrack = tracks[currentIndex]
@@ -32,12 +33,19 @@ function MobileListenPage() {
     const audio = audioRef.current
     if (!audio) return undefined
     const onEnded = () => {
-      setPlaying(false)
-      setCurrentIndex((index) => Math.min(tracks.length - 1, index + 1))
+      if (currentIndex >= tracks.length - 1) {
+        setPlaying(false)
+        return
+      }
+      timerRef.current = window.setTimeout(() => {
+        setCurrentIndex((index) => Math.min(tracks.length - 1, index + 1))
+      }, currentTrack?.delayAfterMs || 0)
     }
     audio.addEventListener('ended', onEnded)
     return () => audio.removeEventListener('ended', onEnded)
-  }, [tracks.length])
+  }, [currentIndex, currentTrack?.delayAfterMs, tracks.length])
+
+  useEffect(() => () => window.clearTimeout(timerRef.current), [])
 
   useEffect(() => {
     if (playing) audioRef.current?.play().catch(() => setPlaying(false))
@@ -47,12 +55,18 @@ function MobileListenPage() {
     const audio = audioRef.current
     if (!audio) return
     if (playing) {
+      window.clearTimeout(timerRef.current)
       audio.pause()
       setPlaying(false)
       return
     }
     await audio.play()
     setPlaying(true)
+  }
+
+  const jumpTo = (nextIndex) => {
+    window.clearTimeout(timerRef.current)
+    setCurrentIndex(nextIndex)
   }
 
   if (loading) {
@@ -92,7 +106,7 @@ function MobileListenPage() {
         <h2>{currentTrack?.label || '准备播放'}</h2>
         <audio ref={audioRef} src={currentTrack?.url || ''} preload="metadata" controls />
         <div className="mobileControls">
-          <button type="button" onClick={() => setCurrentIndex((index) => Math.max(0, index - 1))} disabled={currentIndex <= 0}>
+          <button type="button" onClick={() => jumpTo(Math.max(0, currentIndex - 1))} disabled={currentIndex <= 0}>
             上一段
           </button>
           <button className="mobilePlay" type="button" onClick={togglePlay} disabled={!currentTrack}>
@@ -101,7 +115,7 @@ function MobileListenPage() {
           </button>
           <button
             type="button"
-            onClick={() => setCurrentIndex((index) => Math.min(tracks.length - 1, index + 1))}
+            onClick={() => jumpTo(Math.min(tracks.length - 1, currentIndex + 1))}
             disabled={currentIndex >= tracks.length - 1}
           >
             下一段
@@ -115,10 +129,13 @@ function MobileListenPage() {
             key={track.key || index}
             type="button"
             className={index === currentIndex ? 'active' : ''}
-            onClick={() => setCurrentIndex(index)}
+            onClick={() => jumpTo(index)}
           >
             <span>{track.label || `第 ${index + 1} 段`}</span>
-            <small>{track.words?.slice(0, 4).join(' · ')}</small>
+            <small>
+              {track.words?.slice(0, 4).join(' · ')}
+              {track.delayAfterMs ? ` · 后停顿 ${track.delayAfterMs}ms` : ''}
+            </small>
           </button>
         ))}
       </section>

@@ -832,6 +832,23 @@ button:disabled {
   color: #1d4ed8;
 }
 
+.segmentedPlayer {
+  display: grid;
+  gap: 8px;
+}
+
+.segmentedPlayer > div {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.segmentedPlayer small {
+  color: #64748b;
+  font-weight: 750;
+}
+
 .emptyAudio {
   display: grid;
   min-height: 220px;

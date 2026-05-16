@@ -17,6 +17,7 @@ import { apiJson, fetchAudioBlob } from './api'
 import { clampInt } from './utils'
 import {
   DEFAULT_TTS_CONFIG,
+  base64ToBlob,
   blobToBase64,
   chunkWords,
   downloadNamedBlob,
@@ -87,6 +88,65 @@ const RangeField = ({ label, value, min, max, step = 1, suffix, onChange }) => (
     <input type="range" min={min} max={max} step={step} value={value} onChange={(event) => onChange(Number(event.target.value))} />
   </label>
 )
+
+function SegmentedAudioPlayer({ item }) {
+  const [index, setIndex] = useState(0)
+  const [playing, setPlaying] = useState(false)
+  const audioRef = useRef(null)
+  const timerRef = useRef(null)
+  const current = item.segments[index]
+
+  useEffect(() => () => window.clearTimeout(timerRef.current), [])
+
+  useEffect(() => {
+    const audio = audioRef.current
+    if (!audio || !current || !playing) return
+    audio.src = current.url
+    audio.currentTime = 0
+    audio.play().catch(() => setPlaying(false))
+  }, [current, playing])
+
+  const stop = () => {
+    window.clearTimeout(timerRef.current)
+    audioRef.current?.pause()
+    setPlaying(false)
+  }
+
+  const toggle = () => {
+    if (playing) {
+      stop()
+      return
+    }
+    if (index >= item.segments.length) setIndex(0)
+    setPlaying(true)
+  }
+
+  const handleEnded = () => {
+    if (index >= item.segments.length - 1) {
+      setPlaying(false)
+      setIndex(0)
+      return
+    }
+    timerRef.current = window.setTimeout(() => {
+      setIndex((currentIndex) => currentIndex + 1)
+    }, item.pauseMs || 0)
+  }
+
+  return (
+    <div className="segmentedPlayer">
+      <audio ref={audioRef} onEnded={handleEnded} preload="metadata" />
+      <div>
+        <button type="button" onClick={toggle}>
+          {playing ? <Pause size={16} /> : <Play size={16} />}
+          {playing ? '暂停分段播放' : '播放分段音频'}
+        </button>
+        <small>
+          {current?.word || item.segments[0]?.word || '等待播放'} · {index + 1}/{item.segments.length} · 停顿 {item.pauseMs}ms
+        </small>
+      </div>
+    </div>
+  )
+}
 
 function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
   const [authenticated, setAuthenticated] = useState(false)
@@ -199,7 +259,33 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
     pauseMs: config.pauseMs,
   })
 
+  const generateEdgeSegmentedBatch = async (batch, index) => {
+    const data = await apiJson('/api/tts/edge', {
+      method: 'POST',
+      body: JSON.stringify({ ...buildPayload(batch), segmented: true }),
+    })
+    const segments = (data.segments || []).map((segment) => {
+      const blob = base64ToBlob(segment.audioBase64, segment.contentType || 'audio/mpeg')
+      return {
+        word: segment.text,
+        blob,
+        url: URL.createObjectURL(blob),
+      }
+    })
+    if (!segments.length) throw new Error('Edge-TTS 未返回可播放片段。')
+    return {
+      id: `${Date.now()}-${index}`,
+      words: batch,
+      label: `第 ${index + 1} 段 · ${batch.length} 词`,
+      provider: 'edge',
+      pauseMs: config.pauseMs,
+      segments,
+    }
+  }
+
   const generateBatch = async (batch, index) => {
+    if (config.provider === 'edge') return generateEdgeSegmentedBatch(batch, index)
+
     const blob = await fetchAudioBlob(getAudioEndpoint(config.provider), buildPayload(batch))
     return {
       id: `${Date.now()}-${index}`,
@@ -285,28 +371,65 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
     setBusy(true)
     setStatus('正在创建 R2 分享并上传音频…')
     try {
+      const uploadUnits = audioItems.flatMap((item, itemIndex) => {
+        if (item.segments?.length) {
+          return item.segments.map((segment, segmentIndex) => ({
+            blob: segment.blob,
+            label: `${item.label} · ${segment.word}`,
+            words: [segment.word],
+            provider: item.provider,
+            delayAfterMs: item.pauseMs || 0,
+            segmented: true,
+            sourceIndex: itemIndex,
+            segmentIndex,
+          }))
+        }
+        return [{
+          blob: item.blob,
+          label: item.label,
+          words: item.words,
+          provider: item.provider,
+          delayAfterMs: 0,
+          segmented: false,
+          sourceIndex: itemIndex,
+          segmentIndex: 0,
+        }]
+      })
+      if (uploadUnits.length) uploadUnits[uploadUnits.length - 1].delayAfterMs = 0
+
       const start = await apiJson('/api/share/start', {
         method: 'POST',
-        body: JSON.stringify({ count: audioItems.length }),
+        body: JSON.stringify({
+          count: uploadUnits.length,
+          files: uploadUnits.map((unit) => ({
+            sourceIndex: unit.sourceIndex,
+            segmentIndex: unit.segmentIndex,
+            segmented: unit.segmented,
+            word: unit.words?.[0] || unit.label,
+          })),
+        }),
       })
 
       const tracks = []
-      for (let index = 0; index < audioItems.length; index += 1) {
-        const item = audioItems[index]
-        setStatus(`正在通过服务端上传第 ${index + 1} / ${audioItems.length} 段到 R2…`)
+      for (let index = 0; index < uploadUnits.length; index += 1) {
+        const unit = uploadUnits[index]
+        setStatus(`正在通过服务端上传第 ${index + 1} / ${uploadUnits.length} 段到 R2…`)
         await apiJson('/api/share/upload', {
           method: 'POST',
           body: JSON.stringify({
             key: start.audio[index].key,
             contentType: 'audio/mpeg',
-            base64: await blobToBase64(item.blob),
+            base64: await blobToBase64(unit.blob),
           }),
         })
         tracks.push({
           key: start.audio[index].key,
-          label: item.label,
-          words: item.words,
-          provider: item.provider,
+          label: unit.label,
+          words: unit.words,
+          provider: unit.provider,
+          delayAfterMs: unit.delayAfterMs,
+          folder: start.audio[index].folder,
+          fileName: start.audio[index].fileName,
         })
       }
 
@@ -320,6 +443,7 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
         pauseMs: config.pauseMs,
         createdAt: new Date().toISOString(),
         expiresAt: start.expiresAt,
+        storagePrefix: start.prefix,
         tracks,
       }
 
@@ -518,12 +642,21 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
                 <div className="audioItem" key={item.id}>
                   <div>
                     <strong>{item.label}</strong>
-                    <span>{item.words.slice(0, 8).join(' · ')}</span>
+                    <span>
+                      {item.words.slice(0, 8).join(' · ')}
+                      {item.segments?.length ? ` · Edge 分段 ${item.segments.length} 个，停顿 ${item.pauseMs}ms` : ''}
+                    </span>
                   </div>
-                  <audio src={item.url} controls preload="metadata" />
-                  <button type="button" onClick={() => downloadNamedBlob(item.blob, `words-${index + 1}.mp3`)}>
-                    下载 MP3
-                  </button>
+                  {item.segments?.length ? (
+                    <SegmentedAudioPlayer item={item} />
+                  ) : (
+                    <>
+                      <audio src={item.url} controls preload="metadata" />
+                      <button type="button" onClick={() => downloadNamedBlob(item.blob, `words-${index + 1}.mp3`)}>
+                        下载 MP3
+                      </button>
+                    </>
+                  )}
                 </div>
               ))
             ) : (

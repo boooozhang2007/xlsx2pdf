@@ -88,3 +88,8 @@ export const blobToBase64 = (blob) =>
     reader.onerror = () => reject(reader.error)
     reader.readAsDataURL(blob)
   })
+
+export const base64ToBlob = (base64, contentType = 'audio/mpeg') => {
+  const bytes = Uint8Array.from(atob(base64), (char) => char.charCodeAt(0))
+  return new Blob([bytes], { type: contentType })
+}

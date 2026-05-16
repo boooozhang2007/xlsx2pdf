@@ -19,7 +19,7 @@
 - `/tts` 进入受访问密码保护的朗读板块
 - 支持粘贴单词、从 XLSX 导入、复用当前词表英文列
 - 支持美音/英音、朗读速度、朗读者音色、单词间停顿、单批单词数量
-- Azure Speech TTS 为优先生成通道，Edge-TTS Python 函数为备用通道
+- Azure Speech TTS 为优先生成通道，Edge-TTS Python 函数为备用通道；Edge-TTS 会按片段生成并在播放器/手机播放页用自定义延迟模拟停顿
 - 检测 Microsoft Edge 后可用 Web Speech API 做本机试听 fallback（不导出本机 Edge 音频）
 - 支持在线播放、下载 MP3、上传到 Cloudflare R2 后生成手机播放二维码
 - `/listen?token=...` 为移动端适配播放页，二维码 token 只读且有过期时间
@@ -63,6 +63,7 @@ TTS_SHARE_TTL_DAYS=7
 可复制 `.env.example` 到 `.env.local` 用于 `npx vercel dev` 本地调试。
 
 音频和清单会先上传到 Vercel API，再由服务端写入 R2，因此不需要为浏览器直传配置 R2 `PUT` CORS；手机播放时服务端会换取短期 `GET` 预签名 URL。
+R2 中每次二维码分享会保存为一个可浏览前缀，例如 `tts-shares/<shareId>/manifest.json` 和 `tts-shares/<shareId>/batch-001/word-0001-cheat.mp3`。
 
 ## Vercel 部署
 

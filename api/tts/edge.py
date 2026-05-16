@@ -67,6 +67,33 @@ async def _save_edge_audio(text, voice, rate_text, output_path):
     await communicate.save(output_path)
 
 
+async def _edge_audio_bytes(text, voice, rate_text):
+    with tempfile.NamedTemporaryFile(delete=False, suffix='.mp3') as fp:
+        output_path = fp.name
+
+    try:
+        await _save_edge_audio(text, voice, rate_text, output_path)
+        with open(output_path, 'rb') as audio_file:
+            return audio_file.read()
+    finally:
+        try:
+            os.remove(output_path)
+        except OSError:
+            pass
+
+
+async def _edge_segments(words, voice, rate_text):
+    segments = []
+    for word in words:
+        audio = await _edge_audio_bytes(word, voice, rate_text)
+        segments.append({
+            'text': word,
+            'audioBase64': base64.b64encode(audio).decode('ascii'),
+            'contentType': 'audio/mpeg',
+        })
+    return segments
+
+
 def _edge_tts(handler):
     if not _has_session(handler):
         _send_json(handler, HTTPStatus.UNAUTHORIZED, {'ok': False, 'error': '请先输入访问密码。'})
@@ -86,18 +113,18 @@ def _edge_tts(handler):
         text = (' ' * max(1, min(20, round(pause_ms / 120)))).join(words)
         rate_text = f'{rate:+.0f}%'
 
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.mp3') as fp:
-            output_path = fp.name
+        if body.get('segmented'):
+            segments = asyncio.run(_edge_segments(words, voice, rate_text))
+            _send_json(handler, HTTPStatus.OK, {
+                'ok': True,
+                'provider': 'edge',
+                'mode': 'segments',
+                'pauseMs': pause_ms,
+                'segments': segments,
+            })
+            return
 
-        try:
-            asyncio.run(_save_edge_audio(text, voice, rate_text, output_path))
-            with open(output_path, 'rb') as audio_file:
-                audio = audio_file.read()
-        finally:
-            try:
-                os.remove(output_path)
-            except OSError:
-                pass
+        audio = asyncio.run(_edge_audio_bytes(text, voice, rate_text))
 
         handler.send_response(HTTPStatus.OK)
         handler.send_header('content-type', 'audio/mpeg')

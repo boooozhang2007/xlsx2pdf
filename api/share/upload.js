@@ -1,7 +1,7 @@
 import { readJsonBody, rejectMethod, requireSession, sendJson } from '../../server/auth.js'
 import { putObject } from '../../server/r2.js'
 
-const SHARE_KEY_RE = /^tts-shares\/[0-9a-f-]{36}\/(?:audio-\d{3}\.mp3|manifest\.json)$/i
+const SHARE_KEY_RE = /^tts-shares\/[0-9a-f-]{36}\/(?:manifest\.json|batch-\d{3}\/(?:batch-\d{3}|word-\d{4}-[a-z0-9._-]+)\.mp3)$/i
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return rejectMethod(res, 'POST')
