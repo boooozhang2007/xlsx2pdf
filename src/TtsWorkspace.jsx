@@ -60,21 +60,39 @@ const SelectField = ({ label, value, onChange, children }) => (
   </label>
 )
 
-const NumberField = ({ label, value, onChange, min, max, suffix }) => (
-  <label className="field">
-    <span>{label}</span>
-    <div className="inputShell">
-      <input
-        type="number"
-        min={min}
-        max={max}
-        value={value}
-        onChange={(event) => onChange(clampInt(event.target.value, min, max, value))}
-      />
-      {suffix ? <em>{suffix}</em> : null}
-    </div>
-  </label>
-)
+const NumberField = ({ label, value, onChange, min, max, suffix }) => {
+  const [draft, setDraft] = useState(String(value ?? ''))
+
+  useEffect(() => {
+    setDraft(String(value ?? ''))
+  }, [value])
+
+  const commit = () => {
+    const normalized = clampInt(draft, min, max, value)
+    onChange(normalized)
+    setDraft(String(normalized))
+  }
+
+  return (
+    <label className="field">
+      <span>{label}</span>
+      <div className="inputShell">
+        <input
+          type="number"
+          min={min}
+          max={max}
+          value={draft}
+          onChange={(event) => setDraft(event.target.value)}
+          onBlur={commit}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') event.currentTarget.blur()
+          }}
+        />
+        {suffix ? <em>{suffix}</em> : null}
+      </div>
+    </label>
+  )
+}
 
 const RangeField = ({ label, value, min, max, step = 1, suffix, onChange }) => (
   <label className="rangeField">

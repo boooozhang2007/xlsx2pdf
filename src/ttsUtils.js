@@ -5,7 +5,7 @@ export const DEFAULT_TTS_CONFIG = {
   edgeVoice: 'en-US-JennyNeural',
   rate: 0,
   pauseMs: 800,
-  batchSize: 20,
+  batchSize: 30,
 }
 
 export const splitWords = (text) => String(text || '')
