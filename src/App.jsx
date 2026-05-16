@@ -14,11 +14,13 @@ import {
 } from 'lucide-react'
 import {
   DEFAULT_CONFIG,
+  MAX_ROWS_PER_PAGE,
   SAMPLE_ROWS,
   cellAddress,
   clampInt,
   columnToLetter,
   extractPairsFromSheet,
+  paginateRows,
 } from './utils'
 import { createPdfFromRows, downloadBlob } from './pdf'
 import './styles.css'
@@ -62,6 +64,7 @@ function App() {
   const [isLoading, setIsLoading] = useState(false)
   const [isExporting, setIsExporting] = useState(false)
   const [previewMode, setPreviewMode] = useState('page')
+  const [previewPage, setPreviewPage] = useState(1)
   const fileInputRef = useRef(null)
 
   const sheetNames = workbook?.SheetNames || []
@@ -73,15 +76,35 @@ function App() {
     return extractPairsFromSheet(worksheet, config)
   }, [worksheet, config])
 
+  const rowsPerPage = clampInt(config.rowsPerPage, 1, MAX_ROWS_PER_PAGE, DEFAULT_CONFIG.rowsPerPage)
+  const previewPages = useMemo(() => paginateRows(rows, rowsPerPage), [rows, rowsPerPage])
+  const safePreviewPage = Math.min(previewPage, previewPages.length)
+  const currentPreviewRows = previewPages[safePreviewPage - 1] || []
+  const previewRowScale = Math.min(1, DEFAULT_CONFIG.rowsPerPage / rowsPerPage)
+  const previewRowUnit = (DEFAULT_CONFIG.rowsPerPage * 8.8) / rowsPerPage
+  const previewGridRatio = Math.min(6, previewRowUnit * (6 / 8.8)) / previewRowUnit
+
   const stats = useMemo(
     () => ({
       rows: rows.length,
       englishCell: cellAddress(config.englishRow, config.englishCol),
       chineseCell: cellAddress(config.chineseRow, config.chineseCol),
+      rowsPerPage,
+      pages: previewPages.length,
       file: fileName,
       sheet: activeSheetName || '示例数据',
     }),
-    [rows.length, config.englishRow, config.englishCol, config.chineseRow, config.chineseCol, fileName, activeSheetName],
+    [
+      rows.length,
+      rowsPerPage,
+      previewPages.length,
+      config.englishRow,
+      config.englishCol,
+      config.chineseRow,
+      config.chineseCol,
+      fileName,
+      activeSheetName,
+    ],
   )
 
   const updateConfig = (patch) => setConfig((current) => ({ ...current, ...patch }))
@@ -133,6 +156,10 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  useEffect(() => {
+    setPreviewPage((page) => Math.min(Math.max(1, page), previewPages.length))
+  }, [previewPages.length])
+
   const handleDrop = (event) => {
     event.preventDefault()
     const file = event.dataTransfer.files?.[0]
@@ -154,7 +181,8 @@ function App() {
     }
   }
 
-  const samplePreviewRows = rows.slice(0, 8)
+  const samplePreviewRows = rows.slice(0, 5)
+  const emptyPreviewSlots = Math.max(0, rowsPerPage - currentPreviewRows.length)
 
   return (
     <main className="appShell">
@@ -197,7 +225,7 @@ function App() {
               <span>英汉词表</span>
               <small>{stats.file.replace(/\.[^.]+$/, '')}.pdf</small>
             </div>
-            {samplePreviewRows.slice(0, 5).map((row) => (
+            {samplePreviewRows.map((row) => (
               <div className="mockRow" key={`${row.index}-${row.english}`}>
                 <strong>{row.english || '—'}</strong>
                 <span>{row.chinese || '—'}</span>
@@ -296,14 +324,6 @@ function App() {
               <FileText size={17} />
               <span>PDF 设置</span>
             </div>
-            <label className="field fullField">
-              <span>标题</span>
-              <input
-                type="text"
-                value={config.title}
-                onChange={(event) => updateConfig({ title: event.target.value })}
-              />
-            </label>
             <InputField
               label="自动换行字数"
               value={config.wrapChars}
@@ -313,21 +333,22 @@ function App() {
               suffix="字/行"
             />
             <InputField
+              label="每页行数"
+              value={config.rowsPerPage}
+              min={1}
+              max={MAX_ROWS_PER_PAGE}
+              onChange={(value) => updateConfig({ rowsPerPage: value })}
+              suffix="行/页"
+              icon={Rows3}
+            />
+            <InputField
               label="最多读取行数"
               value={config.maxRows}
               min={1}
-              max={2000}
+              max={10000}
               onChange={(value) => updateConfig({ maxRows: value })}
               suffix="行"
             />
-            <label className="toggleLine">
-              <input
-                type="checkbox"
-                checked={config.showIndex}
-                onChange={(event) => updateConfig({ showIndex: event.target.checked })}
-              />
-              <span>导出序号列</span>
-            </label>
           </div>
 
           <button className="exportButton" onClick={handleExport} disabled={isExporting || !rows.length}>
@@ -379,30 +400,78 @@ function App() {
               <small>汉语</small>
               <strong>{stats.chineseCell}</strong>
             </div>
+            <div>
+              <small>每页</small>
+              <strong>{stats.rowsPerPage} 行</strong>
+            </div>
+            <div>
+              <small>页数</small>
+              <strong>{stats.pages} 页</strong>
+            </div>
           </div>
 
           {previewMode === 'page' ? (
             <div className="pdfCanvas">
-              <div className="pdfPage">
-                <div className="pdfTop">
-                  <h3>{config.title || '英汉词表'}</h3>
-                  <span>XLSX2PDF · A4</span>
-                </div>
-                <div className="pdfDivider" />
-                <div className={`pdfHeaderRow ${config.showIndex ? '' : 'noIndex'}`}>
-                  {config.showIndex ? <span>#</span> : null}
-                  <span>English</span>
-                  <span>中文释义</span>
-                </div>
-                <div className="pdfRows">
-                  {samplePreviewRows.map((row) => (
-                    <div className={`pdfDataRow ${config.showIndex ? '' : 'noIndex'}`} key={`${row.index}-${row.sourceRow || row.index}`}>
-                      {config.showIndex ? <span className="rowIndex">{row.index}</span> : null}
-                      <strong>{row.english || '—'}</strong>
-                      <span>{row.chinese || '—'}</span>
-                    </div>
+              <div className="pageControls">
+                <button
+                  type="button"
+                  onClick={() => setPreviewPage((page) => Math.max(1, page - 1))}
+                  disabled={safePreviewPage <= 1}
+                >
+                  上一页
+                </button>
+                <span>
+                  第 {safePreviewPage} / {previewPages.length} 页
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setPreviewPage((page) => Math.min(previewPages.length, page + 1))}
+                  disabled={safePreviewPage >= previewPages.length}
+                >
+                  下一页
+                </button>
+              </div>
+
+              <div className="templatePage">
+                <div
+                  className="templateTable"
+                  style={{
+                    '--row-scale': previewRowScale,
+                    '--grid-ratio': previewGridRatio,
+                    gridTemplateRows: `7.4fr repeat(${rowsPerPage}, ${previewRowUnit}fr)`,
+                  }}
+                >
+                  <div className="templateHeader templateCell">序号</div>
+                  <div className="templateHeader templateCell">英文</div>
+                  <div className="templateHeader templateCell">默写汉语</div>
+                  <div className="templateHeader templateCell">中文</div>
+                  <div className="templateHeader templateCell">默写英文</div>
+
+                  {currentPreviewRows.map((row) => (
+                    <React.Fragment key={`${row.index}-${row.sourceRow || row.index}`}>
+                      <div className="templateCell indexCell">{row.index}</div>
+                      <div className="templateCell englishCell">{row.english || '—'}</div>
+                      <div className="templateCell writeChineseCell" />
+                      <div className="templateCell chineseCell">{row.chinese || '—'}</div>
+                      <div className="templateCell writeEnglishCell">
+                        <img src="/fourline.png" alt="" />
+                      </div>
+                    </React.Fragment>
+                  ))}
+
+                  {Array.from({ length: emptyPreviewSlots }).map((_, index) => (
+                    <React.Fragment key={`empty-${index}`}>
+                      <div className="templateCell indexCell" />
+                      <div className="templateCell englishCell" />
+                      <div className="templateCell writeChineseCell" />
+                      <div className="templateCell chineseCell" />
+                      <div className="templateCell writeEnglishCell">
+                        <img src="/fourline.png" alt="" />
+                      </div>
+                    </React.Fragment>
                   ))}
                 </div>
+                <div className="templatePageNumber">{safePreviewPage}</div>
               </div>
             </div>
           ) : (
@@ -419,7 +488,7 @@ function App() {
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.slice(0, 80).map((row) => (
+                  {rows.map((row) => (
                     <tr key={`${row.index}-${row.englishCell}-${row.chineseCell}`}>
                       <td>{row.index}</td>
                       <td>{row.sourceRow || row.index}</td>
@@ -440,3 +509,4 @@ function App() {
 }
 
 export default App
+

@@ -7,10 +7,13 @@ export const DEFAULT_CONFIG = {
   chineseRow: 3,
   chineseCol: 4,
   wrapChars: 26,
-  maxRows: 160,
+  maxRows: 10000,
+  rowsPerPage: 30,
   title: '英汉词表',
   showIndex: true,
 }
+
+export const MAX_ROWS_PER_PAGE = 60
 
 export const SAMPLE_ROWS = [
   { index: 1, english: 'cheat', chinese: 'v. 欺骗；作弊 n. 骗子' },
@@ -98,6 +101,15 @@ export const wrapText = (text, maxChars = 26) => {
   return lines.length ? lines : ['']
 }
 
+export const paginateRows = (rows, rowsPerPage) => {
+  const size = Math.max(1, Number(rowsPerPage) || DEFAULT_CONFIG.rowsPerPage)
+  const pages = []
+  for (let index = 0; index < rows.length; index += size) {
+    pages.push(rows.slice(index, index + size))
+  }
+  return pages.length ? pages : [[]]
+}
+
 export const extractPairsFromSheet = (worksheet, config) => {
   if (!worksheet) return []
 
@@ -108,7 +120,7 @@ export const extractPairsFromSheet = (worksheet, config) => {
   const chineseStartRow = clampInt(config.chineseRow, 1, 100000, DEFAULT_CONFIG.chineseRow)
   const englishCol = clampInt(config.englishCol, 1, 500, DEFAULT_CONFIG.englishCol)
   const chineseCol = clampInt(config.chineseCol, 1, 500, DEFAULT_CONFIG.chineseCol)
-  const maxRows = clampInt(config.maxRows, 1, 2000, DEFAULT_CONFIG.maxRows)
+  const maxRows = clampInt(config.maxRows, 1, 10000, DEFAULT_CONFIG.maxRows)
 
   const decodedRange = window.XLSX?.utils?.decode_range
     ? window.XLSX.utils.decode_range(range)
@@ -139,3 +151,4 @@ export const extractPairsFromSheet = (worksheet, config) => {
 
   return rows
 }
+
