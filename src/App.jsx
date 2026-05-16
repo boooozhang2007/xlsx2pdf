@@ -6,6 +6,7 @@ import {
   Columns3,
   FileSpreadsheet,
   FileText,
+  Headphones,
   Loader2,
   Rows3,
   SlidersHorizontal,
@@ -23,6 +24,8 @@ import {
   paginateRows,
 } from './utils'
 import { createPdfFromRows, downloadBlob } from './pdf'
+import MobileListenPage from './MobileListenPage'
+import TtsWorkspace from './TtsWorkspace'
 import './styles.css'
 
 window.XLSX = XLSX
@@ -65,6 +68,7 @@ function App() {
   const [isExporting, setIsExporting] = useState(false)
   const [previewMode, setPreviewMode] = useState('page')
   const [previewPage, setPreviewPage] = useState(1)
+  const [activeTool, setActiveTool] = useState(() => (window.location.pathname.startsWith('/tts') ? 'tts' : 'pdf'))
   const fileInputRef = useRef(null)
 
   const sheetNames = workbook?.SheetNames || []
@@ -152,13 +156,25 @@ function App() {
   }
 
   useEffect(() => {
+    if (window.location.pathname.startsWith('/listen')) return
     loadBundledExample()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   useEffect(() => {
+    const syncPath = () => setActiveTool(window.location.pathname.startsWith('/tts') ? 'tts' : 'pdf')
+    window.addEventListener('popstate', syncPath)
+    return () => window.removeEventListener('popstate', syncPath)
+  }, [])
+
+  useEffect(() => {
     setPreviewPage((page) => Math.min(Math.max(1, page), previewPages.length))
   }, [previewPages.length])
+
+  const setTool = (tool) => {
+    setActiveTool(tool)
+    window.history.pushState(null, '', tool === 'tts' ? '/tts' : '/')
+  }
 
   const handleDrop = (event) => {
     event.preventDefault()
@@ -181,6 +197,8 @@ function App() {
     }
   }
 
+  if (window.location.pathname.startsWith('/listen')) return <MobileListenPage />
+
   const samplePreviewRows = rows.slice(0, 5)
   const emptyPreviewSlots = Math.max(0, rowsPerPage - currentPreviewRows.length)
 
@@ -194,6 +212,14 @@ function App() {
             <FileSpreadsheet size={23} />
             <span>XLSX2PDF</span>
           </div>
+          <div className="toolSwitch" role="tablist" aria-label="tool switch">
+            <button className={activeTool === 'pdf' ? 'active' : ''} type="button" onClick={() => setTool('pdf')}>
+              <FileText size={15} /> PDF
+            </button>
+            <button className={activeTool === 'tts' ? 'active' : ''} type="button" onClick={() => setTool('tts')}>
+              <Headphones size={15} /> 单词朗读
+            </button>
+          </div>
           <div className="privacyNote">
             <Check size={15} />
             浏览器本地处理 · 适合部署到 Vercel
@@ -203,38 +229,56 @@ function App() {
         <div className="heroGrid">
           <div className="heroCopy">
             <Pill tone="blue">
-              <Sparkles size={14} /> 自动从 example.xlsx 输出 example.pdf
+              <Sparkles size={14} /> {activeTool === 'tts' ? 'Azure TTS + 手机二维码播放' : '自动从 example.xlsx 输出 example.pdf'}
             </Pill>
-            <h1>把英汉词表变成可打印 PDF。</h1>
+            <h1>{activeTool === 'tts' ? '生成单词朗读音频。' : '把英汉词表变成可打印 PDF。'}</h1>
             <p>
-              上传 XLSX，指定英语与汉语从哪一行、哪一列开始，实时查看排版，并用访问者电脑完成 PDF 生成。
+              {activeTool === 'tts'
+                ? '粘贴或导入词表，选择英/美音、速度、音色和停顿，生成可试听 MP3，并用二维码在手机播放。'
+                : '上传 XLSX，指定英语与汉语从哪一行、哪一列开始，实时查看排版，并用访问者电脑完成 PDF 生成。'}
             </p>
             <div className="heroActions">
-              <button className="primaryButton" onClick={() => fileInputRef.current?.click()}>
-                <UploadCloud size={18} /> 上传 XLSX
-              </button>
-              <button className="ghostButton" onClick={loadBundledExample} disabled={isLoading}>
-                {isLoading ? <Loader2 className="spin" size={17} /> : <FileSpreadsheet size={17} />}
-                使用 example.xlsx
-              </button>
+              {activeTool === 'tts' ? (
+                <>
+                  <button className="primaryButton" onClick={() => setTool('tts')}>
+                    <Headphones size={18} /> 打开朗读板块
+                  </button>
+                  <button className="ghostButton" onClick={() => setTool('pdf')}>
+                    <FileText size={17} /> 返回 PDF
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button className="primaryButton" onClick={() => fileInputRef.current?.click()}>
+                    <UploadCloud size={18} /> 上传 XLSX
+                  </button>
+                  <button className="ghostButton" onClick={loadBundledExample} disabled={isLoading}>
+                    {isLoading ? <Loader2 className="spin" size={17} /> : <FileSpreadsheet size={17} />}
+                    使用 example.xlsx
+                  </button>
+                </>
+              )}
             </div>
           </div>
 
-          <div className="paperMock" aria-label="PDF preview mock">
+          <div className={activeTool === 'tts' ? 'paperMock audioMock' : 'paperMock'} aria-label="preview mock">
             <div className="paperHeader">
-              <span>英汉词表</span>
-              <small>{stats.file.replace(/\.[^.]+$/, '')}.pdf</small>
+              <span>{activeTool === 'tts' ? 'Audio batches' : '英汉词表'}</span>
+              <small>{activeTool === 'tts' ? `${rows.length || 0} words` : `${stats.file.replace(/\.[^.]+$/, '')}.pdf`}</small>
             </div>
             {samplePreviewRows.map((row) => (
               <div className="mockRow" key={`${row.index}-${row.english}`}>
                 <strong>{row.english || '—'}</strong>
-                <span>{row.chinese || '—'}</span>
+                <span>{activeTool === 'tts' ? '▶︎  Azure neural voice' : row.chinese || '—'}</span>
               </div>
             ))}
           </div>
         </div>
       </section>
 
+      {activeTool === 'tts' ? (
+        <TtsWorkspace rows={rows} loadWorkbook={loadWorkbook} fileName={fileName} activeSheetName={activeSheetName} />
+      ) : (
       <section className="workspace">
         <aside className="controlRail">
           <div
@@ -504,6 +548,7 @@ function App() {
           )}
         </section>
       </section>
+      )}
     </main>
   )
 }

@@ -2,6 +2,11 @@ node_modules
 dist
 .vercel
 *.local
+.env
+.env.*
+!.env.example
 .DS_Store
 .playwright-cli/
 analysis_pdf/
+__pycache__/
+*.pyc

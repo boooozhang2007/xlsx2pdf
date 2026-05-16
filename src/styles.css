@@ -533,6 +533,434 @@ button:disabled {
   box-shadow: 0 8px 18px rgba(15, 23, 42, 0.08);
 }
 
+.toolSwitch {
+  display: inline-flex;
+  gap: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 999px;
+  padding: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(16px);
+}
+
+.toolSwitch button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.74);
+  padding: 8px 12px;
+  font-weight: 800;
+}
+
+.toolSwitch .active {
+  background: #fff;
+  color: #0f172a;
+}
+
+.audioMock .mockRow {
+  grid-template-columns: 1fr 1fr;
+}
+
+.audioMock .mockRow span {
+  color: #2563eb;
+  font-weight: 750;
+}
+
+.ttsGate,
+.ttsWorkspace {
+  max-width: 1360px;
+  margin: -38px auto 0;
+  padding: 0 clamp(16px, 4vw, 58px) 64px;
+  position: relative;
+  z-index: 4;
+}
+
+.ttsGate {
+  display: grid;
+  min-height: 420px;
+  place-items: center;
+}
+
+.gateCard {
+  width: min(100%, 560px);
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 34px;
+  padding: clamp(24px, 4vw, 42px);
+  background: rgba(255, 255, 255, 0.86);
+  box-shadow: 0 30px 80px rgba(30, 41, 59, 0.12);
+  backdrop-filter: blur(18px);
+}
+
+.gateCard h2 {
+  margin: 8px 0 10px;
+  color: #0f172a;
+  font-size: clamp(28px, 4vw, 42px);
+  line-height: 1;
+  letter-spacing: -0.05em;
+}
+
+.gateCard p {
+  color: #64748b;
+  line-height: 1.7;
+}
+
+.gateCard form {
+  display: flex;
+  gap: 10px;
+  margin-top: 22px;
+}
+
+.gateCard input {
+  min-width: 0;
+  flex: 1;
+  min-height: 48px;
+  border: 1px solid rgba(15, 23, 42, 0.11);
+  border-radius: 16px;
+  padding: 0 14px;
+  outline: 0;
+}
+
+.primaryButton.dark {
+  background: #0f172a;
+  color: #fff;
+}
+
+.errorText {
+  display: block;
+  margin-top: 12px;
+  color: #dc2626;
+  font-size: 13px;
+}
+
+.ttsWorkspace {
+  display: grid;
+  grid-template-columns: minmax(310px, 390px) minmax(0, 1fr);
+  gap: clamp(22px, 3vw, 42px);
+}
+
+.ttsControls,
+.ttsStage {
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  background: rgba(255, 255, 255, 0.78);
+  box-shadow: 0 30px 80px rgba(30, 41, 59, 0.12);
+  backdrop-filter: blur(18px);
+}
+
+.ttsControls {
+  align-self: start;
+  position: sticky;
+  top: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  border-radius: 30px;
+  padding: 18px;
+}
+
+.ttsStage {
+  min-width: 0;
+  border-radius: 34px;
+  padding: clamp(20px, 3vw, 34px);
+}
+
+.wordInput {
+  width: 100%;
+  min-height: 180px;
+  resize: vertical;
+  border: 1px solid rgba(15, 23, 42, 0.11);
+  border-radius: 18px;
+  outline: 0;
+  background: rgba(255, 255, 255, 0.84);
+  color: #0f172a;
+  padding: 14px;
+  line-height: 1.55;
+}
+
+.wordInput:focus {
+  border-color: #2563eb;
+  box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.12);
+}
+
+.tinyActions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.tinyActions button,
+.secondaryButton,
+.ghostAction,
+.logoutButton,
+.qrButton,
+.audioItem button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 0;
+  border-radius: 14px;
+  min-height: 42px;
+  padding: 0 13px;
+  font-weight: 800;
+}
+
+.tinyActions button,
+.ghostAction {
+  background: #eef2ff;
+  color: #1d4ed8;
+}
+
+.secondaryButton,
+.qrButton {
+  background: #0f172a;
+  color: #fff;
+}
+
+.logoutButton {
+  background: transparent;
+  color: #64748b;
+}
+
+.rangeField {
+  display: grid;
+  gap: 8px;
+}
+
+.rangeField > span {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 780;
+}
+
+.rangeField strong {
+  color: #0f172a;
+}
+
+.rangeField input {
+  width: 100%;
+  accent-color: #2563eb;
+}
+
+.ttsStats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1px;
+  overflow: hidden;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 18px;
+  margin-bottom: 24px;
+  background: rgba(15, 23, 42, 0.08);
+}
+
+.ttsStats div {
+  min-width: 0;
+  padding: 14px 16px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.ttsStats small {
+  display: block;
+  margin-bottom: 4px;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.ttsStats strong {
+  display: block;
+  overflow: hidden;
+  color: #0f172a;
+  font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.audioGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 330px);
+  gap: 18px;
+}
+
+.audioList,
+.qrPanel {
+  min-width: 0;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 26px;
+  background: rgba(255, 255, 255, 0.72);
+  padding: 18px;
+}
+
+.audioList h3,
+.qrPanel h3 {
+  margin: 0 0 14px;
+  color: #0f172a;
+}
+
+.audioItem {
+  display: grid;
+  gap: 10px;
+  border-top: 1px solid rgba(15, 23, 42, 0.08);
+  padding: 16px 0;
+}
+
+.audioItem strong,
+.audioItem span {
+  display: block;
+}
+
+.audioItem span,
+.emptyAudio p,
+.qrPanel p {
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.audioItem audio {
+  width: 100%;
+}
+
+.audioItem button {
+  justify-self: start;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.emptyAudio {
+  display: grid;
+  min-height: 220px;
+  place-items: center;
+  text-align: center;
+}
+
+.qrPanel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+
+.qrPanel img {
+  width: min(100%, 260px);
+  border-radius: 20px;
+  background: #fff;
+  padding: 12px;
+  box-shadow: 0 20px 50px rgba(15, 23, 42, 0.12);
+}
+
+.qrPanel a {
+  margin-top: 12px;
+  color: #2563eb;
+  font-weight: 850;
+  text-decoration: none;
+  word-break: break-all;
+}
+
+.mobileListen {
+  min-height: 100vh;
+  display: grid;
+  align-content: start;
+  gap: 18px;
+  padding: 22px 16px 34px;
+  color: #e5edff;
+  background:
+    radial-gradient(circle at 30% -8%, rgba(96, 165, 250, 0.48), transparent 22rem),
+    linear-gradient(160deg, #071326 0%, #10233f 48%, #08111f 100%);
+}
+
+.mobileHero {
+  padding: 18px 4px;
+}
+
+.mobileHero span {
+  display: block;
+  margin-top: 10px;
+  color: #93c5fd;
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.mobileHero h1 {
+  margin: 10px 0 8px;
+  font-size: clamp(32px, 12vw, 54px);
+  line-height: 0.95;
+  letter-spacing: -0.06em;
+}
+
+.mobileHero p,
+.mobilePlayer small,
+.mobileList small {
+  color: rgba(226, 232, 240, 0.72);
+}
+
+.mobilePlayer,
+.mobileList {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 28px;
+  background: rgba(255, 255, 255, 0.08);
+  padding: 18px;
+  backdrop-filter: blur(18px);
+}
+
+.mobilePlayer h2 {
+  margin: 8px 0 14px;
+}
+
+.mobilePlayer audio {
+  width: 100%;
+}
+
+.mobileControls {
+  display: grid;
+  grid-template-columns: 1fr 1.25fr 1fr;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.mobileControls button,
+.mobileList button {
+  border: 0;
+  border-radius: 16px;
+  min-height: 46px;
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+  font-weight: 850;
+}
+
+.mobileControls .mobilePlay {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: #fff;
+  color: #0f172a;
+}
+
+.mobileList {
+  display: grid;
+  gap: 8px;
+}
+
+.mobileList button {
+  display: grid;
+  gap: 3px;
+  justify-items: start;
+  padding: 12px 14px;
+  text-align: left;
+}
+
+.mobileList .active {
+  background: rgba(96, 165, 250, 0.24);
+}
+
 .statStrip {
   display: grid;
   grid-template-columns: repeat(6, minmax(0, 1fr));
@@ -785,7 +1213,9 @@ button:disabled {
   }
 
   .heroGrid,
-  .workspace {
+  .workspace,
+  .ttsWorkspace,
+  .audioGrid {
     grid-template-columns: 1fr;
   }
 
@@ -794,7 +1224,8 @@ button:disabled {
     transform: none;
   }
 
-  .controlRail {
+  .controlRail,
+  .ttsControls {
     position: relative;
     top: auto;
   }
@@ -809,6 +1240,14 @@ button:disabled {
   .stageHeader {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .toolSwitch {
+    width: 100%;
+  }
+
+  .toolSwitch button {
+    flex: 1;
   }
 
   .privacyNote {
@@ -829,12 +1268,18 @@ button:disabled {
   }
 
   .twoCols,
-  .statStrip {
+  .statStrip,
+  .ttsStats,
+  .tinyActions,
+  .mobileControls {
     grid-template-columns: 1fr;
   }
 
   .previewStage,
-  .controlRail {
+  .controlRail,
+  .ttsStage,
+  .ttsControls,
+  .gateCard {
     border-radius: 24px;
   }
 
