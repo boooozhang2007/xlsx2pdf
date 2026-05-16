@@ -6,7 +6,6 @@ export const DEFAULT_CONFIG = {
   englishCol: 2,
   chineseRow: 3,
   chineseCol: 4,
-  wrapChars: 26,
   maxRows: 10000,
   rowsPerPage: 30,
   title: '英汉词表',
@@ -50,55 +49,6 @@ export const stringifyCell = (value) => {
     .replace(/\u00a0/g, ' ')
     .replace(/[ \t]+/g, ' ')
     .trim()
-}
-
-export const wrapText = (text, maxChars = 26) => {
-  const normalized = stringifyCell(text)
-  const limit = Math.max(4, Number(maxChars) || 26)
-  if (!normalized) return ['']
-
-  const paragraphs = normalized.split(/\r?\n/)
-  const lines = []
-
-  paragraphs.forEach((paragraph) => {
-    let current = ''
-    const tokens = paragraph.match(/[A-Za-z0-9]+(?:[-'][A-Za-z0-9]+)*|\s+|[^\s]/g) || []
-
-    tokens.forEach((token) => {
-      if (/^\s+$/.test(token)) {
-        if (current && !current.endsWith(' ')) current += ' '
-        return
-      }
-
-      const next = current ? current + token : token
-      if ([...next].length <= limit) {
-        current = next
-        return
-      }
-
-      if (current.trim()) lines.push(current.trim())
-
-      if ([...token].length > limit) {
-        let chunk = ''
-        for (const char of token) {
-          if ([...chunk, char].length > limit) {
-            lines.push(chunk)
-            chunk = char
-          } else {
-            chunk += char
-          }
-        }
-        current = chunk
-      } else {
-        current = token
-      }
-    })
-
-    if (current.trim()) lines.push(current.trim())
-    if (!paragraph.trim()) lines.push('')
-  })
-
-  return lines.length ? lines : ['']
 }
 
 export const paginateRows = (rows, rowsPerPage) => {

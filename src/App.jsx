@@ -369,14 +369,6 @@ function App() {
               <span>PDF 设置</span>
             </div>
             <InputField
-              label="自动换行字数"
-              value={config.wrapChars}
-              min={8}
-              max={80}
-              onChange={(value) => updateConfig({ wrapChars: value })}
-              suffix="字/行"
-            />
-            <InputField
               label="每页行数"
               value={config.rowsPerPage}
               min={1}

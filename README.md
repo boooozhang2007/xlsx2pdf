@@ -10,7 +10,7 @@
 - 选择工作表
 - 设置“英语从第几行第几列开始”与“汉语从第几行第几列开始”
 - 实时页面预览与数据预览
-- 设置自动换行字数、最多读取行数（最高 10000）、每页行数
+- 设置最多读取行数（最高 10000）和每页行数
 - 按 `example.pdf` 的版式导出同名 PDF：五列表格、页码、四线三格默写栏
 - XLSX 解析与 PDF 生成在访问者浏览器中完成
 
@@ -22,7 +22,7 @@
 - Azure Speech TTS 为优先生成通道，Edge-TTS Python 函数为备用通道；Edge-TTS 会按片段生成并在播放器/手机播放页用自定义延迟模拟停顿
 - 检测 Microsoft Edge 后可用 Web Speech API 做本机试听 fallback（不导出本机 Edge 音频）
 - 支持在线播放、下载 MP3、上传到 Cloudflare R2 后生成手机播放二维码
-- `/listen?token=...` 为移动端适配播放页，二维码 token 只读且有过期时间
+- `/listen?token=...` 为移动端适配播放页，支持保存到当前设备播放库、复制长期链接、逐段下载
 
 ## 本地运行
 
@@ -57,13 +57,14 @@ R2_BUCKET=bucket 名称
 R2_ACCESS_KEY_ID=R2 S3 API access key
 R2_SECRET_ACCESS_KEY=R2 S3 API secret
 SHARE_SIGNING_SECRET=用于签名二维码 token 的长随机字符串
-TTS_SHARE_TTL_DAYS=7
+TTS_SHARE_TTL_DAYS=3650
 ```
 
 可复制 `.env.example` 到 `.env.local` 用于 `npx vercel dev` 本地调试。
 
 音频和清单会先上传到 Vercel API，再由服务端写入 R2，因此不需要为浏览器直传配置 R2 `PUT` CORS；手机播放时服务端会换取短期 `GET` 预签名 URL。
 R2 中每次二维码分享会保存为一个可浏览前缀，例如 `tts-shares/<shareId>/manifest.json` 和 `tts-shares/<shareId>/batch-001/word-0001-cheat.mp3`。
+播放页长期保存依赖两部分：`TTS_SHARE_TTL_DAYS` 控制只读 token 有效期（默认 3650 天），`/listen` 页面会把已打开链接保存到当前浏览器 localStorage，便于之后继续播放或下载。
 
 ## Vercel 部署
 

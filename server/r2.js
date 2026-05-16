@@ -13,8 +13,8 @@ export const getR2Client = () => new S3Client({
 })
 
 export const getShareTtlMs = () => {
-  const days = Number(process.env.TTS_SHARE_TTL_DAYS || '7')
-  const safeDays = Number.isFinite(days) && days > 0 ? days : 7
+  const days = Number(process.env.TTS_SHARE_TTL_DAYS || '3650')
+  const safeDays = Number.isFinite(days) && days > 0 ? days : 3650
   return safeDays * 24 * 60 * 60 * 1000
 }
 

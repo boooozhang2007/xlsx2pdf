@@ -8,8 +8,7 @@ const mm = (value) => value * MM_TO_PT
 const PAGE_WIDTH = mm(210)
 const PAGE_HEIGHT = mm(297)
 
-// Mirrors the concrete worksheet geometry in example.pdf while keeping the
-// text fitting and four-line-grid logic from core/core.py.
+// Mirrors the concrete worksheet geometry in example.pdf.
 export const TEMPLATE = {
   pageWidth: PAGE_WIDTH,
   pageHeight: PAGE_HEIGHT,
@@ -48,13 +47,10 @@ const getTemplateMetrics = (rowsPerPage) => ({
   tableHeight: TEMPLATE.headerHeight + TEMPLATE.bodyHeight,
 })
 
-const textLength = (value) => [...String(value ?? '')].length
-
 const tokenize = (text) => {
   const rawText = String(text ?? '')
   if (!rawText) return []
 
-  // Keep the same tokenization strategy as core/core.py:
   // CJK text wraps by individual Han characters while latin/number/symbol runs
   // stay together; English phrases prefer breaking at spaces.
   if (/[\u4e00-\u9fff]/.test(rawText)) {
@@ -82,20 +78,17 @@ const tokenize = (text) => {
   return tokens
 }
 
-const wrapTextByWidth = (text, width, font, size, maxLines = 2, maxChars = Infinity) => {
+const wrapTextByWidth = (text, width, font, size, maxLines = 2) => {
   const raw = String(text ?? '')
   if (!raw) return []
 
   const lines = []
   let current = ''
-  const hasMaxChars = Number.isFinite(maxChars) && maxChars > 0
-
   for (const token of tokenize(raw)) {
     const candidate = current + token
     const withinWidth = font.widthOfTextAtSize(candidate, size) <= width
-    const withinChars = !hasMaxChars || textLength(candidate.trim()) <= maxChars
 
-    if ((withinWidth && withinChars) || !current) {
+    if (withinWidth || !current) {
       current = candidate
     } else {
       const line = current.trim()
@@ -109,11 +102,11 @@ const wrapTextByWidth = (text, width, font, size, maxLines = 2, maxChars = Infin
   return lines.slice(0, maxLines).filter(Boolean)
 }
 
-const fitLines = (text, width, font, startSize, minSize = 5.8, maxLines = 3, maxChars = Infinity) => {
+const fitLines = (text, width, font, startSize, minSize = 5.8, maxLines = 3) => {
   let size = startSize
 
   while (size >= minSize) {
-    const lines = wrapTextByWidth(text, width, font, size, maxLines, maxChars)
+    const lines = wrapTextByWidth(text, width, font, size, maxLines)
     if (!lines.length || Math.max(...lines.map((line) => font.widthOfTextAtSize(line, size))) <= width) {
       return { lines, size }
     }
@@ -121,7 +114,7 @@ const fitLines = (text, width, font, startSize, minSize = 5.8, maxLines = 3, max
   }
 
   return {
-    lines: wrapTextByWidth(text, width, font, minSize, maxLines, maxChars),
+    lines: wrapTextByWidth(text, width, font, minSize, maxLines),
     size: minSize,
   }
 }
@@ -130,7 +123,6 @@ const drawTextCentered = (page, text, x, y, w, h, font, size, options = {}) => {
   const {
     maxLines = 2,
     minSize = 6,
-    wrapChars = Infinity,
     lineHeightRatio = 1.15,
     padding = mm(1),
   } = options
@@ -138,7 +130,7 @@ const drawTextCentered = (page, text, x, y, w, h, font, size, options = {}) => {
   if (!raw) return
 
   const maxWidth = Math.max(1, w - padding * 2)
-  const { lines, size: actualSize } = fitLines(raw, maxWidth, font, size, minSize, maxLines, wrapChars)
+  const { lines, size: actualSize } = fitLines(raw, maxWidth, font, size, minSize, maxLines)
   if (!lines.length) return
 
   const leading = actualSize * lineHeightRatio
@@ -175,7 +167,6 @@ const drawTemplatePage = (page, {
   cjkFont,
   enFont,
   gridImage,
-  wrapChars,
 }) => {
   const tableX = TEMPLATE.left
   const tableTop = PAGE_HEIGHT - TEMPLATE.topMargin
@@ -244,17 +235,14 @@ const drawTemplatePage = (page, {
     drawTextCentered(page, row.index, xs[0], y, TEMPLATE.columns[0], rowHeight, enFont, 8.3 * rowFontScale, {
       maxLines: 1,
       minSize: Math.min(6.4, 6.4 * rowFontScale),
-      wrapChars: Infinity,
     })
     drawTextCentered(page, row.english, xs[1], y, TEMPLATE.columns[1], rowHeight, englishFont, 9.3 * rowFontScale, {
       maxLines: 2,
       minSize: Math.min(6.4, 6.4 * rowFontScale),
-      wrapChars,
     })
     drawTextCentered(page, row.chinese, xs[3], y, TEMPLATE.columns[3], rowHeight, cjkFont, 8.8 * rowFontScale, {
       maxLines: 3,
       minSize: Math.min(5.7, 5.7 * rowFontScale),
-      wrapChars,
     })
   })
 
@@ -284,8 +272,6 @@ export const createPdfFromRows = async (rows, config, inputFileName = 'example.x
 
   const rowsPerPage = normalizeRowsPerPage(config.rowsPerPage)
   const pages = paginateRows(rows, rowsPerPage)
-  const wrapChars = Number(config.wrapChars) || 26
-
   pages.forEach((pageRows, pageIndex) => {
     const page = pdfDoc.addPage([PAGE_WIDTH, PAGE_HEIGHT])
     drawTemplatePage(page, {
@@ -295,7 +281,6 @@ export const createPdfFromRows = async (rows, config, inputFileName = 'example.x
       cjkFont,
       enFont,
       gridImage,
-      wrapChars,
     })
   })
 
