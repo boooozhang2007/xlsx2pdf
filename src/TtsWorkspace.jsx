@@ -102,6 +102,8 @@ const createSessionId = () => {
   return `tts-${Date.now()}-${Math.random().toString(16).slice(2)}`
 }
 
+const buildQrDataUrl = (url) => QRCode.toDataURL(url, { width: 360, margin: 1 })
+
 const buildSessionTitle = (sourceName, generatedAt = Date.now()) => {
   const base = String(sourceName || '单词朗读').replace(/\.[^.]+$/, '') || '单词朗读'
   return `${base} · ${new Date(generatedAt).toLocaleString('zh-CN')}`
@@ -353,7 +355,7 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
       }
     }
 
-    QRCode.toDataURL(shareUrl, { width: 360, margin: 1 })
+    buildQrDataUrl(shareUrl)
       .then((dataUrl) => {
         if (!cancelled) setQrUrl(dataUrl)
       })
@@ -459,8 +461,12 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
       setCurrentSessionId(session.id)
       rememberLastSession(session.id)
       setSelectedAudioIndex(0)
-      setShareUrl(session.shareUrl || '')
+      const restoredShareUrl = session.shareUrl || ''
+      setShareUrl(restoredShareUrl)
       setQrUrl('')
+      if (restoredShareUrl) {
+        setQrUrl(await buildQrDataUrl(restoredShareUrl))
+      }
       setLibraryOpen(false)
       setStatus(`已恢复：${session.title}`)
     } catch (error) {
@@ -805,7 +811,7 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
       await apiJson('/api/share/finalize', { method: 'POST', body: JSON.stringify({ shareId: start.shareId }) })
 
       const url = `${window.location.origin}/listen?token=${encodeURIComponent(start.token)}`
-      const dataUrl = await QRCode.toDataURL(url, { width: 360, margin: 1 })
+      const dataUrl = await buildQrDataUrl(url)
       setShareUrl(url)
       setQrUrl(dataUrl)
       if (currentSessionId) {
@@ -988,10 +994,16 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
                     <>
                       <span className="qrPlaceholder" aria-hidden="true">
                         <QrCode size={74} />
-                        <em>待生成</em>
+                        <em>{hasShareLink ? '生成中' : '待生成'}</em>
                       </span>
-                      <strong>{busy ? '正在准备二维码' : '需要先生成二维码'}</strong>
-                      <p>{audioItems.length ? '第一次使用请先点击生成。未生成前，手机播放链接会找不到音频。' : '请先生成或恢复音频，再创建手机播放链接。'}</p>
+                      <strong>{hasShareLink ? '正在重建二维码预览' : busy ? '正在准备二维码' : '需要先生成二维码'}</strong>
+                      <p>
+                        {hasShareLink
+                          ? '手机播放链接已存在，二维码图片正在从本地链接重新生成。'
+                          : audioItems.length
+                            ? '第一次使用请先点击生成。未生成前，手机播放链接会找不到音频。'
+                            : '请先生成或恢复音频，再创建手机播放链接。'}
+                      </p>
                     </>
                   )}
                 </div>
