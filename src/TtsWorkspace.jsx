@@ -279,6 +279,20 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
   const safeSelectedAudioIndex = audioItems.length ? Math.min(selectedAudioIndex, audioItems.length - 1) : 0
   const selectedAudioItem = audioItems[safeSelectedAudioIndex] || null
   const selectedWords = selectedAudioItem?.words || []
+  const totalBatchCount = batches.length
+  const completedBatchCount = Math.min(audioItems.length, totalBatchCount || audioItems.length)
+  const taskProgress = totalBatchCount ? Math.min(100, Math.round((completedBatchCount / totalBatchCount) * 100)) : 0
+  const taskState = busy
+    ? '处理中'
+    : audioItems.length && totalBatchCount && audioItems.length < totalBatchCount
+      ? '部分生成'
+      : audioItems.length
+        ? '已生成'
+        : words.length
+          ? '已就绪'
+          : '等待输入'
+  const taskTone = busy ? 'running' : audioItems.length ? 'done' : words.length ? 'ready' : 'idle'
+  const nextBatchMeta = totalBatchCount && completedBatchCount < totalBatchCount ? batchMetas[completedBatchCount] : null
 
   useEffect(() => {
     apiJson('/api/auth/me')
@@ -976,48 +990,7 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
           </div>
         </div>
 
-        <div className="ttsStats">
-          <div>
-            <small>通道</small>
-            <strong>{config.provider === 'azure' ? 'Azure TTS' : 'Edge-TTS'}</strong>
-          </div>
-          <div>
-            <small>口音</small>
-            <strong>{config.accent === 'gb' ? '英音' : '美音'}</strong>
-          </div>
-          <div>
-            <small>音色</small>
-            <strong>{currentVoice}</strong>
-          </div>
-          <div>
-            <small>停顿</small>
-            <strong>{config.pauseMs}ms</strong>
-          </div>
-        </div>
-
-        {batchMetas.length ? (
-          <div className="batchPlan">
-            <div className="sectionHeaderCompact">
-              <div>
-                <h3>批次规划</h3>
-                <p>生成和下载都会沿用这些批次名，方便之后查找。</p>
-              </div>
-              <span>{batchMetas.length} 个批次</span>
-            </div>
-            <div className="batchPlanGrid">
-              {batchMetas.slice(0, 10).map((batch) => (
-                <div className="batchChip" key={batch.fileStem} title={`${batch.firstWord} → ${batch.lastWord}`}>
-                  <strong>B{pad3(batch.batchNo)}</strong>
-                  <span>{batch.firstWord === batch.lastWord ? batch.firstWord : `${batch.firstWord} → ${batch.lastWord}`}</span>
-                  <em>{batch.wordCount} 词</em>
-                </div>
-              ))}
-              {batchMetas.length > 10 ? <div className="batchChip muted">+{batchMetas.length - 10} 个批次</div> : null}
-            </div>
-          </div>
-        ) : null}
-
-        <div className="audioGrid">
+        <div className="studioBoard">
           <div className="audioList">
             <div className="sectionHeaderCompact">
               <div>
@@ -1136,6 +1109,72 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
             )}
           </div>
 
+          <aside className="studioSide">
+            <div className={`taskPanel ${taskTone}`}>
+              <div className="taskPanelHeader">
+                <div>
+                  <span className="eyebrow">Task</span>
+                  <h3>任务处理</h3>
+                </div>
+                <strong>{taskState}</strong>
+              </div>
+              <p>{status}</p>
+              <div className="taskProgress">
+                <span style={{ width: `${taskProgress}%` }} />
+              </div>
+              <div className="taskMetrics">
+                <div>
+                  <small>已生成</small>
+                  <strong>
+                    {completedBatchCount}/{totalBatchCount || 0}
+                  </strong>
+                </div>
+                <div>
+                  <small>单词</small>
+                  <strong>{words.length}</strong>
+                </div>
+                <div>
+                  <small>二维码</small>
+                  <strong>{shareUrl ? '已生成' : '未生成'}</strong>
+                </div>
+              </div>
+              {nextBatchMeta ? (
+                <div className="nextBatchHint">
+                  <span>下一批</span>
+                  <strong>{nextBatchMeta.firstWord === nextBatchMeta.lastWord ? nextBatchMeta.firstWord : `${nextBatchMeta.firstWord} → ${nextBatchMeta.lastWord}`}</strong>
+                  <em>{nextBatchMeta.wordCount} 词</em>
+                </div>
+              ) : null}
+            </div>
+
+            {batchMetas.length ? (
+              <div className="batchPlan">
+                <div className="sectionHeaderCompact">
+                  <div>
+                    <h3>批次规划</h3>
+                    <p>按生成顺序预览，点击播放列表可切换已生成批次。</p>
+                  </div>
+                  <span>{batchMetas.length} 个批次</span>
+                </div>
+                <div className="batchPlanGrid">
+                  {batchMetas.slice(0, 8).map((batch) => (
+                    <div className="batchChip" key={batch.fileStem} title={`${batch.firstWord} → ${batch.lastWord}`}>
+                      <strong>B{pad3(batch.batchNo)}</strong>
+                      <span>{batch.firstWord === batch.lastWord ? batch.firstWord : `${batch.firstWord} → ${batch.lastWord}`}</span>
+                      <em>{batch.wordCount} 词</em>
+                    </div>
+                  ))}
+                  {batchMetas.length > 8 ? <div className="batchChip muted">+{batchMetas.length - 8} 个批次</div> : null}
+                </div>
+              </div>
+            ) : (
+              <div className="batchPlan emptyPlan">
+                <span className="eyebrow">Queue</span>
+                <h3>等待单词</h3>
+                <p>粘贴或导入单词后，这里会显示批次规划和处理进度。</p>
+              </div>
+            )}
+          </aside>
         </div>
       </section>
 

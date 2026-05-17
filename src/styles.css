@@ -868,6 +868,148 @@ button:disabled {
   accent-color: #2563eb;
 }
 
+.studioBoard {
+  display: grid;
+  grid-template-columns: minmax(0, 1.45fr) minmax(280px, 360px);
+  align-items: start;
+  gap: 18px;
+}
+
+.studioSide {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+
+.taskPanel {
+  display: grid;
+  gap: 14px;
+  overflow: hidden;
+  border-radius: 26px;
+  background:
+    radial-gradient(circle at 100% 0%, rgba(147, 197, 253, 0.26), transparent 13rem),
+    linear-gradient(145deg, #0f172a 0%, #1e293b 100%);
+  color: #fff;
+  padding: 18px;
+  box-shadow: 0 24px 60px rgba(15, 23, 42, 0.18);
+}
+
+.taskPanelHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.taskPanelHeader h3 {
+  margin: 4px 0 0;
+  color: #fff;
+  font-size: 24px;
+  line-height: 1;
+  letter-spacing: -0.04em;
+}
+
+.taskPanelHeader strong {
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: rgba(96, 165, 250, 0.18);
+  color: #bfdbfe;
+  padding: 7px 10px;
+  font-size: 12px;
+  font-weight: 950;
+}
+
+.taskPanel.done .taskPanelHeader strong {
+  background: rgba(34, 197, 94, 0.16);
+  color: #bbf7d0;
+}
+
+.taskPanel.ready .taskPanelHeader strong {
+  background: rgba(250, 204, 21, 0.14);
+  color: #fef3c7;
+}
+
+.taskPanel p {
+  margin: 0;
+  color: rgba(226, 232, 240, 0.78);
+  font-size: 13px;
+  font-weight: 750;
+  line-height: 1.55;
+}
+
+.taskProgress {
+  height: 9px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.taskProgress span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #60a5fa, #bfdbfe);
+  transition: width 240ms ease;
+}
+
+.taskMetrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.taskMetrics div {
+  min-width: 0;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.08);
+  padding: 10px;
+}
+
+.taskMetrics small {
+  display: block;
+  margin-bottom: 4px;
+  color: rgba(226, 232, 240, 0.68);
+  font-size: 11px;
+  font-weight: 850;
+}
+
+.taskMetrics strong {
+  display: block;
+  overflow: hidden;
+  color: #fff;
+  font-size: 15px;
+  font-weight: 950;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nextBatchHint {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  padding-top: 12px;
+}
+
+.nextBatchHint span,
+.nextBatchHint em {
+  color: rgba(226, 232, 240, 0.68);
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 850;
+}
+
+.nextBatchHint strong {
+  overflow: hidden;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 950;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .ttsStats {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -940,6 +1082,34 @@ button:disabled {
   border-radius: 24px;
   background: rgba(255, 255, 255, 0.6);
   padding: 16px;
+}
+
+.studioSide .batchPlan {
+  margin-bottom: 0;
+}
+
+.studioSide .batchPlanGrid {
+  grid-template-columns: 1fr;
+  max-height: 360px;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.emptyPlan {
+  display: grid;
+  gap: 8px;
+}
+
+.emptyPlan h3 {
+  margin: 0;
+  color: #0f172a;
+}
+
+.emptyPlan p {
+  margin: 0;
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.6;
 }
 
 .batchPlanGrid {
@@ -2503,6 +2673,7 @@ button:disabled {
   .heroGrid,
   .workspace,
   .ttsWorkspace,
+  .studioBoard,
   .audioGrid,
   .compactAudioShell,
   .desktopListenGrid {
