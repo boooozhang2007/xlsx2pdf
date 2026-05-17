@@ -93,3 +93,75 @@ export const base64ToBlob = (base64, contentType = 'audio/mpeg') => {
   const bytes = Uint8Array.from(atob(base64), (char) => char.charCodeAt(0))
   return new Blob([bytes], { type: contentType })
 }
+
+const getAudioContextCtor = () => window.AudioContext || window.webkitAudioContext
+
+const audioBufferToInt16 = (audioBuffer) => {
+  const channel = audioBuffer.getChannelData(0)
+  const samples = new Int16Array(channel.length)
+  for (let index = 0; index < channel.length; index += 1) {
+    const value = Math.max(-1, Math.min(1, channel[index]))
+    samples[index] = value < 0 ? value * 0x8000 : value * 0x7fff
+  }
+  return samples
+}
+
+const encodeMonoMp3 = async (audioBuffer) => {
+  const lame = await import('lamejs')
+  const Mp3Encoder = lame.Mp3Encoder || lame.default?.Mp3Encoder
+  if (!Mp3Encoder) throw new Error('MP3 编码器加载失败。')
+
+  const samples = audioBufferToInt16(audioBuffer)
+  const encoder = new Mp3Encoder(1, audioBuffer.sampleRate, 128)
+  const chunks = []
+  const blockSize = 1152
+
+  for (let offset = 0; offset < samples.length; offset += blockSize) {
+    const mp3buf = encoder.encodeBuffer(samples.subarray(offset, offset + blockSize))
+    if (mp3buf.length) chunks.push(mp3buf)
+  }
+
+  const end = encoder.flush()
+  if (end.length) chunks.push(end)
+  return new Blob(chunks, { type: 'audio/mpeg' })
+}
+
+export const mergeSegmentBlobsToMp3 = async (segments = [], pauseMs = 0) => {
+  const sourceSegments = segments.filter((segment) => segment?.blob)
+  if (!sourceSegments.length) throw new Error('没有可合并的 Edge-TTS 音频片段。')
+
+  const AudioContextCtor = getAudioContextCtor()
+  if (!AudioContextCtor || typeof OfflineAudioContext === 'undefined') {
+    throw new Error('当前浏览器不支持音频合成，请改用 Azure 或更新浏览器。')
+  }
+
+  const audioContext = new AudioContextCtor()
+  try {
+    const decoded = []
+    for (const segment of sourceSegments) {
+      const arrayBuffer = await segment.blob.arrayBuffer()
+      decoded.push(await audioContext.decodeAudioData(arrayBuffer.slice(0)))
+    }
+
+    const sampleRate = decoded[0]?.sampleRate || 24000
+    const pauseFrames = Math.max(0, Math.round((Number(pauseMs) || 0) * sampleRate / 1000))
+    const totalFrames = decoded.reduce((sum, buffer) => sum + Math.ceil(buffer.duration * sampleRate), 0)
+      + pauseFrames * Math.max(0, decoded.length - 1)
+    const offline = new OfflineAudioContext(1, Math.max(1, totalFrames), sampleRate)
+
+    let cursor = 0
+    decoded.forEach((buffer, index) => {
+      const source = offline.createBufferSource()
+      source.buffer = buffer
+      source.connect(offline.destination)
+      source.start(cursor / sampleRate)
+      cursor += Math.ceil(buffer.duration * sampleRate)
+      if (index < decoded.length - 1) cursor += pauseFrames
+    })
+
+    const rendered = await offline.startRendering()
+    return encodeMonoMp3(rendered)
+  } finally {
+    audioContext.close?.()
+  }
+}

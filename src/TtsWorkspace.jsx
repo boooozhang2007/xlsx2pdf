@@ -24,6 +24,7 @@ import {
   downloadNamedBlob,
   getSpeechSupport,
   isEdgeBrowser,
+  mergeSegmentBlobsToMp3,
   speakWordsLocally,
   splitWords,
   uniqueKeepOrder,
@@ -529,7 +530,7 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
     pauseMs: config.pauseMs,
   })
 
-  const generateEdgeSegmentedBatch = async (batch, index) => {
+  const generateEdgeBatch = async (batch, index) => {
     const meta = batchMetas[index] || buildBatchMeta(batch, index)
     const data = await apiJson('/api/tts/edge', {
       method: 'POST',
@@ -541,23 +542,25 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
         word: segment.text,
         fileStem: `${pad3(segmentIndex + 1)}_${sanitizeFilePart(segment.text)}`,
         blob,
-        url: URL.createObjectURL(blob),
       }
     })
     if (!segments.length) throw new Error('Edge-TTS 未返回可播放片段。')
+    const blob = await mergeSegmentBlobsToMp3(segments, config.pauseMs)
     return {
       id: `${Date.now()}-${index}`,
+      blob,
+      url: URL.createObjectURL(blob),
       words: batch,
       label: meta.title,
       ...meta,
       provider: 'edge',
       pauseMs: config.pauseMs,
-      segments,
+      edgeSegmentCount: segments.length,
     }
   }
 
   const generateBatch = async (batch, index) => {
-    if (config.provider === 'edge') return generateEdgeSegmentedBatch(batch, index)
+    if (config.provider === 'edge') return generateEdgeBatch(batch, index)
 
     const meta = batchMetas[index] || buildBatchMeta(batch, index)
     const blob = await fetchAudioBlob(getAudioEndpoint(config.provider), buildPayload(batch))
@@ -1038,14 +1041,14 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
                           {selectedAudioItem.subtitle || `${selectedAudioItem.words.length} 词`}
                           {selectedAudioItem.segments?.length
                             ? ` · Edge 分段 ${selectedAudioItem.segments.length} 个`
-                            : ` · ${selectedAudioItem.provider === 'azure' ? 'Azure MP3' : 'MP3'}`}
+                            : ` · ${selectedAudioItem.provider === 'azure' ? 'Azure MP3' : 'Edge MP3'}`}
                         </p>
+                        <div className="playerMetaStrip">
+                          <span>{config.accent === 'gb' ? '英音' : '美音'}</span>
+                          <span>{currentVoice}</span>
+                          <span>停顿 {selectedAudioItem.pauseMs ?? config.pauseMs}ms</span>
+                        </div>
                       </div>
-                    </div>
-                    <div className="playerMetaStrip">
-                      <span>{config.accent === 'gb' ? '英音' : '美音'}</span>
-                      <span>{currentVoice}</span>
-                      <span>停顿 {selectedAudioItem.pauseMs ?? config.pauseMs}ms</span>
                     </div>
                     <WordSummary words={selectedWords} />
                     {selectedAudioItem.segments?.length ? (

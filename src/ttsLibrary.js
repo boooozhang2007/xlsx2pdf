@@ -55,6 +55,7 @@ const stripRuntimeAudio = (item) => ({
   lastWord: item.lastWord,
   wordCount: item.wordCount,
   fileStem: item.fileStem,
+  edgeSegmentCount: item.edgeSegmentCount,
   segments: item.segments?.map((segment) => ({
     word: segment.word,
     fileStem: segment.fileStem,
