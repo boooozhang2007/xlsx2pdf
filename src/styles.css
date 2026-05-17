@@ -693,6 +693,7 @@ button:disabled {
 .tinyActions button,
 .secondaryButton,
 .ghostAction,
+.playlistButton,
 .libraryButton,
 .logoutButton,
 .qrButton,
@@ -717,6 +718,11 @@ button:disabled {
 .libraryButton {
   background: #fff7ed;
   color: #c2410c;
+}
+
+.playlistButton {
+  background: #f1f5f9;
+  color: #0f172a;
 }
 
 .secondaryButton,
@@ -954,6 +960,77 @@ button:disabled {
   font-weight: 800;
 }
 
+.wordHoverWrap {
+  position: relative;
+  width: fit-content;
+  max-width: 100%;
+  z-index: 4;
+}
+
+.wordHoverButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  border: 0;
+  border-radius: 999px;
+  min-height: 38px;
+  background: #fff;
+  color: #0f172a;
+  padding: 0 13px;
+  font-weight: 900;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
+}
+
+.wordHoverButton span {
+  color: #2563eb;
+  font-size: 12px;
+}
+
+.wordHoverButton strong {
+  color: #0f172a;
+  font-size: 13px;
+}
+
+.wordTooltip {
+  position: absolute;
+  left: 0;
+  top: calc(100% + 10px);
+  z-index: 8;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  width: min(520px, calc(100vw - 72px));
+  max-height: 260px;
+  overflow: auto;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 0 24px 70px rgba(15, 23, 42, 0.22);
+  opacity: 0;
+  padding: 14px;
+  pointer-events: none;
+  transform: translateY(-6px) scale(0.98);
+  transition:
+    opacity 150ms ease,
+    transform 150ms ease;
+}
+
+.wordHoverWrap:hover .wordTooltip,
+.wordHoverWrap:focus-within .wordTooltip {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0) scale(1);
+}
+
+.wordTooltip span {
+  border-radius: 999px;
+  background: #eff6ff;
+  color: #1e3a8a;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 850;
+}
+
 .audioItem span,
 .emptyAudio p,
 .qrPanel p {
@@ -983,6 +1060,52 @@ button:disabled {
   grid-template-columns: 1fr;
   gap: 14px;
   align-items: start;
+}
+
+.playlistDockButton {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 3px 12px;
+  align-items: center;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.84);
+  color: #0f172a;
+  padding: 14px 16px;
+  text-align: left;
+  transition:
+    transform 150ms ease,
+    border-color 150ms ease,
+    background 150ms ease;
+}
+
+.playlistDockButton:hover {
+  transform: translateY(-1px);
+  border-color: rgba(37, 99, 235, 0.24);
+  background: #fff;
+}
+
+.playlistDockButton span {
+  color: #2563eb;
+  font-size: 12px;
+  font-weight: 950;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.playlistDockButton strong {
+  justify-self: end;
+  color: #0f172a;
+  font-size: 14px;
+  font-weight: 950;
+}
+
+.playlistDockButton em {
+  grid-column: 1 / -1;
+  color: #64748b;
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 800;
 }
 
 .activeAudioPanel {
@@ -1038,7 +1161,7 @@ button:disabled {
 }
 
 .playerHeroCopy small {
-  color: rgba(191, 219, 254, 0.88);
+  color: #bfdbfe;
   font-size: 11px;
   font-weight: 950;
   letter-spacing: 0.12em;
@@ -1048,15 +1171,17 @@ button:disabled {
 .playerHeroCopy h3 {
   overflow: hidden;
   margin: 6px 0;
+  color: #fff;
   font-size: clamp(24px, 3vw, 34px);
   line-height: 0.98;
   letter-spacing: -0.05em;
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.34);
   text-overflow: ellipsis;
 }
 
 .playerHeroCopy p {
   margin: 0;
-  color: rgba(226, 232, 240, 0.74);
+  color: rgba(255, 255, 255, 0.94);
   font-size: 13px;
   font-weight: 750;
 }
@@ -1071,8 +1196,8 @@ button:disabled {
   max-width: 100%;
   overflow: hidden;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.1);
-  color: rgba(226, 232, 240, 0.86);
+  background: rgba(255, 255, 255, 0.16);
+  color: rgba(255, 255, 255, 0.94);
   padding: 6px 9px;
   font-size: 11px;
   font-weight: 850;
@@ -1300,6 +1425,10 @@ button:disabled {
   font-size: 11px;
 }
 
+.storagePreview {
+  display: none;
+}
+
 .libraryOverlay {
   position: fixed;
   inset: 0;
@@ -1423,6 +1552,152 @@ button:disabled {
 .emptyLibrary h3 {
   margin: 0;
   color: #0f172a;
+}
+
+.playlistOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 62;
+  display: flex;
+  justify-content: flex-end;
+  align-items: stretch;
+  padding: 14px;
+  background: rgba(2, 6, 23, 0.34);
+  backdrop-filter: blur(8px);
+}
+
+.playlistSheet {
+  width: min(420px, 100%);
+  overflow: auto;
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  border-radius: 32px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 36px 120px rgba(2, 6, 23, 0.32);
+  padding: 18px;
+  animation: playlistSheetIn 180ms ease both;
+}
+
+@keyframes playlistSheetIn {
+  from {
+    opacity: 0;
+    transform: translateX(24px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+}
+
+@keyframes playlistBottomIn {
+  from {
+    opacity: 0;
+    transform: translateY(24px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.playlistHandle {
+  width: 52px;
+  height: 5px;
+  border-radius: 999px;
+  background: #cbd5e1;
+  margin: 0 auto 14px;
+}
+
+.playlistHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 16px;
+}
+
+.playlistHeader h2 {
+  margin: 4px 0 6px;
+  color: #0f172a;
+  font-size: 30px;
+  line-height: 1;
+  letter-spacing: -0.05em;
+}
+
+.playlistHeader p {
+  margin: 0;
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.playlistHeader button {
+  border: 0;
+  border-radius: 999px;
+  min-height: 40px;
+  background: #0f172a;
+  color: #fff;
+  padding: 0 14px;
+  font-weight: 850;
+}
+
+.playlistItems {
+  display: grid;
+  gap: 9px;
+}
+
+.playlistItem {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr);
+  gap: 2px 12px;
+  align-items: center;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 18px;
+  background: #f8fafc;
+  color: #0f172a;
+  padding: 11px;
+  text-align: left;
+}
+
+.playlistItem strong {
+  grid-row: 1 / 3;
+  display: grid;
+  width: 44px;
+  height: 44px;
+  place-items: center;
+  border-radius: 15px;
+  background: #eff6ff;
+  color: #2563eb;
+  font-size: 12px;
+  font-weight: 950;
+}
+
+.playlistItem span {
+  overflow: hidden;
+  font-weight: 950;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.playlistItem em {
+  color: #64748b;
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 820;
+}
+
+.playlistItem.active {
+  border-color: transparent;
+  background: #0f172a;
+  color: #fff;
+}
+
+.playlistItem.active strong {
+  background: rgba(255, 255, 255, 0.14);
+  color: #fff;
+}
+
+.playlistItem.active em {
+  color: rgba(226, 232, 240, 0.78);
 }
 
 .mobileListen {
@@ -1618,6 +1893,304 @@ button:disabled {
 .mobileLinkButton {
   width: fit-content;
   padding: 0 16px;
+}
+
+.desktopListen {
+  min-height: 100vh;
+  display: grid;
+  align-content: start;
+  gap: 22px;
+  padding: clamp(24px, 4vw, 48px);
+  color: #0f172a;
+  background:
+    radial-gradient(circle at 80% 0%, rgba(37, 99, 235, 0.18), transparent 28rem),
+    linear-gradient(135deg, #f8fafc 0%, #eef2ff 52%, #fff7ed 100%);
+}
+
+.desktopListenHero {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+  max-width: 1240px;
+  width: 100%;
+  margin: 0 auto;
+}
+
+.desktopListenHero span {
+  color: #2563eb;
+  font-size: 12px;
+  font-weight: 950;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.desktopListenHero h1 {
+  max-width: 860px;
+  margin: 8px 0;
+  font-size: clamp(36px, 5vw, 76px);
+  line-height: 0.92;
+  letter-spacing: -0.07em;
+}
+
+.desktopListenHero p,
+.desktopListenHero small {
+  margin: 0;
+  color: #64748b;
+  line-height: 1.65;
+}
+
+.desktopListenActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.desktopListenActions button,
+.desktopListenActions a,
+.desktopDownload {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 0;
+  border-radius: 999px;
+  min-height: 44px;
+  background: #0f172a;
+  color: #fff;
+  padding: 0 16px;
+  font-weight: 850;
+  text-decoration: none;
+}
+
+.desktopListenActions button:disabled {
+  opacity: 1;
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.desktopListenGrid {
+  display: grid;
+  grid-template-columns: minmax(360px, 0.82fr) minmax(0, 1.18fr);
+  gap: 20px;
+  max-width: 1240px;
+  width: 100%;
+  margin: 0 auto;
+}
+
+.desktopListenPlayer,
+.desktopListenList,
+.desktopSavedGrid {
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 34px;
+  background: rgba(255, 255, 255, 0.82);
+  box-shadow: 0 30px 90px rgba(15, 23, 42, 0.12);
+  backdrop-filter: blur(18px);
+}
+
+.desktopListenPlayer {
+  display: grid;
+  gap: 16px;
+  align-content: start;
+  padding: clamp(22px, 3vw, 34px);
+}
+
+.desktopListenPlayer > small {
+  color: #2563eb;
+  font-size: 12px;
+  font-weight: 950;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.desktopListenPlayer h2 {
+  margin: 0;
+  color: #0f172a;
+  font-size: clamp(30px, 4vw, 58px);
+  line-height: 0.95;
+  letter-spacing: -0.06em;
+}
+
+.desktopListenPlayer p {
+  margin: 0;
+  color: #475569;
+  line-height: 1.6;
+  word-break: break-word;
+}
+
+.desktopListenPlayer audio {
+  width: 100%;
+}
+
+.desktopListenControls {
+  display: grid;
+  grid-template-columns: 1fr 1.3fr 1fr;
+  gap: 10px;
+}
+
+.desktopListenControls button {
+  border: 0;
+  border-radius: 18px;
+  min-height: 48px;
+  background: #eef2ff;
+  color: #1d4ed8;
+  font-weight: 900;
+}
+
+.desktopListenControls .desktopListenPlay {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: #0f172a;
+  color: #fff;
+}
+
+.desktopDownload {
+  justify-self: start;
+  border-radius: 18px;
+}
+
+.desktopListenList {
+  display: grid;
+  gap: 12px;
+  max-height: calc(100vh - 190px);
+  overflow: auto;
+  padding: 20px;
+}
+
+.desktopListHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.desktopListHeader h3 {
+  margin: 0;
+  color: #0f172a;
+  font-size: 24px;
+  letter-spacing: -0.03em;
+}
+
+.desktopListHeader span {
+  border-radius: 999px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.desktopListenBatch {
+  display: grid;
+  gap: 8px;
+  border-top: 1px solid rgba(15, 23, 42, 0.08);
+  padding-top: 14px;
+}
+
+.desktopListenBatch > strong {
+  color: #0f172a;
+}
+
+.desktopListenBatch > small {
+  color: #64748b;
+}
+
+.desktopListenTrack {
+  display: grid;
+  gap: 3px;
+  border: 0;
+  border-radius: 16px;
+  background: #f8fafc;
+  color: #0f172a;
+  padding: 12px 14px;
+  text-align: left;
+}
+
+.desktopListenTrack span {
+  font-weight: 900;
+}
+
+.desktopListenTrack em {
+  overflow: hidden;
+  color: #64748b;
+  font-size: 12px;
+  font-style: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.desktopListenTrack.active {
+  background: #0f172a;
+  color: #fff;
+}
+
+.desktopListenTrack.active em {
+  color: rgba(226, 232, 240, 0.76);
+}
+
+.desktopSavedGrid {
+  display: grid;
+  gap: 12px;
+  max-width: 1240px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 20px;
+}
+
+.desktopSavedItem {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  border-radius: 20px;
+  background: #f8fafc;
+  padding: 16px;
+}
+
+.desktopSavedItem a {
+  display: grid;
+  gap: 4px;
+  color: inherit;
+  text-decoration: none;
+}
+
+.desktopSavedItem strong {
+  color: #0f172a;
+}
+
+.desktopSavedItem span,
+.desktopSavedItem small {
+  color: #64748b;
+}
+
+.desktopSavedItem button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 0;
+  border-radius: 14px;
+  min-height: 40px;
+  background: #fee2e2;
+  color: #b91c1c;
+  padding: 0 13px;
+  font-weight: 850;
+}
+
+.desktopEmptyListen {
+  display: grid;
+  place-items: center;
+  gap: 8px;
+  min-height: 260px;
+  color: #64748b;
+  text-align: center;
+}
+
+.desktopEmptyListen h2 {
+  margin: 0;
+  color: #0f172a;
 }
 
 .statStrip {
@@ -1875,7 +2448,8 @@ button:disabled {
   .workspace,
   .ttsWorkspace,
   .audioGrid,
-  .compactAudioShell {
+  .compactAudioShell,
+  .desktopListenGrid {
     grid-template-columns: 1fr;
   }
 
@@ -1983,6 +2557,22 @@ button:disabled {
   .playerOrb {
     width: 56px;
     height: 56px;
+  }
+
+  .playlistOverlay {
+    align-items: flex-end;
+    padding: 0;
+  }
+
+  .playlistSheet {
+    width: 100%;
+    max-height: 82vh;
+    border-radius: 28px 28px 0 0;
+    animation-name: playlistBottomIn;
+  }
+
+  .wordTooltip {
+    width: min(100%, calc(100vw - 48px));
   }
 
   .pdfCanvas {

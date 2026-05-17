@@ -6,6 +6,11 @@ const SAVED_KEY = 'xlsx2pdf_tts_saved_shares'
 
 const getTokenFromLocation = () => new URLSearchParams(window.location.search).get('token') || ''
 
+const isMobileViewport = () => {
+  if (typeof window === 'undefined') return true
+  return window.matchMedia('(max-width: 760px), (pointer: coarse)').matches
+}
+
 const readSavedShares = () => {
   try {
     const parsed = JSON.parse(localStorage.getItem(SAVED_KEY) || '[]')
@@ -87,6 +92,44 @@ function SavedLibrary({ saved, onDelete }) {
   )
 }
 
+function DesktopSavedLibrary({ saved, onDelete }) {
+  return (
+    <main className="desktopListen">
+      <section className="desktopListenHero">
+        <div>
+          <span>Saved Word Listen</span>
+          <h1>{saved.length ? '已保存播放页' : '暂无保存的播放页'}</h1>
+          <p>电脑端播放库使用更宽的列表视图；保存仍然只在当前浏览器本地有效。</p>
+        </div>
+      </section>
+
+      <section className="desktopSavedGrid">
+        {saved.length ? (
+          saved.map((item) => (
+            <div className="desktopSavedItem" key={item.token}>
+              <a href={`/listen?token=${encodeURIComponent(item.token)}`}>
+                <strong>{item.title || '单词朗读'}</strong>
+                {item.summary ? <span>{item.summary}</span> : null}
+                <small>
+                  {item.totalWords || 0} 个单词 · {item.trackCount || 0} 段 · 保存于 {new Date(item.savedAt).toLocaleDateString('zh-CN')}
+                </small>
+              </a>
+              <button type="button" onClick={() => onDelete(item.token)} aria-label="删除保存">
+                <Trash2 size={16} /> 删除
+              </button>
+            </div>
+          ))
+        ) : (
+          <div className="desktopEmptyListen">
+            <Headphones size={38} />
+            <h2>扫码或打开一个播放链接后会出现在这里</h2>
+          </div>
+        )}
+      </section>
+    </main>
+  )
+}
+
 function MobileListenPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -96,6 +139,7 @@ function MobileListenPage() {
   const [currentIndex, setCurrentIndex] = useState(0)
   const [playing, setPlaying] = useState(false)
   const [notice, setNotice] = useState('')
+  const [mobileView, setMobileView] = useState(() => isMobileViewport())
   const audioRef = useRef(null)
   const timerRef = useRef(null)
 
@@ -130,6 +174,9 @@ function MobileListenPage() {
 
     return groups
   }, [manifest, tracks])
+  const currentBatch = currentTrack
+    ? groupedTracks.find((group) => group.tracks.some((entry) => entry.index === currentIndex))
+    : null
 
   const persistCurrent = (loadedManifest = manifest, loadedExpiresAt = expiresAt) => {
     if (!token || !loadedManifest) return
@@ -173,6 +220,13 @@ function MobileListenPage() {
       .finally(() => setLoading(false))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token])
+
+  useEffect(() => {
+    const update = () => setMobileView(isMobileViewport())
+    update()
+    window.addEventListener('resize', update)
+    return () => window.removeEventListener('resize', update)
+  }, [])
 
   useEffect(() => {
     const audio = audioRef.current
@@ -227,22 +281,111 @@ function MobileListenPage() {
 
   if (loading) {
     return (
-      <main className="mobileListen">
+      <main className={mobileView ? 'mobileListen' : 'desktopListen'}>
         <Loader2 className="spin" size={28} />
         <p>正在载入播放清单…</p>
       </main>
     )
   }
 
-  if (!token) return <SavedLibrary saved={saved} onDelete={deleteSaved} />
+  if (!token) {
+    return mobileView ? <SavedLibrary saved={saved} onDelete={deleteSaved} /> : <DesktopSavedLibrary saved={saved} onDelete={deleteSaved} />
+  }
 
   if (error) {
     return (
-      <main className="mobileListen">
+      <main className={mobileView ? 'mobileListen' : 'desktopListen'}>
         <Headphones size={34} />
         <h1>无法播放</h1>
         <p>{error}</p>
         {saved.length ? <a className="mobileLinkButton" href="/listen">查看已保存播放页</a> : null}
+      </main>
+    )
+  }
+
+  if (!mobileView) {
+    return (
+      <main className="desktopListen">
+        <section className="desktopListenHero">
+          <div>
+            <span>Desktop Word Listen</span>
+            <h1>{manifest?.title || '单词朗读'}</h1>
+            <p>
+              共 {manifest?.totalWords || 0} 个单词 · {tracks.length} 段音频
+              {expiresAt ? ` · 链接有效至 ${new Date(expiresAt).toLocaleDateString('zh-CN')}` : ''}
+            </p>
+          </div>
+          <div className="desktopListenActions">
+            <button type="button" onClick={() => persistCurrent()} disabled={savedCurrent}>
+              <Save size={16} /> {savedCurrent ? '已保存' : '保存'}
+            </button>
+            <button type="button" onClick={copyLink}>
+              <LinkIcon size={16} /> 复制链接
+            </button>
+            <a href="/listen">播放库</a>
+          </div>
+          {notice ? <small>{notice}</small> : null}
+        </section>
+
+        <section className="desktopListenGrid">
+          <section className="desktopListenPlayer">
+            <small>
+              第 {currentIndex + 1} / {tracks.length} 段
+            </small>
+            <h2>{currentTrack?.batchTitle || currentBatch?.title || currentTrack?.label || '准备播放'}</h2>
+            <p>
+              {currentTrack?.label && currentTrack?.batchTitle !== currentTrack?.label ? `${currentTrack.label} · ` : ''}
+              {currentTrack?.fileName || currentTrack?.batchLabel || ''}
+            </p>
+            <audio ref={audioRef} src={currentTrack?.url || ''} preload="metadata" controls />
+            <div className="desktopListenControls">
+              <button type="button" onClick={() => jumpTo(Math.max(0, currentIndex - 1))} disabled={currentIndex <= 0}>
+                上一段
+              </button>
+              <button className="desktopListenPlay" type="button" onClick={togglePlay} disabled={!currentTrack}>
+                {playing ? <Pause size={18} /> : <Play size={18} />}
+                {playing ? '暂停' : '播放'}
+              </button>
+              <button
+                type="button"
+                onClick={() => jumpTo(Math.min(tracks.length - 1, currentIndex + 1))}
+                disabled={currentIndex >= tracks.length - 1}
+              >
+                下一段
+              </button>
+            </div>
+            {currentTrack?.url ? (
+              <button className="desktopDownload" type="button" onClick={() => downloadUrl(currentTrack.url, safeMp3Name(currentTrack.fileName || currentTrack.label))}>
+                <Download size={16} /> 下载当前音频
+              </button>
+            ) : null}
+          </section>
+
+          <aside className="desktopListenList">
+            <div className="desktopListHeader">
+              <h3>播放列表</h3>
+              <span>{groupedTracks.length} 个批次</span>
+            </div>
+            {groupedTracks.map((group) => (
+              <div className="desktopListenBatch" key={group.key}>
+                <strong>{group.title}</strong>
+                <small>
+                  {group.subtitle}
+                  {group.batchLabel ? ` · ${group.batchLabel}` : ''}
+                </small>
+                {group.tracks.map(({ track, index }) => (
+                  <button className={index === currentIndex ? 'desktopListenTrack active' : 'desktopListenTrack'} key={track.key || index} type="button" onClick={() => jumpTo(index)}>
+                    <span>{track.label || `第 ${index + 1} 段`}</span>
+                    <em>
+                      {track.words?.slice(0, 5).join(' · ')}
+                      {track.words?.length > 5 ? ` · +${track.words.length - 5}` : ''}
+                    </em>
+                  </button>
+                ))}
+              </div>
+            ))}
+          </aside>
+        </section>
       </main>
     )
   }

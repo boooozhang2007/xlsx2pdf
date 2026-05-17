@@ -2,7 +2,6 @@ import React, { useEffect, useMemo, useRef, useState } from 'react'
 import * as XLSX from 'xlsx'
 import {
   ArrowDownToLine,
-  Check,
   Columns3,
   FileSpreadsheet,
   FileText,
@@ -219,10 +218,6 @@ function App() {
             <button className={activeTool === 'tts' ? 'active' : ''} type="button" onClick={() => setTool('tts')}>
               <Headphones size={15} /> 单词朗读
             </button>
-          </div>
-          <div className="privacyNote">
-            <Check size={15} />
-            浏览器本地处理 · 适合部署到 Vercel
           </div>
         </nav>
 

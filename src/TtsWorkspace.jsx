@@ -164,6 +164,24 @@ const RangeField = ({ label, value, min, max, step = 1, suffix, onChange }) => (
   </label>
 )
 
+function HoverWordList({ words = [] }) {
+  const fullText = words.join(' · ')
+
+  return (
+    <div className="wordHoverWrap">
+      <button className="wordHoverButton" type="button" title={fullText}>
+        <span>{words.length} 个单词</span>
+        <strong>悬停查看全部</strong>
+      </button>
+      <div className="wordTooltip" role="tooltip">
+        {words.map((word, index) => (
+          <span key={`${word}-${index}`}>{word}</span>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 function SegmentedAudioPlayer({ item }) {
   const [index, setIndex] = useState(0)
   const [playing, setPlaying] = useState(false)
@@ -236,10 +254,10 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
   const [busy, setBusy] = useState(false)
   const [qrUrl, setQrUrl] = useState('')
   const [shareUrl, setShareUrl] = useState('')
-  const [shareSummary, setShareSummary] = useState(null)
   const [selectedAudioIndex, setSelectedAudioIndex] = useState(0)
   const [currentSessionId, setCurrentSessionId] = useState('')
   const [libraryOpen, setLibraryOpen] = useState(false)
+  const [playlistOpen, setPlaylistOpen] = useState(false)
   const [libraryItems, setLibraryItems] = useState([])
   const [restoreChecked, setRestoreChecked] = useState(false)
   const [localSpeaking, setLocalSpeaking] = useState(false)
@@ -262,6 +280,7 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
   const isEdge = isEdgeBrowser()
   const safeSelectedAudioIndex = audioItems.length ? Math.min(selectedAudioIndex, audioItems.length - 1) : 0
   const selectedAudioItem = audioItems[safeSelectedAudioIndex] || null
+  const selectedWords = selectedAudioItem?.words || []
 
   useEffect(() => {
     apiJson('/api/auth/me')
@@ -377,7 +396,6 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
       setSelectedAudioIndex(0)
       setShareUrl(session.shareUrl || '')
       setQrUrl('')
-      setShareSummary(session.shareSummary || null)
       setLibraryOpen(false)
       setStatus(`已恢复：${session.title}`)
     } catch (error) {
@@ -400,7 +418,6 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
         setAudioItems([])
         setShareUrl('')
         setQrUrl('')
-        setShareSummary(null)
       }
       await refreshLibrary()
       setStatus('已删除本地生成记录。')
@@ -431,10 +448,10 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
     setAudioItems([])
     setShareUrl('')
     setQrUrl('')
-    setShareSummary(null)
     setSelectedAudioIndex(0)
     setCurrentSessionId('')
     setLibraryOpen(false)
+    setPlaylistOpen(false)
     setStatus('已退出单词朗读板块。')
   }
 
@@ -520,9 +537,9 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
       setAudioItems([item])
       setShareUrl('')
       setQrUrl('')
-      setShareSummary(null)
       setSelectedAudioIndex(0)
       await persistGeneratedSession([item])
+      setPlaylistOpen(false)
       setStatus('试听音频已生成，可在线播放。')
     } catch (error) {
       setStatus(error.message || '试听生成失败。')
@@ -537,7 +554,6 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
     setAudioItems([])
     setShareUrl('')
     setQrUrl('')
-    setShareSummary(null)
     setSelectedAudioIndex(0)
     setCurrentSessionId('')
     setStatus(`准备生成 ${batches.length} 段音频…`)
@@ -592,7 +608,7 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
   const createQrShare = async () => {
     if (!audioItems.length) return setStatus('请先生成音频。')
     setBusy(true)
-    setStatus('正在创建 R2 分享并上传音频…')
+    setStatus('正在创建分享并上传音频…')
     try {
       const uploadUnits = audioItems.flatMap((item, itemIndex) => {
         if (item.segments?.length) {
@@ -651,7 +667,7 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
       const tracks = []
       for (let index = 0; index < uploadUnits.length; index += 1) {
         const unit = uploadUnits[index]
-        setStatus(`正在通过服务端上传第 ${index + 1} / ${uploadUnits.length} 段到 R2…`)
+        setStatus(`正在通过服务端上传第 ${index + 1} / ${uploadUnits.length} 段音频…`)
         await apiJson('/api/share/upload', {
           method: 'POST',
           body: JSON.stringify({
@@ -722,28 +738,17 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
       const dataUrl = await QRCode.toDataURL(url, { width: 360, margin: 1 })
       setShareUrl(url)
       setQrUrl(dataUrl)
-      setShareSummary({
-        prefix: start.prefix,
-        batches: shareBatches,
-        samples: tracks.slice(0, 5),
-      })
       if (currentSessionId) {
-        const persistedShareSummary = {
-          prefix: start.prefix,
-          batches: shareBatches,
-          samples: tracks.slice(0, 5),
-        }
         await updateAudioSessionShare(currentSessionId, {
           shareUrl: url,
           shareToken: start.token,
-          shareSummary: persistedShareSummary,
           expiresAt: start.expiresAt,
         })
         await refreshLibrary()
       }
       setStatus('二维码已生成，手机扫码即可播放。')
     } catch (error) {
-      setStatus(error.message || '二维码生成失败。请检查 R2 环境变量和 CORS。')
+      setStatus(error.message || '二维码生成失败。请检查存储环境变量和 CORS。')
     } finally {
       setBusy(false)
     }
@@ -877,6 +882,9 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
           {localSpeaking ? <Pause size={17} /> : <Play size={17} />}
           {localSpeaking ? `停止本机试听 ${localWord}` : `本机 Edge 试听${isEdge ? '' : '（未检测到）'}`}
         </button>
+        <button className="playlistButton" type="button" onClick={() => setPlaylistOpen(true)} disabled={!audioItems.length}>
+          <Radio size={16} /> 播放列表 {audioItems.length ? `(${audioItems.length})` : ''}
+        </button>
         <button className="libraryButton" type="button" onClick={() => setLibraryOpen(true)}>
           <Archive size={16} /> 管理已生成 {libraryItems.length ? `(${libraryItems.length})` : ''}
         </button>
@@ -921,7 +929,7 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
             <div className="sectionHeaderCompact">
               <div>
                 <h3>批次规划</h3>
-                <p>生成、下载和 R2 文件夹都会沿用这些批次名，方便之后查找。</p>
+                <p>生成和下载都会沿用这些批次名，方便之后查找。</p>
               </div>
               <span>{batchMetas.length} 个批次</span>
             </div>
@@ -971,27 +979,17 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
                       <span>{currentVoice}</span>
                       <span>停顿 {selectedAudioItem.pauseMs ?? config.pauseMs}ms</span>
                     </div>
-                    <div className="wordRibbon">
-                      {selectedAudioItem.words.slice(0, 10).map((word, wordIndex) => (
-                        <span key={`${word}-${wordIndex}`}>{word}</span>
-                      ))}
-                      {selectedAudioItem.words.length > 10 ? <span>+{selectedAudioItem.words.length - 10}</span> : null}
-                    </div>
+                    <HoverWordList words={selectedWords} />
                     {selectedAudioItem.segments?.length ? (
                       <>
                         <SegmentedAudioPlayer item={selectedAudioItem} />
-                        <div className="fileHintBox">
-                          <small>R2 文件夹</small>
-                          <strong>{selectedAudioItem.fileStem}/</strong>
-                          <span>例如 001_{sanitizeFilePart(selectedAudioItem.segments[0]?.word)}.mp3</span>
-                        </div>
                       </>
                     ) : (
                       <>
                         <audio src={selectedAudioItem.url} controls preload="metadata" />
                         <div className="audioActionsRow">
                           <div className="fileHintBox">
-                            <small>保存名</small>
+                            <small>下载名</small>
                             <strong>{selectedAudioItem.fileStem || `words-${safeSelectedAudioIndex + 1}`}.mp3</strong>
                           </div>
                           <button
@@ -1011,23 +1009,13 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
                   </div>
                 ) : null}
 
-                <div className="compactBatchList" role="listbox" aria-label="选择试听批次">
-                  {audioItems.map((item, index) => (
-                    <button
-                      className={index === safeSelectedAudioIndex ? 'compactBatch active' : 'compactBatch'}
-                      key={item.id}
-                      type="button"
-                      onClick={() => setSelectedAudioIndex(index)}
-                    >
-                      <strong>{pad3(item.batchNo || index + 1)}</strong>
-                      <span>{item.firstWord === item.lastWord ? item.firstWord : `${item.firstWord} → ${item.lastWord}`}</span>
-                      <em>
-                        {item.wordCount || item.words.length} 词
-                        {item.segments?.length ? ` · ${item.segments.length} 段` : ''}
-                      </em>
-                    </button>
-                  ))}
-                </div>
+                <button className="playlistDockButton" type="button" onClick={() => setPlaylistOpen(true)}>
+                  <span>播放列表</span>
+                  <strong>
+                    当前 {pad3(selectedAudioItem?.batchNo || safeSelectedAudioIndex + 1)} / {audioItems.length}
+                  </strong>
+                  <em>点击展开批次选择</em>
+                </button>
               </div>
             ) : (
               <div className="emptyAudio">
@@ -1046,26 +1034,52 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
                   打开播放链接
                 </a>
                 <p>二维码链接带只读签名 token，不需要手机再次输入密码。</p>
-                {shareSummary ? (
-                  <div className="storagePreview">
-                    <strong>R2 保存结构</strong>
-                    <code>{shareSummary.prefix}/</code>
-                    {shareSummary.batches.slice(0, 3).map((batch) => (
-                      <div className="storageRow" key={batch.batchLabel || batch.title}>
-                        <span>{batch.batchLabel}/</span>
-                        <small>{batch.trackCount} 个音频 · {batch.firstWord} → {batch.lastWord}</small>
-                      </div>
-                    ))}
-                    {shareSummary.batches.length > 3 ? <small>另有 {shareSummary.batches.length - 3} 个批次…</small> : null}
-                  </div>
-                ) : null}
               </>
             ) : (
-              <p>批量生成音频后，点击“生成手机二维码”上传到 R2 并创建移动播放页。</p>
+              <p>批量生成音频后，点击“生成手机二维码”上传音频并创建移动播放页。</p>
             )}
           </div>
         </div>
       </section>
+
+      {playlistOpen && audioItems.length ? (
+        <div className="playlistOverlay" role="dialog" aria-modal="true" aria-label="播放列表">
+          <div className="playlistSheet">
+            <div className="playlistHandle" />
+            <div className="playlistHeader">
+              <div>
+                <span className="eyebrow">Playlist</span>
+                <h2>播放列表</h2>
+                <p>共 {audioItems.length} 个批次，点击批次即可切换当前播放器。</p>
+              </div>
+              <button type="button" onClick={() => setPlaylistOpen(false)}>
+                收起
+              </button>
+            </div>
+
+            <div className="playlistItems">
+              {audioItems.map((item, index) => (
+                <button
+                  className={index === safeSelectedAudioIndex ? 'playlistItem active' : 'playlistItem'}
+                  key={item.id}
+                  type="button"
+                  onClick={() => {
+                    setSelectedAudioIndex(index)
+                    setPlaylistOpen(false)
+                  }}
+                >
+                  <strong>{pad3(item.batchNo || index + 1)}</strong>
+                  <span>{item.firstWord === item.lastWord ? item.firstWord : `${item.firstWord} → ${item.lastWord}`}</span>
+                  <em>
+                    {item.wordCount || item.words.length} 词
+                    {item.segments?.length ? ` · ${item.segments.length} 段` : ''}
+                  </em>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {libraryOpen ? (
         <div className="libraryOverlay" role="dialog" aria-modal="true" aria-label="管理已生成音频">
