@@ -2614,6 +2614,17 @@ button:disabled {
   font-size: calc(12px * var(--row-scale, 1));
 }
 
+.templateCellFit {
+  display: -webkit-box;
+  width: 100%;
+  max-height: 100%;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  word-break: break-word;
+}
+
 .templateCell:nth-child(5n) {
   border-right: 0;
 }
@@ -2636,6 +2647,16 @@ button:disabled {
 .chineseCell {
   padding: 0 4px;
   font-size: calc(12px * var(--row-scale, 1));
+}
+
+.chineseCell {
+  line-height: 1.04;
+  font-size: clamp(6px, calc(10px * var(--row-scale, 1)), 10px);
+}
+
+.chineseCell .templateCellFit {
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
 }
 
 .writeChineseCell {

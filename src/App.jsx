@@ -480,10 +480,16 @@ function App() {
 
                   {currentPreviewRows.map((row) => (
                     <React.Fragment key={`${row.index}-${row.sourceRow || row.index}`}>
-                      <div className="templateCell indexCell">{row.index}</div>
-                      <div className="templateCell englishCell">{row.english || '—'}</div>
+                      <div className="templateCell indexCell">
+                        <span className="templateCellFit">{row.index}</span>
+                      </div>
+                      <div className="templateCell englishCell">
+                        <span className="templateCellFit">{row.english || '—'}</span>
+                      </div>
                       <div className="templateCell writeChineseCell" />
-                      <div className="templateCell chineseCell">{row.chinese || '—'}</div>
+                      <div className="templateCell chineseCell" title={row.chinese || ''}>
+                        <span className="templateCellFit">{row.chinese || '—'}</span>
+                      </div>
                       <div className="templateCell writeEnglishCell">
                         <img src="/fourline.png" alt="" />
                       </div>

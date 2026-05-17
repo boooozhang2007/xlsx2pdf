@@ -102,12 +102,14 @@ const wrapTextByWidth = (text, width, font, size, maxLines = 2) => {
   return lines.slice(0, maxLines).filter(Boolean)
 }
 
-const fitLines = (text, width, font, startSize, minSize = 5.8, maxLines = 3) => {
+const fitLines = (text, width, font, startSize, minSize = 5.8, maxLines = 3, maxHeight = Infinity, lineHeightRatio = 1.15) => {
   let size = startSize
 
   while (size >= minSize) {
     const lines = wrapTextByWidth(text, width, font, size, maxLines)
-    if (!lines.length || Math.max(...lines.map((line) => font.widthOfTextAtSize(line, size))) <= width) {
+    const fitsWidth = !lines.length || Math.max(...lines.map((line) => font.widthOfTextAtSize(line, size))) <= width
+    const fitsHeight = lines.length * size * lineHeightRatio <= maxHeight
+    if (fitsWidth && fitsHeight) {
       return { lines, size }
     }
     size -= 0.3
@@ -130,7 +132,8 @@ const drawTextCentered = (page, text, x, y, w, h, font, size, options = {}) => {
   if (!raw) return
 
   const maxWidth = Math.max(1, w - padding * 2)
-  const { lines, size: actualSize } = fitLines(raw, maxWidth, font, size, minSize, maxLines)
+  const maxHeight = Math.max(1, h - padding * 2)
+  const { lines, size: actualSize } = fitLines(raw, maxWidth, font, size, minSize, maxLines, maxHeight, lineHeightRatio)
   if (!lines.length) return
 
   const leading = actualSize * lineHeightRatio
@@ -242,7 +245,9 @@ const drawTemplatePage = (page, {
     })
     drawTextCentered(page, row.chinese, xs[3], y, TEMPLATE.columns[3], rowHeight, cjkFont, 8.8 * rowFontScale, {
       maxLines: 3,
-      minSize: Math.min(5.7, 5.7 * rowFontScale),
+      minSize: Math.min(4.2, 4.2 * rowFontScale),
+      lineHeightRatio: 1.02,
+      padding: mm(0.6),
     })
   })
 
