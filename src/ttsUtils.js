@@ -107,6 +107,16 @@ const audioBufferToInt16 = (audioBuffer) => {
 }
 
 const encodeMonoMp3 = async (audioBuffer) => {
+  // lamejs 的 npm 入口在 Vite/browser 下会有几个旧式全局引用
+  // （例如 MPEGMode / Lame）。先把它们指向同一份内部模块实例，
+  // 否则 Edge-TTS 批量合成 MP3 时会报 “MPEGMode is not defined”。
+  const [{ default: MPEGMode }, { default: Lame }] = await Promise.all([
+    import('lamejs/src/js/MPEGMode.js'),
+    import('lamejs/src/js/Lame.js'),
+  ])
+  globalThis.MPEGMode = MPEGMode
+  globalThis.Lame = Lame
+
   const lame = await import('lamejs')
   const Mp3Encoder = lame.Mp3Encoder || lame.default?.Mp3Encoder
   if (!Mp3Encoder) throw new Error('MP3 编码器加载失败。')
