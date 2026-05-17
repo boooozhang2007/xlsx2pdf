@@ -253,12 +253,14 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
   const [currentSessionId, setCurrentSessionId] = useState('')
   const [libraryOpen, setLibraryOpen] = useState(false)
   const [playlistOpen, setPlaylistOpen] = useState(false)
+  const [playlistClosing, setPlaylistClosing] = useState(false)
   const [libraryItems, setLibraryItems] = useState([])
   const [restoreChecked, setRestoreChecked] = useState(false)
   const [localSpeaking, setLocalSpeaking] = useState(false)
   const [localWord, setLocalWord] = useState('')
   const ttsFileRef = useRef(null)
   const stopLocalRef = useRef(null)
+  const playlistCloseTimerRef = useRef(null)
 
   const words = useMemo(() => uniqueKeepOrder(splitWords(wordText)), [wordText])
   const batches = useMemo(() => chunkWords(words, config.batchSize), [words, config.batchSize])
@@ -312,11 +314,41 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
     }
   }, [config.provider, config.accent, currentVoiceList])
 
-  useEffect(() => () => stopLocalRef.current?.(), [])
+  useEffect(
+    () => () => {
+      stopLocalRef.current?.()
+      window.clearTimeout(playlistCloseTimerRef.current)
+    },
+    [],
+  )
+
+  useEffect(() => {
+    let cancelled = false
+    if (!shareUrl) {
+      setQrUrl('')
+      return () => {
+        cancelled = true
+      }
+    }
+
+    QRCode.toDataURL(shareUrl, { width: 360, margin: 1 })
+      .then((dataUrl) => {
+        if (!cancelled) setQrUrl(dataUrl)
+      })
+      .catch(() => {
+        if (!cancelled) setQrUrl('')
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [shareUrl])
 
   useEffect(() => {
     if (!audioItems.length) {
       setSelectedAudioIndex(0)
+      setPlaylistOpen(false)
+      setPlaylistClosing(false)
       return
     }
     setSelectedAudioIndex((index) => Math.min(Math.max(0, index), audioItems.length - 1))
@@ -336,6 +368,22 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
   }, [authenticated, restoreChecked])
 
   const updateTtsConfig = (patch) => setConfig((current) => ({ ...current, ...patch }))
+
+  const openPlaylist = () => {
+    window.clearTimeout(playlistCloseTimerRef.current)
+    setPlaylistClosing(false)
+    setPlaylistOpen(true)
+  }
+
+  const closePlaylist = () => {
+    if (!playlistOpen) return
+    window.clearTimeout(playlistCloseTimerRef.current)
+    setPlaylistClosing(true)
+    playlistCloseTimerRef.current = window.setTimeout(() => {
+      setPlaylistOpen(false)
+      setPlaylistClosing(false)
+    }, 170)
+  }
 
   const refreshLibrary = async () => {
     try {
@@ -447,6 +495,7 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
     setCurrentSessionId('')
     setLibraryOpen(false)
     setPlaylistOpen(false)
+    setPlaylistClosing(false)
     setStatus('已退出单词朗读板块。')
   }
 
@@ -535,6 +584,7 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
       setSelectedAudioIndex(0)
       await persistGeneratedSession([item])
       setPlaylistOpen(false)
+      setPlaylistClosing(false)
       setStatus('试听音频已生成，可在线播放。')
     } catch (error) {
       setStatus(error.message || '试听生成失败。')
@@ -877,12 +927,6 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
           {localSpeaking ? <Pause size={17} /> : <Play size={17} />}
           {localSpeaking ? `停止本机试听 ${localWord}` : `本机 Edge 试听${isEdge ? '' : '（未检测到）'}`}
         </button>
-        <button className="playlistButton" type="button" onClick={() => setPlaylistOpen(true)} disabled={!audioItems.length}>
-          <Radio size={16} /> 播放列表 {audioItems.length ? `(${audioItems.length})` : ''}
-        </button>
-        <button className="libraryButton" type="button" onClick={() => setLibraryOpen(true)}>
-          <Archive size={16} /> 管理已生成 {libraryItems.length ? `(${libraryItems.length})` : ''}
-        </button>
         <button className="logoutButton" type="button" onClick={logout}>
           <LogOut size={16} /> 退出朗读板块
         </button>
@@ -895,9 +939,38 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
             <span className="eyebrow">Audio Studio</span>
             <h2>{words.length ? `${words.length} 个单词 · ${batches.length} 段` : '等待单词'}</h2>
           </div>
-          <button className="qrButton" type="button" onClick={createQrShare} disabled={busy || !audioItems.length}>
-            <QrCode size={18} /> 生成手机二维码
-          </button>
+          <div className="stageActions">
+            <button className="libraryButton" type="button" onClick={() => setLibraryOpen(true)}>
+              <Archive size={16} /> 管理已生成 {libraryItems.length ? `(${libraryItems.length})` : ''}
+            </button>
+            <div className="qrActionWrap">
+              <button className="qrButton" type="button" onClick={createQrShare} disabled={busy || !audioItems.length}>
+                <QrCode size={18} /> 生成手机二维码
+              </button>
+              <div className="qrPopover" role="status">
+                <div className={qrUrl ? 'qrPopoverCard' : 'qrPopoverCard empty'}>
+                  {qrUrl ? (
+                    <>
+                      <img src={qrUrl} alt="手机播放二维码" />
+                      <strong>手机播放二维码</strong>
+                      <a href={shareUrl} target="_blank" rel="noreferrer">
+                        打开播放链接
+                      </a>
+                      <p>链接带只读签名 token，手机无需再次输入密码。</p>
+                    </>
+                  ) : (
+                    <>
+                      <span className="qrPopoverIcon">
+                        <QrCode size={24} />
+                      </span>
+                      <strong>{busy ? '正在生成二维码' : '尚未生成二维码'}</strong>
+                      <p>{audioItems.length ? '点击上方按钮生成二维码，生成后会在这里显示。' : '请先生成或恢复音频，再生成手机二维码。'}</p>
+                    </>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
 
         <div className="ttsStats">
@@ -983,10 +1056,6 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
                       <>
                         <audio src={selectedAudioItem.url} controls preload="metadata" />
                         <div className="audioActionsRow">
-                          <div className="fileHintBox">
-                            <small>下载名</small>
-                            <strong>{selectedAudioItem.fileStem || `words-${safeSelectedAudioIndex + 1}`}.mp3</strong>
-                          </div>
                           <button
                             type="button"
                             onClick={() =>
@@ -1004,13 +1073,57 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
                   </div>
                 ) : null}
 
-                <button className="playlistDockButton" type="button" onClick={() => setPlaylistOpen(true)}>
+                <button className="playlistDockButton" type="button" onClick={openPlaylist} aria-expanded={playlistOpen}>
                   <span>播放列表</span>
                   <strong>
                     当前 {pad3(selectedAudioItem?.batchNo || safeSelectedAudioIndex + 1)} / {audioItems.length}
                   </strong>
-                  <em>点击展开批次选择</em>
+                  <em>点击后向上展开，选择后自动收起</em>
                 </button>
+                {playlistOpen ? (
+                  <div
+                    className={playlistClosing ? 'inlinePlaylistLayer closing' : 'inlinePlaylistLayer'}
+                    role="dialog"
+                    aria-modal="true"
+                    aria-label="播放列表"
+                    onClick={closePlaylist}
+                  >
+                    <div className="inlinePlaylistSheet" onClick={(event) => event.stopPropagation()}>
+                      <div className="playlistHandle" />
+                      <div className="playlistHeader">
+                        <div>
+                          <span className="eyebrow">Playlist</span>
+                          <h2>播放列表</h2>
+                          <p>共 {audioItems.length} 个批次，点击批次即可切换当前播放器。</p>
+                        </div>
+                        <button type="button" onClick={closePlaylist}>
+                          收起
+                        </button>
+                      </div>
+
+                      <div className="playlistItems">
+                        {audioItems.map((item, index) => (
+                          <button
+                            className={index === safeSelectedAudioIndex ? 'playlistItem active' : 'playlistItem'}
+                            key={item.id}
+                            type="button"
+                            onClick={() => {
+                              setSelectedAudioIndex(index)
+                              closePlaylist()
+                            }}
+                          >
+                            <strong>{pad3(item.batchNo || index + 1)}</strong>
+                            <span>{item.firstWord === item.lastWord ? item.firstWord : `${item.firstWord} → ${item.lastWord}`}</span>
+                            <em>
+                              {item.wordCount || item.words.length} 词
+                              {item.segments?.length ? ` · ${item.segments.length} 段` : ''}
+                            </em>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                ) : null}
               </div>
             ) : (
               <div className="emptyAudio">
@@ -1020,61 +1133,8 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
             )}
           </div>
 
-          <div className="qrPanel">
-            <h3>手机播放与保存</h3>
-            {qrUrl ? (
-              <>
-                <img src={qrUrl} alt="手机播放二维码" />
-                <a href={shareUrl} target="_blank" rel="noreferrer">
-                  打开播放链接
-                </a>
-                <p>二维码链接带只读签名 token，不需要手机再次输入密码。</p>
-              </>
-            ) : (
-              <p>批量生成音频后，点击“生成手机二维码”上传音频并创建移动播放页。</p>
-            )}
-          </div>
         </div>
       </section>
-
-      {playlistOpen && audioItems.length ? (
-        <div className="playlistOverlay" role="dialog" aria-modal="true" aria-label="播放列表" onClick={() => setPlaylistOpen(false)}>
-          <div className="playlistSheet" onClick={(event) => event.stopPropagation()}>
-            <div className="playlistHandle" />
-            <div className="playlistHeader">
-              <div>
-                <span className="eyebrow">Playlist</span>
-                <h2>播放列表</h2>
-                <p>共 {audioItems.length} 个批次，点击批次即可切换当前播放器。</p>
-              </div>
-              <button type="button" onClick={() => setPlaylistOpen(false)}>
-                收起
-              </button>
-            </div>
-
-            <div className="playlistItems">
-              {audioItems.map((item, index) => (
-                <button
-                  className={index === safeSelectedAudioIndex ? 'playlistItem active' : 'playlistItem'}
-                  key={item.id}
-                  type="button"
-                  onClick={() => {
-                    setSelectedAudioIndex(index)
-                    setPlaylistOpen(false)
-                  }}
-                >
-                  <strong>{pad3(item.batchNo || index + 1)}</strong>
-                  <span>{item.firstWord === item.lastWord ? item.firstWord : `${item.firstWord} → ${item.lastWord}`}</span>
-                  <em>
-                    {item.wordCount || item.words.length} 词
-                    {item.segments?.length ? ` · ${item.segments.length} 段` : ''}
-                  </em>
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
-      ) : null}
 
       {libraryOpen ? (
         <div className="libraryOverlay" role="dialog" aria-modal="true" aria-label="管理已生成音频">
