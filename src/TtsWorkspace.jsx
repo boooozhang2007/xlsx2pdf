@@ -164,20 +164,15 @@ const RangeField = ({ label, value, min, max, step = 1, suffix, onChange }) => (
   </label>
 )
 
-function HoverWordList({ words = [] }) {
+function WordSummary({ words = [] }) {
   const fullText = words.join(' · ')
+  const preview = words.slice(0, 3).join(' / ')
 
   return (
-    <div className="wordHoverWrap">
-      <button className="wordHoverButton" type="button" title={fullText}>
-        <span>{words.length} 个单词</span>
-        <strong>悬停查看全部</strong>
-      </button>
-      <div className="wordTooltip" role="tooltip">
-        {words.map((word, index) => (
-          <span key={`${word}-${index}`}>{word}</span>
-        ))}
-      </div>
+    <div className="wordSummary" title={fullText}>
+      <span>{words.length} 个单词</span>
+      <strong>{preview || '暂无单词'}</strong>
+      {words.length > 3 ? <em>+{words.length - 3}</em> : null}
     </div>
   )
 }
@@ -979,7 +974,7 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
                       <span>{currentVoice}</span>
                       <span>停顿 {selectedAudioItem.pauseMs ?? config.pauseMs}ms</span>
                     </div>
-                    <HoverWordList words={selectedWords} />
+                    <WordSummary words={selectedWords} />
                     {selectedAudioItem.segments?.length ? (
                       <>
                         <SegmentedAudioPlayer item={selectedAudioItem} />
@@ -1043,8 +1038,8 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
       </section>
 
       {playlistOpen && audioItems.length ? (
-        <div className="playlistOverlay" role="dialog" aria-modal="true" aria-label="播放列表">
-          <div className="playlistSheet">
+        <div className="playlistOverlay" role="dialog" aria-modal="true" aria-label="播放列表" onClick={() => setPlaylistOpen(false)}>
+          <div className="playlistSheet" onClick={(event) => event.stopPropagation()}>
             <div className="playlistHandle" />
             <div className="playlistHeader">
               <div>
