@@ -505,7 +505,28 @@ button:disabled {
 
 .qrActionWrap {
   position: relative;
-  display: inline-flex;
+  display: grid;
+  gap: 6px;
+  justify-items: end;
+}
+
+.qrActionHint {
+  max-width: 260px;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.35;
+  text-align: right;
+}
+
+.qrActionWrap.hasShare .qrActionHint {
+  color: #15803d;
+}
+
+.qrActionWrap.hasShare .qrButton:disabled {
+  background: #dcfce7;
+  color: #15803d;
+  opacity: 1;
 }
 
 .qrPopover {
@@ -604,6 +625,50 @@ button:disabled {
   border-radius: 16px;
   background: #eff6ff;
   color: #2563eb;
+}
+
+.qrPlaceholder {
+  position: relative;
+  display: grid;
+  width: 150px;
+  height: 150px;
+  place-items: center;
+  overflow: hidden;
+  border-radius: 20px;
+  background:
+    repeating-linear-gradient(90deg, rgba(15, 23, 42, 0.88) 0 8px, transparent 8px 14px),
+    repeating-linear-gradient(0deg, rgba(15, 23, 42, 0.78) 0 8px, transparent 8px 14px),
+    #fff;
+  color: #0f172a;
+  filter: blur(0.35px);
+  opacity: 0.58;
+}
+
+.qrPlaceholder::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: rgba(255, 255, 255, 0.58);
+  backdrop-filter: blur(5px);
+}
+
+.qrPlaceholder svg,
+.qrPlaceholder em {
+  position: relative;
+  z-index: 1;
+}
+
+.qrPlaceholder svg {
+  color: #2563eb;
+}
+
+.qrPlaceholder em {
+  position: absolute;
+  bottom: 16px;
+  color: #0f172a;
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 950;
 }
 
 .eyebrow {
@@ -2722,6 +2787,11 @@ button:disabled {
   .qrActionWrap,
   .qrActionWrap .qrButton {
     width: 100%;
+  }
+
+  .qrActionHint {
+    justify-self: start;
+    text-align: left;
   }
 
   .qrPopover {

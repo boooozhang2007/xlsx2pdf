@@ -293,6 +293,13 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
           : '等待输入'
   const taskTone = busy ? 'running' : audioItems.length ? 'done' : words.length ? 'ready' : 'idle'
   const nextBatchMeta = totalBatchCount && completedBatchCount < totalBatchCount ? batchMetas[completedBatchCount] : null
+  const hasShareLink = Boolean(shareUrl)
+  const qrButtonText = hasShareLink ? '二维码已生成' : busy ? '处理中…' : '生成手机二维码'
+  const qrHintText = hasShareLink
+    ? '已有手机播放链接，如需更新请重新生成音频。'
+    : audioItems.length
+      ? '首次使用需先生成二维码，否则手机链接不可用。'
+      : '先生成或恢复音频后才能创建手机链接。'
 
   useEffect(() => {
     apiJson('/api/auth/me')
@@ -668,7 +675,8 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
   }
 
   const createQrShare = async () => {
-    if (!audioItems.length) return setStatus('请先生成音频。')
+    if (shareUrl) return setStatus('当前音频已有手机播放链接。如需更新，请重新生成音频后再生成二维码。')
+    if (!audioItems.length) return setStatus('请先生成音频，再生成手机二维码。')
     setBusy(true)
     setStatus('正在创建分享并上传音频…')
     try {
@@ -960,10 +968,11 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
             <button className="libraryButton" type="button" onClick={() => setLibraryOpen(true)}>
               <Archive size={16} /> 管理已生成 {libraryItems.length ? `(${libraryItems.length})` : ''}
             </button>
-            <div className="qrActionWrap">
-              <button className="qrButton" type="button" onClick={createQrShare} disabled={busy || !audioItems.length}>
-                <QrCode size={18} /> 生成手机二维码
+            <div className={hasShareLink ? 'qrActionWrap hasShare' : 'qrActionWrap'}>
+              <button className="qrButton" type="button" onClick={createQrShare} disabled={busy || !audioItems.length || hasShareLink}>
+                <QrCode size={18} /> {qrButtonText}
               </button>
+              <small className="qrActionHint">{qrHintText}</small>
               <div className="qrPopover" role="status">
                 <div className={qrUrl ? 'qrPopoverCard' : 'qrPopoverCard empty'}>
                   {qrUrl ? (
@@ -977,11 +986,12 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
                     </>
                   ) : (
                     <>
-                      <span className="qrPopoverIcon">
-                        <QrCode size={24} />
+                      <span className="qrPlaceholder" aria-hidden="true">
+                        <QrCode size={74} />
+                        <em>待生成</em>
                       </span>
-                      <strong>{busy ? '正在生成二维码' : '尚未生成二维码'}</strong>
-                      <p>{audioItems.length ? '点击上方按钮生成二维码，生成后会在这里显示。' : '请先生成或恢复音频，再生成手机二维码。'}</p>
+                      <strong>{busy ? '正在准备二维码' : '需要先生成二维码'}</strong>
+                      <p>{audioItems.length ? '第一次使用请先点击生成。未生成前，手机播放链接会找不到音频。' : '请先生成或恢复音频，再创建手机播放链接。'}</p>
                     </>
                   )}
                 </div>
