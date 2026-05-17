@@ -972,6 +972,121 @@ button:disabled {
   color: #1d4ed8;
 }
 
+.compactAudioShell {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(190px, 0.85fr);
+  gap: 14px;
+  align-items: start;
+}
+
+.activeAudioPanel {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 22px;
+  background: rgba(248, 250, 252, 0.78);
+  padding: 14px;
+}
+
+.activeAudioPanel audio {
+  width: 100%;
+}
+
+.audioActionsRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.audioActionsRow button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 14px;
+  min-height: 40px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  padding: 0 13px;
+  font-weight: 850;
+}
+
+.compactBatchList {
+  display: grid;
+  gap: 8px;
+  max-height: 430px;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.compactBatch {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
+  gap: 2px 10px;
+  align-items: center;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.74);
+  color: #0f172a;
+  padding: 10px;
+  text-align: left;
+  transition:
+    border-color 150ms ease,
+    background 150ms ease,
+    transform 150ms ease;
+}
+
+.compactBatch:hover {
+  transform: translateY(-1px);
+  border-color: rgba(37, 99, 235, 0.28);
+}
+
+.compactBatch strong {
+  grid-row: 1 / 3;
+  display: grid;
+  width: 40px;
+  height: 40px;
+  place-items: center;
+  border-radius: 14px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 12px;
+  font-weight: 950;
+}
+
+.compactBatch span {
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.compactBatch em {
+  color: #64748b;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 800;
+}
+
+.compactBatch.active {
+  border-color: transparent;
+  background: #0f172a;
+  color: #fff;
+}
+
+.compactBatch.active strong {
+  background: rgba(255, 255, 255, 0.14);
+  color: #fff;
+}
+
+.compactBatch.active em {
+  color: rgba(226, 232, 240, 0.72);
+}
+
 .segmentedPlayer {
   display: grid;
   gap: 8px;
@@ -1517,7 +1632,8 @@ button:disabled {
   .heroGrid,
   .workspace,
   .ttsWorkspace,
-  .audioGrid {
+  .audioGrid,
+  .compactAudioShell {
     grid-template-columns: 1fr;
   }
 
@@ -1580,6 +1696,10 @@ button:disabled {
 
   .sectionHeaderCompact {
     flex-direction: column;
+  }
+
+  .compactBatchList {
+    max-height: 320px;
   }
 
   .previewStage,

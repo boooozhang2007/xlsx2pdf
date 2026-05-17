@@ -217,6 +217,7 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
   const [qrUrl, setQrUrl] = useState('')
   const [shareUrl, setShareUrl] = useState('')
   const [shareSummary, setShareSummary] = useState(null)
+  const [selectedAudioIndex, setSelectedAudioIndex] = useState(0)
   const [localSpeaking, setLocalSpeaking] = useState(false)
   const [localWord, setLocalWord] = useState('')
   const ttsFileRef = useRef(null)
@@ -235,6 +236,8 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
   const currentVoiceList = (voices[config.provider] || []).filter((voice) => voice.accent === config.accent)
   const currentVoice = config.provider === 'edge' ? config.edgeVoice : config.azureVoice
   const isEdge = isEdgeBrowser()
+  const safeSelectedAudioIndex = audioItems.length ? Math.min(selectedAudioIndex, audioItems.length - 1) : 0
+  const selectedAudioItem = audioItems[safeSelectedAudioIndex] || null
 
   useEffect(() => {
     apiJson('/api/auth/me')
@@ -266,6 +269,14 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
 
   useEffect(() => () => stopLocalRef.current?.(), [])
 
+  useEffect(() => {
+    if (!audioItems.length) {
+      setSelectedAudioIndex(0)
+      return
+    }
+    setSelectedAudioIndex((index) => Math.min(Math.max(0, index), audioItems.length - 1))
+  }, [audioItems.length])
+
   const updateTtsConfig = (patch) => setConfig((current) => ({ ...current, ...patch }))
 
   const login = async (event) => {
@@ -291,6 +302,7 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
     setShareUrl('')
     setQrUrl('')
     setShareSummary(null)
+    setSelectedAudioIndex(0)
     setStatus('已退出单词朗读板块。')
   }
 
@@ -377,6 +389,7 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
       setShareUrl('')
       setQrUrl('')
       setShareSummary(null)
+      setSelectedAudioIndex(0)
       setStatus('试听音频已生成，可在线播放。')
     } catch (error) {
       setStatus(error.message || '试听生成失败。')
@@ -392,6 +405,7 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
     setShareUrl('')
     setQrUrl('')
     setShareSummary(null)
+    setSelectedAudioIndex(0)
     setStatus(`准备生成 ${batches.length} 段音频…`)
     const items = []
     try {
@@ -782,42 +796,74 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
               <span>{audioItems.length ? `${audioItems.length} 个批次` : '尚未生成'}</span>
             </div>
             {audioItems.length ? (
-              audioItems.map((item, index) => (
-                <div className="audioItem" key={item.id}>
-                  <div className="audioItemHead">
-                    <div className="batchIndexBadge">{pad3(item.batchNo || index + 1)}</div>
-                    <div>
-                      <strong>{item.title || item.label}</strong>
-                      <span className="batchMetaLine">
-                        {item.subtitle || `${item.words.length} 词`}
-                        {item.segments?.length ? ` · Edge 分段 ${item.segments.length} 个，停顿 ${item.pauseMs}ms` : ''}
-                      </span>
+              <div className="compactAudioShell">
+                {selectedAudioItem ? (
+                  <div className="activeAudioPanel">
+                    <div className="audioItemHead">
+                      <div className="batchIndexBadge">{pad3(selectedAudioItem.batchNo || safeSelectedAudioIndex + 1)}</div>
+                      <div>
+                        <strong>{selectedAudioItem.title || selectedAudioItem.label}</strong>
+                        <span className="batchMetaLine">
+                          {selectedAudioItem.subtitle || `${selectedAudioItem.words.length} 词`}
+                          {selectedAudioItem.segments?.length
+                            ? ` · Edge 分段 ${selectedAudioItem.segments.length} 个，停顿 ${selectedAudioItem.pauseMs}ms`
+                            : ''}
+                        </span>
+                      </div>
                     </div>
+                    <div className="wordRibbon">
+                      {selectedAudioItem.words.slice(0, 16).map((word, wordIndex) => (
+                        <span key={`${word}-${wordIndex}`}>{word}</span>
+                      ))}
+                      {selectedAudioItem.words.length > 16 ? <span>+{selectedAudioItem.words.length - 16}</span> : null}
+                    </div>
+                    {selectedAudioItem.segments?.length ? (
+                      <>
+                        <SegmentedAudioPlayer item={selectedAudioItem} />
+                        <small className="fileHint">
+                          R2 保存为文件夹：{selectedAudioItem.fileStem}/001_{sanitizeFilePart(selectedAudioItem.segments[0]?.word)}.mp3 …
+                        </small>
+                      </>
+                    ) : (
+                      <>
+                        <audio src={selectedAudioItem.url} controls preload="metadata" />
+                        <div className="audioActionsRow">
+                          <small className="fileHint">保存名：{selectedAudioItem.fileStem || `words-${safeSelectedAudioIndex + 1}`}.mp3</small>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              downloadNamedBlob(
+                                selectedAudioItem.blob,
+                                `${selectedAudioItem.fileStem || `words-${safeSelectedAudioIndex + 1}`}.mp3`,
+                              )
+                            }
+                          >
+                            下载当前 MP3
+                          </button>
+                        </div>
+                      </>
+                    )}
                   </div>
-                  <div className="wordRibbon">
-                    {item.words.slice(0, 12).map((word, wordIndex) => (
-                      <span key={`${word}-${wordIndex}`}>{word}</span>
-                    ))}
-                    {item.words.length > 12 ? <span>+{item.words.length - 12}</span> : null}
-                  </div>
-                  {item.segments?.length ? (
-                    <>
-                      <SegmentedAudioPlayer item={item} />
-                      <small className="fileHint">
-                        R2 保存为文件夹：{item.fileStem}/001_{sanitizeFilePart(item.segments[0]?.word)}.mp3 …
-                      </small>
-                    </>
-                  ) : (
-                    <>
-                      <audio src={item.url} controls preload="metadata" />
-                      <small className="fileHint">保存名：{item.fileStem || `words-${index + 1}`}.mp3</small>
-                      <button type="button" onClick={() => downloadNamedBlob(item.blob, `${item.fileStem || `words-${index + 1}`}.mp3`)}>
-                        下载 MP3
-                      </button>
-                    </>
-                  )}
+                ) : null}
+
+                <div className="compactBatchList" role="listbox" aria-label="选择试听批次">
+                  {audioItems.map((item, index) => (
+                    <button
+                      className={index === safeSelectedAudioIndex ? 'compactBatch active' : 'compactBatch'}
+                      key={item.id}
+                      type="button"
+                      onClick={() => setSelectedAudioIndex(index)}
+                    >
+                      <strong>{pad3(item.batchNo || index + 1)}</strong>
+                      <span>{item.firstWord === item.lastWord ? item.firstWord : `${item.firstWord} → ${item.lastWord}`}</span>
+                      <em>
+                        {item.wordCount || item.words.length} 词
+                        {item.segments?.length ? ` · ${item.segments.length} 段` : ''}
+                      </em>
+                    </button>
+                  ))}
                 </div>
-              ))
+              </div>
             ) : (
               <div className="emptyAudio">
                 <Volume2 size={30} />
