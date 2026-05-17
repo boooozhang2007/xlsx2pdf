@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react'
 import * as XLSX from 'xlsx'
 import QRCode from 'qrcode'
 import {
+  Archive,
   Headphones,
   Loader2,
   Lock,
@@ -27,6 +28,13 @@ import {
   splitWords,
   uniqueKeepOrder,
 } from './ttsUtils'
+import {
+  deleteAudioSession,
+  listAudioSessions,
+  loadAudioSession,
+  saveAudioSession,
+  updateAudioSessionShare,
+} from './ttsLibrary'
 
 const readFileAsArrayBuffer = (file) =>
   new Promise((resolve, reject) => {
@@ -87,6 +95,18 @@ const buildBatchMeta = (batch, index, offset = 0) => {
     subtitle: `${rangeText} · ${wordCount} 词`,
   }
 }
+
+const createSessionId = () => {
+  if (crypto?.randomUUID) return crypto.randomUUID()
+  return `tts-${Date.now()}-${Math.random().toString(16).slice(2)}`
+}
+
+const buildSessionTitle = (sourceName, generatedAt = Date.now()) => {
+  const base = String(sourceName || '单词朗读').replace(/\.[^.]+$/, '') || '单词朗读'
+  return `${base} · ${new Date(generatedAt).toLocaleString('zh-CN')}`
+}
+
+const LAST_SESSION_KEY = 'xlsx2pdf_tts_last_session_id'
 
 const SelectField = ({ label, value, onChange, children }) => (
   <label className="field">
@@ -218,6 +238,10 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
   const [shareUrl, setShareUrl] = useState('')
   const [shareSummary, setShareSummary] = useState(null)
   const [selectedAudioIndex, setSelectedAudioIndex] = useState(0)
+  const [currentSessionId, setCurrentSessionId] = useState('')
+  const [libraryOpen, setLibraryOpen] = useState(false)
+  const [libraryItems, setLibraryItems] = useState([])
+  const [restoreChecked, setRestoreChecked] = useState(false)
   const [localSpeaking, setLocalSpeaking] = useState(false)
   const [localWord, setLocalWord] = useState('')
   const ttsFileRef = useRef(null)
@@ -260,6 +284,13 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
   }, [authenticated])
 
   useEffect(() => {
+    if (!authenticated) return
+    listAudioSessions()
+      .then(setLibraryItems)
+      .catch(() => setLibraryItems([]))
+  }, [authenticated])
+
+  useEffect(() => {
     if (!currentVoiceList.length) return
     const key = config.provider === 'edge' ? 'edgeVoice' : 'azureVoice'
     if (!currentVoiceList.some((voice) => voice.id === config[key])) {
@@ -277,7 +308,106 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
     setSelectedAudioIndex((index) => Math.min(Math.max(0, index), audioItems.length - 1))
   }, [audioItems.length])
 
+  useEffect(() => {
+    if (!authenticated || restoreChecked) return
+    setRestoreChecked(true)
+    try {
+      const lastSessionId = localStorage.getItem(LAST_SESSION_KEY)
+      if (lastSessionId) openLibrarySession(lastSessionId)
+    } catch {
+      // ignore
+    }
+    // openLibrarySession is intentionally omitted to avoid re-running auto restore after state changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authenticated, restoreChecked])
+
   const updateTtsConfig = (patch) => setConfig((current) => ({ ...current, ...patch }))
+
+  const refreshLibrary = async () => {
+    try {
+      setLibraryItems(await listAudioSessions())
+    } catch (error) {
+      setStatus(error.message || '读取本地音频库失败。')
+    }
+  }
+
+  const rememberLastSession = (sessionId) => {
+    try {
+      if (sessionId) localStorage.setItem(LAST_SESSION_KEY, sessionId)
+    } catch {
+      // localStorage 可能被隐私模式禁用，不影响 IndexedDB 音频库本身。
+    }
+  }
+
+  const persistGeneratedSession = async (items) => {
+    if (!items.length) return ''
+    const createdAt = Date.now()
+    const sessionId = createSessionId()
+    const session = {
+      id: sessionId,
+      title: buildSessionTitle(fileName, createdAt),
+      sourceFileName: fileName,
+      createdAt,
+      totalWords: items.reduce((sum, item) => sum + (item.wordCount || item.words?.length || 0), 0),
+      batchCount: items.length,
+      provider: config.provider,
+      accent: config.accent,
+      voice: currentVoice,
+      rate: config.rate,
+      pauseMs: config.pauseMs,
+      batchSize: config.batchSize,
+      firstWord: items[0]?.firstWord || items[0]?.words?.[0] || '',
+      lastWord: items[items.length - 1]?.lastWord || items[items.length - 1]?.words?.at(-1) || '',
+    }
+    await saveAudioSession(session, items)
+    setCurrentSessionId(sessionId)
+    rememberLastSession(sessionId)
+    await refreshLibrary()
+    return sessionId
+  }
+
+  const openLibrarySession = async (sessionId) => {
+    setBusy(true)
+    setStatus('正在从本地音频库恢复生成记录…')
+    try {
+      const session = await loadAudioSession(sessionId)
+      setAudioItems(session.items)
+      setCurrentSessionId(session.id)
+      rememberLastSession(session.id)
+      setSelectedAudioIndex(0)
+      setShareUrl(session.shareUrl || '')
+      setQrUrl('')
+      setShareSummary(session.shareSummary || null)
+      setLibraryOpen(false)
+      setStatus(`已恢复：${session.title}`)
+    } catch (error) {
+      setStatus(error.message || '恢复本地生成记录失败。')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const removeLibrarySession = async (sessionId) => {
+    try {
+      await deleteAudioSession(sessionId)
+      try {
+        if (localStorage.getItem(LAST_SESSION_KEY) === sessionId) localStorage.removeItem(LAST_SESSION_KEY)
+      } catch {
+        // ignore
+      }
+      if (sessionId === currentSessionId) {
+        setCurrentSessionId('')
+        setAudioItems([])
+        setShareUrl('')
+        setQrUrl('')
+        setShareSummary(null)
+      }
+      await refreshLibrary()
+      setStatus('已删除本地生成记录。')
+    } catch (error) {
+      setStatus(error.message || '删除本地生成记录失败。')
+    }
+  }
 
   const login = async (event) => {
     event.preventDefault()
@@ -303,6 +433,8 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
     setQrUrl('')
     setShareSummary(null)
     setSelectedAudioIndex(0)
+    setCurrentSessionId('')
+    setLibraryOpen(false)
     setStatus('已退出单词朗读板块。')
   }
 
@@ -390,6 +522,7 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
       setQrUrl('')
       setShareSummary(null)
       setSelectedAudioIndex(0)
+      await persistGeneratedSession([item])
       setStatus('试听音频已生成，可在线播放。')
     } catch (error) {
       setStatus(error.message || '试听生成失败。')
@@ -406,6 +539,7 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
     setQrUrl('')
     setShareSummary(null)
     setSelectedAudioIndex(0)
+    setCurrentSessionId('')
     setStatus(`准备生成 ${batches.length} 段音频…`)
     const items = []
     try {
@@ -415,7 +549,8 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
         items.push(item)
         setAudioItems([...items])
       }
-      setStatus('全部音频已生成，可在线播放或生成手机二维码。')
+      await persistGeneratedSession(items)
+      setStatus('全部音频已生成，并已保存到本机音频库。可在线播放或生成手机二维码。')
     } catch (error) {
       setStatus(error.message || '批量生成失败。')
     } finally {
@@ -592,6 +727,20 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
         batches: shareBatches,
         samples: tracks.slice(0, 5),
       })
+      if (currentSessionId) {
+        const persistedShareSummary = {
+          prefix: start.prefix,
+          batches: shareBatches,
+          samples: tracks.slice(0, 5),
+        }
+        await updateAudioSessionShare(currentSessionId, {
+          shareUrl: url,
+          shareToken: start.token,
+          shareSummary: persistedShareSummary,
+          expiresAt: start.expiresAt,
+        })
+        await refreshLibrary()
+      }
       setStatus('二维码已生成，手机扫码即可播放。')
     } catch (error) {
       setStatus(error.message || '二维码生成失败。请检查 R2 环境变量和 CORS。')
@@ -728,6 +877,9 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
           {localSpeaking ? <Pause size={17} /> : <Play size={17} />}
           {localSpeaking ? `停止本机试听 ${localWord}` : `本机 Edge 试听${isEdge ? '' : '（未检测到）'}`}
         </button>
+        <button className="libraryButton" type="button" onClick={() => setLibraryOpen(true)}>
+          <Archive size={16} /> 管理已生成 {libraryItems.length ? `(${libraryItems.length})` : ''}
+        </button>
         <button className="logoutButton" type="button" onClick={logout}>
           <LogOut size={16} /> 退出朗读板块
         </button>
@@ -799,36 +951,49 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
               <div className="compactAudioShell">
                 {selectedAudioItem ? (
                   <div className="activeAudioPanel">
-                    <div className="audioItemHead">
-                      <div className="batchIndexBadge">{pad3(selectedAudioItem.batchNo || safeSelectedAudioIndex + 1)}</div>
-                      <div>
-                        <strong>{selectedAudioItem.title || selectedAudioItem.label}</strong>
-                        <span className="batchMetaLine">
+                    <div className="playerHero">
+                      <div className="playerOrb">
+                        <span>{pad3(selectedAudioItem.batchNo || safeSelectedAudioIndex + 1)}</span>
+                      </div>
+                      <div className="playerHeroCopy">
+                        <small>当前批次</small>
+                        <h3>{selectedAudioItem.firstWord === selectedAudioItem.lastWord ? selectedAudioItem.firstWord : `${selectedAudioItem.firstWord} → ${selectedAudioItem.lastWord}`}</h3>
+                        <p>
                           {selectedAudioItem.subtitle || `${selectedAudioItem.words.length} 词`}
                           {selectedAudioItem.segments?.length
-                            ? ` · Edge 分段 ${selectedAudioItem.segments.length} 个，停顿 ${selectedAudioItem.pauseMs}ms`
-                            : ''}
-                        </span>
+                            ? ` · Edge 分段 ${selectedAudioItem.segments.length} 个`
+                            : ` · ${selectedAudioItem.provider === 'azure' ? 'Azure MP3' : 'MP3'}`}
+                        </p>
                       </div>
                     </div>
+                    <div className="playerMetaStrip">
+                      <span>{config.accent === 'gb' ? '英音' : '美音'}</span>
+                      <span>{currentVoice}</span>
+                      <span>停顿 {selectedAudioItem.pauseMs ?? config.pauseMs}ms</span>
+                    </div>
                     <div className="wordRibbon">
-                      {selectedAudioItem.words.slice(0, 16).map((word, wordIndex) => (
+                      {selectedAudioItem.words.slice(0, 10).map((word, wordIndex) => (
                         <span key={`${word}-${wordIndex}`}>{word}</span>
                       ))}
-                      {selectedAudioItem.words.length > 16 ? <span>+{selectedAudioItem.words.length - 16}</span> : null}
+                      {selectedAudioItem.words.length > 10 ? <span>+{selectedAudioItem.words.length - 10}</span> : null}
                     </div>
                     {selectedAudioItem.segments?.length ? (
                       <>
                         <SegmentedAudioPlayer item={selectedAudioItem} />
-                        <small className="fileHint">
-                          R2 保存为文件夹：{selectedAudioItem.fileStem}/001_{sanitizeFilePart(selectedAudioItem.segments[0]?.word)}.mp3 …
-                        </small>
+                        <div className="fileHintBox">
+                          <small>R2 文件夹</small>
+                          <strong>{selectedAudioItem.fileStem}/</strong>
+                          <span>例如 001_{sanitizeFilePart(selectedAudioItem.segments[0]?.word)}.mp3</span>
+                        </div>
                       </>
                     ) : (
                       <>
                         <audio src={selectedAudioItem.url} controls preload="metadata" />
                         <div className="audioActionsRow">
-                          <small className="fileHint">保存名：{selectedAudioItem.fileStem || `words-${safeSelectedAudioIndex + 1}`}.mp3</small>
+                          <div className="fileHintBox">
+                            <small>保存名</small>
+                            <strong>{selectedAudioItem.fileStem || `words-${safeSelectedAudioIndex + 1}`}.mp3</strong>
+                          </div>
                           <button
                             type="button"
                             onClick={() =>
@@ -901,6 +1066,62 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
           </div>
         </div>
       </section>
+
+      {libraryOpen ? (
+        <div className="libraryOverlay" role="dialog" aria-modal="true" aria-label="管理已生成音频">
+          <div className="libraryDrawer">
+            <div className="libraryHeader">
+              <div>
+                <span className="eyebrow">Local Audio Library</span>
+                <h2>管理已生成</h2>
+                <p>音频保存在当前浏览器 IndexedDB 中，刷新页面后可从这里恢复播放和再次生成二维码。</p>
+              </div>
+              <button type="button" onClick={() => setLibraryOpen(false)}>
+                关闭
+              </button>
+            </div>
+
+            {libraryItems.length ? (
+              <div className="libraryList">
+                {libraryItems.map((item) => (
+                  <div className={item.id === currentSessionId ? 'libraryItem active' : 'libraryItem'} key={item.id}>
+                    <div>
+                      <strong>{item.title || '单词朗读'}</strong>
+                      <span>
+                        {item.firstWord && item.lastWord ? `${item.firstWord} → ${item.lastWord} · ` : ''}
+                        {item.totalWords || 0} 词 · {item.batchCount || item.itemCount || 0} 批次 · {item.provider === 'edge' ? 'Edge-TTS' : 'Azure'}
+                      </span>
+                      <small>
+                        {new Date(item.createdAt || item.updatedAt || Date.now()).toLocaleString('zh-CN')}
+                        {item.shareUrl ? ' · 已有手机播放链接' : ''}
+                      </small>
+                    </div>
+                    <div className="libraryActions">
+                      <button type="button" onClick={() => openLibrarySession(item.id)}>
+                        恢复
+                      </button>
+                      {item.shareUrl ? (
+                        <a href={item.shareUrl} target="_blank" rel="noreferrer">
+                          打开链接
+                        </a>
+                      ) : null}
+                      <button className="danger" type="button" onClick={() => removeLibrarySession(item.id)}>
+                        删除
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="emptyLibrary">
+                <Archive size={32} />
+                <h3>暂无本地生成记录</h3>
+                <p>点击“生成首段试听”或“批量生成音频”后，会自动保存到这里。</p>
+              </div>
+            )}
+          </div>
+        </div>
+      ) : null}
     </section>
   )
 }

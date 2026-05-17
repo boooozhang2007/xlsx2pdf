@@ -23,6 +23,7 @@
 - 检测 Microsoft Edge 后可用 Web Speech API 做本机试听 fallback（不导出本机 Edge 音频）
 - 支持在线播放、下载 MP3、上传到 Cloudflare R2 后生成手机播放二维码
 - `/listen?token=...` 为移动端适配播放页，支持保存到当前设备播放库、复制长期链接、逐段下载
+- 桌面端会把已生成的音频保存在当前浏览器 IndexedDB，本地刷新后可从“管理已生成”恢复继续播放或重新生成二维码
 
 ## 本地运行
 
