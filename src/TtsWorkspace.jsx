@@ -21,6 +21,7 @@ import {
   base64ToBlob,
   blobToBase64,
   chunkWords,
+  createZipBlob,
   downloadNamedBlob,
   getSpeechSupport,
   isEdgeBrowser,
@@ -107,6 +108,12 @@ const buildQrDataUrl = (url) => QRCode.toDataURL(url, { width: 360, margin: 1 })
 const buildSessionTitle = (sourceName, generatedAt = Date.now()) => {
   const base = String(sourceName || '单词朗读').replace(/\.[^.]+$/, '') || '单词朗读'
   return `${base} · ${new Date(generatedAt).toLocaleString('zh-CN')}`
+}
+
+const buildArchiveFileName = (sourceName) => {
+  const base = sanitizeFilePart(String(sourceName || 'tts-audio').replace(/\.[^.]+$/, ''), 'tts-audio')
+  const stamp = new Date().toISOString().slice(0, 16).replace(/[-:T]/g, '')
+  return `${base}_tts_${stamp}.zip`
 }
 
 const LAST_SESSION_KEY = 'xlsx2pdf_tts_last_session_id'
@@ -411,6 +418,70 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
       return
     }
     openPlaylist()
+  }
+
+  const collectAudioDownloadFiles = () => {
+    const usedNames = new Map()
+    const uniqueName = (name) => {
+      const cleanName = String(name || 'audio.mp3').replace(/\\/g, '/').replace(/^\/+/, '')
+      const count = usedNames.get(cleanName) || 0
+      usedNames.set(cleanName, count + 1)
+      if (!count) return cleanName
+      const dotIndex = cleanName.lastIndexOf('.')
+      if (dotIndex > cleanName.lastIndexOf('/')) {
+        return `${cleanName.slice(0, dotIndex)}-${count + 1}${cleanName.slice(dotIndex)}`
+      }
+      return `${cleanName}-${count + 1}`
+    }
+
+    return audioItems.flatMap((item, index) => {
+      const fallbackMeta = buildBatchMeta(item.words?.length ? item.words : [item.firstWord || 'word'], index)
+      const fileStem = item.fileStem || fallbackMeta.fileStem
+      if (item.blob) {
+        return [{
+          name: uniqueName(`${fileStem}.mp3`),
+          blob: item.blob,
+        }]
+      }
+
+      if (item.segments?.length) {
+        return item.segments
+          .filter((segment) => segment?.blob)
+          .map((segment, segmentIndex) => ({
+            name: uniqueName(`${fileStem}/${segment.fileStem || `${pad3(segmentIndex + 1)}_${sanitizeFilePart(segment.word)}`}.mp3`),
+            blob: segment.blob,
+          }))
+      }
+
+      return []
+    })
+  }
+
+  const downloadAllAudio = async () => {
+    const files = collectAudioDownloadFiles()
+    if (!files.length) {
+      setStatus('没有可下载的音频。')
+      return
+    }
+
+    setBusy(true)
+    setStatus(`正在打包 ${files.length} 个音频文件…`)
+    try {
+      if (files.length === 1) {
+        downloadNamedBlob(files[0].blob, files[0].name.split('/').pop())
+      } else {
+        const zipBlob = await createZipBlob(files)
+        downloadNamedBlob(zipBlob, buildArchiveFileName(fileName))
+      }
+      setPlaylistOpen(false)
+      setPlaylistClosing(false)
+      setStatus(files.length === 1 ? '音频已开始下载。' : `已打包 ${files.length} 个音频文件。`)
+    } catch (error) {
+      console.error(error)
+      setStatus(`批量下载失败：${error?.message || '请重试'}`)
+    } finally {
+      setBusy(false)
+    }
   }
 
   const refreshLibrary = async () => {
@@ -1049,21 +1120,26 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
                     ) : (
                       <>
                         <audio src={selectedAudioItem.url} controls preload="metadata" />
-                        <div className="audioActionsRow">
-                          <button
-                            type="button"
-                            onClick={() =>
-                              downloadNamedBlob(
-                                selectedAudioItem.blob,
-                                `${selectedAudioItem.fileStem || `words-${safeSelectedAudioIndex + 1}`}.mp3`,
-                              )
-                            }
-                          >
-                            下载当前 MP3
-                          </button>
-                        </div>
                       </>
                     )}
+                    <div className="audioActionsRow">
+                      {selectedAudioItem.blob ? (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            downloadNamedBlob(
+                              selectedAudioItem.blob,
+                              `${selectedAudioItem.fileStem || `words-${safeSelectedAudioIndex + 1}`}.mp3`,
+                            )
+                          }
+                        >
+                          下载当前 MP3
+                        </button>
+                      ) : null}
+                      <button type="button" onClick={downloadAllAudio} disabled={busy || !audioItems.length}>
+                        批量下载音频
+                      </button>
+                    </div>
                   </div>
                 ) : null}
 

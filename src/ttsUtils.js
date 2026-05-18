@@ -78,6 +78,134 @@ export const downloadNamedBlob = (blob, name) => {
   URL.revokeObjectURL(url)
 }
 
+const zipTextEncoder = new TextEncoder()
+
+let crcTable = null
+
+const getCrcTable = () => {
+  if (crcTable) return crcTable
+  crcTable = new Uint32Array(256)
+  for (let index = 0; index < 256; index += 1) {
+    let value = index
+    for (let bit = 0; bit < 8; bit += 1) {
+      value = value & 1 ? 0xedb88320 ^ (value >>> 1) : value >>> 1
+    }
+    crcTable[index] = value >>> 0
+  }
+  return crcTable
+}
+
+const crc32 = (bytes) => {
+  const table = getCrcTable()
+  let crc = 0xffffffff
+  for (let index = 0; index < bytes.length; index += 1) {
+    crc = table[(crc ^ bytes[index]) & 0xff] ^ (crc >>> 8)
+  }
+  return (crc ^ 0xffffffff) >>> 0
+}
+
+const u16 = (value) => {
+  const bytes = new Uint8Array(2)
+  new DataView(bytes.buffer).setUint16(0, value, true)
+  return bytes
+}
+
+const u32 = (value) => {
+  const bytes = new Uint8Array(4)
+  new DataView(bytes.buffer).setUint32(0, value >>> 0, true)
+  return bytes
+}
+
+const getDosDateTime = (date = new Date()) => {
+  const year = Math.max(1980, date.getFullYear())
+  const dosTime = (date.getHours() << 11) | (date.getMinutes() << 5) | Math.floor(date.getSeconds() / 2)
+  const dosDate = ((year - 1980) << 9) | ((date.getMonth() + 1) << 5) | date.getDate()
+  return { dosTime, dosDate }
+}
+
+const normalizeZipPath = (name) => String(name || 'audio.mp3')
+  .replace(/\\/g, '/')
+  .replace(/^\/+/, '')
+  .replace(/\/+/g, '/')
+  .replace(/[<>:"|?*\u0000-\u001f]/g, '-')
+  .replace(/\/?\.\.(\/|$)/g, '-')
+  || 'audio.mp3'
+
+export const createZipBlob = async (files = []) => {
+  const normalizedFiles = files
+    .filter((file) => file?.blob)
+    .map((file, index) => ({
+      name: normalizeZipPath(file.name || `audio-${index + 1}.mp3`),
+      blob: file.blob,
+    }))
+  if (!normalizedFiles.length) throw new Error('没有可打包的音频文件。')
+
+  const localParts = []
+  const centralParts = []
+  let offset = 0
+  const { dosTime, dosDate } = getDosDateTime()
+
+  for (const file of normalizedFiles) {
+    const data = new Uint8Array(await file.blob.arrayBuffer())
+    const filename = zipTextEncoder.encode(file.name)
+    const checksum = crc32(data)
+    const size = data.byteLength
+    const localOffset = offset
+    const localHeader = new Blob([
+      u32(0x04034b50),
+      u16(20),
+      u16(0x0800),
+      u16(0),
+      u16(dosTime),
+      u16(dosDate),
+      u32(checksum),
+      u32(size),
+      u32(size),
+      u16(filename.byteLength),
+      u16(0),
+      filename,
+    ])
+
+    localParts.push(localHeader, data)
+    offset += localHeader.size + size
+
+    centralParts.push(new Blob([
+      u32(0x02014b50),
+      u16(20),
+      u16(20),
+      u16(0x0800),
+      u16(0),
+      u16(dosTime),
+      u16(dosDate),
+      u32(checksum),
+      u32(size),
+      u32(size),
+      u16(filename.byteLength),
+      u16(0),
+      u16(0),
+      u16(0),
+      u16(0),
+      u32(0),
+      u32(localOffset),
+      filename,
+    ]))
+  }
+
+  const centralSize = centralParts.reduce((sum, part) => sum + part.size, 0)
+  const endRecord = new Blob([
+    u32(0x06054b50),
+    u16(0),
+    u16(0),
+    u16(normalizedFiles.length),
+    u16(normalizedFiles.length),
+    u32(centralSize),
+    u32(offset),
+    u16(0),
+  ])
+
+  return new Blob([...localParts, ...centralParts, endRecord], { type: 'application/zip' })
+}
+
 export const blobToBase64 = (blob) =>
   new Promise((resolve, reject) => {
     const reader = new FileReader()
