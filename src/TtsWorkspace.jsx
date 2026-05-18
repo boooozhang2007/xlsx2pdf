@@ -281,7 +281,17 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
   const safeSelectedAudioIndex = audioItems.length ? Math.min(selectedAudioIndex, audioItems.length - 1) : 0
   const selectedAudioItem = audioItems[safeSelectedAudioIndex] || null
   const selectedWords = selectedAudioItem?.words || []
-  const totalBatchCount = batches.length
+  const displayBatchMetas = batchMetas.length
+    ? batchMetas
+    : audioItems.map((item, index) => ({
+      batchNo: item.batchNo || index + 1,
+      firstWord: item.firstWord || item.words?.[0] || 'word',
+      lastWord: item.lastWord || item.words?.at(-1) || item.words?.[0] || 'word',
+      wordCount: item.wordCount || item.words?.length || 0,
+      fileStem: item.fileStem || `restored-${index + 1}`,
+    }))
+  const totalBatchCount = displayBatchMetas.length
+  const totalWordCount = words.length || audioItems.reduce((sum, item) => sum + (item.wordCount || item.words?.length || 0), 0)
   const completedBatchCount = Math.min(audioItems.length, totalBatchCount || audioItems.length)
   const taskProgress = totalBatchCount ? Math.min(100, Math.round((completedBatchCount / totalBatchCount) * 100)) : 0
   const taskState = busy
@@ -294,7 +304,7 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
           ? '已就绪'
           : '等待输入'
   const taskTone = busy ? 'running' : audioItems.length ? 'done' : words.length ? 'ready' : 'idle'
-  const nextBatchMeta = totalBatchCount && completedBatchCount < totalBatchCount ? batchMetas[completedBatchCount] : null
+  const nextBatchMeta = totalBatchCount && completedBatchCount < totalBatchCount ? displayBatchMetas[completedBatchCount] : null
   const hasShareLink = Boolean(shareUrl)
   const qrButtonText = hasShareLink ? '二维码已生成' : busy ? '处理中…' : '生成手机二维码'
   const qrHintText = hasShareLink
@@ -968,7 +978,7 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
         <div className="stageHeader">
           <div>
             <span className="eyebrow">Audio Studio</span>
-            <h2>{words.length ? `${words.length} 个单词 · ${batches.length} 段` : '等待单词'}</h2>
+            <h2>{totalWordCount ? `${totalWordCount} 个单词 · ${totalBatchCount} 段` : '等待单词'}</h2>
           </div>
           <div className="stageActions">
             <button className="libraryButton" type="button" onClick={() => setLibraryOpen(true)}>
@@ -1153,7 +1163,7 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
                 </div>
                 <div>
                   <small>单词</small>
-                  <strong>{words.length}</strong>
+                  <strong>{totalWordCount}</strong>
                 </div>
                 <div>
                   <small>二维码</small>
@@ -1169,24 +1179,24 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
               ) : null}
             </div>
 
-            {batchMetas.length ? (
+            {displayBatchMetas.length ? (
               <div className="batchPlan">
                 <div className="sectionHeaderCompact">
                   <div>
                     <h3>批次规划</h3>
-                    <p>按生成顺序预览，点击播放列表可切换已生成批次。</p>
+                    <p>按生成顺序预览，恢复记录后也会保留批次信息。</p>
                   </div>
-                  <span>{batchMetas.length} 个批次</span>
+                  <span>{displayBatchMetas.length} 个批次</span>
                 </div>
                 <div className="batchPlanGrid">
-                  {batchMetas.slice(0, 8).map((batch) => (
+                  {displayBatchMetas.slice(0, 8).map((batch) => (
                     <div className="batchChip" key={batch.fileStem} title={`${batch.firstWord} → ${batch.lastWord}`}>
                       <strong>B{pad3(batch.batchNo)}</strong>
                       <span>{batch.firstWord === batch.lastWord ? batch.firstWord : `${batch.firstWord} → ${batch.lastWord}`}</span>
                       <em>{batch.wordCount} 词</em>
                     </div>
                   ))}
-                  {batchMetas.length > 8 ? <div className="batchChip muted">+{batchMetas.length - 8} 个批次</div> : null}
+                  {displayBatchMetas.length > 8 ? <div className="batchChip muted">+{displayBatchMetas.length - 8} 个批次</div> : null}
                 </div>
               </div>
             ) : (
