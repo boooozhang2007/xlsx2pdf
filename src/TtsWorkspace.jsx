@@ -167,19 +167,6 @@ const RangeField = ({ label, value, min, max, step = 1, suffix, onChange }) => (
   </label>
 )
 
-function WordSummary({ words = [] }) {
-  const fullText = words.join(' · ')
-  const preview = words.slice(0, 3).join(' / ')
-
-  return (
-    <div className="wordSummary" title={fullText}>
-      <span>{words.length} 个单词</span>
-      <strong>{preview || '暂无单词'}</strong>
-      {words.length > 3 ? <em>+{words.length - 3}</em> : null}
-    </div>
-  )
-}
-
 function SegmentedAudioPlayer({ item }) {
   const [index, setIndex] = useState(0)
   const [playing, setPlaying] = useState(false)
@@ -280,7 +267,6 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
   const isEdge = isEdgeBrowser()
   const safeSelectedAudioIndex = audioItems.length ? Math.min(selectedAudioIndex, audioItems.length - 1) : 0
   const selectedAudioItem = audioItems[safeSelectedAudioIndex] || null
-  const selectedWords = selectedAudioItem?.words || []
   const displayBatchMetas = batchMetas.length
     ? batchMetas
     : audioItems.map((item, index) => ({
@@ -416,7 +402,15 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
     playlistCloseTimerRef.current = window.setTimeout(() => {
       setPlaylistOpen(false)
       setPlaylistClosing(false)
-    }, 170)
+    }, 220)
+  }
+
+  const togglePlaylist = () => {
+    if (playlistOpen) {
+      closePlaylist()
+      return
+    }
+    openPlaylist()
   }
 
   const refreshLibrary = async () => {
@@ -1027,7 +1021,6 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
             <div className="sectionHeaderCompact">
               <div>
                 <h3>在线播放试听</h3>
-                <p>列表按批次显示，不再混成一串无意义文件。</p>
               </div>
               <span>{audioItems.length ? `${audioItems.length} 个批次` : '尚未生成'}</span>
             </div>
@@ -1040,14 +1033,8 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
                         <span>{pad3(selectedAudioItem.batchNo || safeSelectedAudioIndex + 1)}</span>
                       </div>
                       <div className="playerHeroCopy">
-                        <small>当前批次</small>
                         <h3>{selectedAudioItem.firstWord === selectedAudioItem.lastWord ? selectedAudioItem.firstWord : `${selectedAudioItem.firstWord} → ${selectedAudioItem.lastWord}`}</h3>
-                        <p>
-                          {selectedAudioItem.subtitle || `${selectedAudioItem.words.length} 词`}
-                          {selectedAudioItem.segments?.length
-                            ? ` · Edge 分段 ${selectedAudioItem.segments.length} 个`
-                            : ` · ${selectedAudioItem.provider === 'azure' ? 'Azure MP3' : 'Edge MP3'}`}
-                        </p>
+                        <p>{selectedAudioItem.subtitle || `${selectedAudioItem.words.length} 词`}</p>
                         <div className="playerMetaStrip">
                           <span>{config.accent === 'gb' ? '英音' : '美音'}</span>
                           <span>{currentVoice}</span>
@@ -1055,7 +1042,6 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
                         </div>
                       </div>
                     </div>
-                    <WordSummary words={selectedWords} />
                     {selectedAudioItem.segments?.length ? (
                       <>
                         <SegmentedAudioPlayer item={selectedAudioItem} />
@@ -1081,32 +1067,25 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
                   </div>
                 ) : null}
 
-                <button className="playlistDockButton" type="button" onClick={openPlaylist} aria-expanded={playlistOpen}>
+                <button className="playlistDockButton" type="button" onClick={togglePlaylist} aria-expanded={playlistOpen}>
                   <span>播放列表</span>
                   <strong>
                     当前 {pad3(selectedAudioItem?.batchNo || safeSelectedAudioIndex + 1)} / {audioItems.length}
                   </strong>
-                  <em>点击后向上展开，选择后自动收起</em>
                 </button>
                 {playlistOpen ? (
                   <div
                     className={playlistClosing ? 'inlinePlaylistLayer closing' : 'inlinePlaylistLayer'}
-                    role="dialog"
-                    aria-modal="true"
-                    aria-label="播放列表"
-                    onClick={closePlaylist}
+                    role="region"
+                    aria-label="播放列表面板"
                   >
-                    <div className="inlinePlaylistSheet" onClick={(event) => event.stopPropagation()}>
+                    <div className="inlinePlaylistSheet">
                       <div className="playlistHandle" />
                       <div className="playlistHeader">
                         <div>
                           <span className="eyebrow">Playlist</span>
                           <h2>播放列表</h2>
-                          <p>共 {audioItems.length} 个批次，点击批次即可切换当前播放器。</p>
                         </div>
-                        <button type="button" onClick={closePlaylist}>
-                          收起
-                        </button>
                       </div>
 
                       <div className="playlistItems">
@@ -1136,7 +1115,6 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
             ) : (
               <div className="emptyAudio">
                 <Volume2 size={30} />
-                <p>生成后会在这里出现音频播放器。首段试听适合快速校验音色、速度和停顿。</p>
               </div>
             )}
           </div>
@@ -1184,7 +1162,6 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
                 <div className="sectionHeaderCompact">
                   <div>
                     <h3>批次规划</h3>
-                    <p>按生成顺序预览，恢复记录后也会保留批次信息。</p>
                   </div>
                   <span>{displayBatchMetas.length} 个批次</span>
                 </div>
@@ -1203,7 +1180,6 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
               <div className="batchPlan emptyPlan">
                 <span className="eyebrow">Queue</span>
                 <h3>等待单词</h3>
-                <p>粘贴或导入单词后，这里会显示批次规划和处理进度。</p>
               </div>
             )}
           </aside>
