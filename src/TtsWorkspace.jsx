@@ -1145,8 +1145,8 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
             <div className={`taskPanel ${taskTone}`}>
               <div className="taskPanelHeader">
                 <div>
-                  <span className="eyebrow">Task</span>
-                  <h3>任务处理</h3>
+                  <span className="eyebrow">Task Log</span>
+                  <h3>任务日志</h3>
                 </div>
                 <strong>{taskState}</strong>
               </div>

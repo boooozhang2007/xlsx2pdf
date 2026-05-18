@@ -938,14 +938,15 @@ button:disabled {
 .studioBoard {
   flex: 1;
   display: grid;
-  grid-template-columns: minmax(0, 1.45fr) minmax(280px, 360px);
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto minmax(320px, 1fr);
   align-items: stretch;
   gap: 18px;
 }
 
 .studioSide {
   display: grid;
-  grid-template-rows: minmax(0, 0.9fr) minmax(0, 1.1fr);
+  grid-template-rows: auto minmax(220px, 1fr);
   align-self: stretch;
   gap: 18px;
   min-width: 0;
@@ -968,9 +969,40 @@ button:disabled {
   box-shadow: 0 24px 60px rgba(15, 23, 42, 0.18);
 }
 
+.studioSide .taskPanel {
+  grid-template-columns: minmax(170px, 0.7fr) minmax(0, 1.35fr) minmax(260px, 0.95fr);
+  grid-template-rows: auto auto;
+  grid-template-areas:
+    "head status metrics"
+    "head progress metrics";
+  align-items: center;
+  min-height: 164px;
+}
+
 .taskPanel > * {
   position: relative;
   z-index: 1;
+}
+
+.studioSide .taskPanelHeader {
+  grid-area: head;
+}
+
+.studioSide .taskPanel p {
+  grid-area: status;
+}
+
+.studioSide .taskProgress {
+  grid-area: progress;
+}
+
+.studioSide .taskMetrics {
+  grid-area: metrics;
+  align-self: center;
+}
+
+.studioSide .nextBatchHint {
+  grid-column: 1 / -1;
 }
 
 .taskPanelHeader {
@@ -1174,7 +1206,7 @@ button:disabled {
 
 .studioSide .batchPlanGrid {
   align-content: start;
-  grid-template-columns: 1fr;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
   max-height: none;
   min-height: 0;
   overflow: auto;
@@ -2920,6 +2952,24 @@ button:disabled {
 
   .libraryHeader {
     flex-direction: column;
+  }
+
+  .studioSide .taskPanel {
+    grid-template-columns: 1fr;
+    grid-template-rows: none;
+    grid-template-areas: none;
+    min-height: 0;
+  }
+
+  .studioSide .taskPanelHeader,
+  .studioSide .taskPanel p,
+  .studioSide .taskProgress,
+  .studioSide .taskMetrics {
+    grid-area: auto;
+  }
+
+  .studioSide .nextBatchHint {
+    grid-column: auto;
   }
 
   .libraryActions {
