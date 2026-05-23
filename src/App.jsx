@@ -85,7 +85,7 @@ function App() {
   const currentPreviewRows = previewPages[safePreviewPage - 1] || []
   const previewRowScale = Math.min(1, DEFAULT_CONFIG.rowsPerPage / rowsPerPage)
   const previewRowUnit = (DEFAULT_CONFIG.rowsPerPage * 8.8) / rowsPerPage
-  const previewGridRatio = Math.min(6, previewRowUnit * (6 / 8.8)) / previewRowUnit
+  const previewGridRatio = 6 / previewRowUnit
 
   const stats = useMemo(
     () => ({

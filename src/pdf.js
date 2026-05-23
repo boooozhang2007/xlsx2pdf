@@ -17,6 +17,8 @@ export const TEMPLATE = {
   headerHeight: mm(7.4),
   rowHeight: mm(8.8),
   bodyHeight: mm(8.8 * DEFAULT_CONFIG.rowsPerPage),
+  fourlineHeight: mm(6),
+  fourlineInsetX: mm(1),
   pageNumberY: mm(7.2),
   lineWidth: 0.5,
 }
@@ -153,10 +155,10 @@ const drawTextCentered = (page, text, x, y, w, h, font, size, options = {}) => {
 }
 
 const drawFourlineGrid = (page, gridImage, x, y, w, h) => {
-  const drawW = w - 2 * mm(1)
-  const drawH = Math.min(mm(6), h * (6 / 8.8))
+  const drawW = w - TEMPLATE.fourlineInsetX * 2
+  const drawH = TEMPLATE.fourlineHeight
   page.drawImage(gridImage, {
-    x: x + mm(1),
+    x: x + TEMPLATE.fourlineInsetX,
     y: y + (h - drawH) / 2,
     width: drawW,
     height: drawH,

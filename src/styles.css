@@ -2660,7 +2660,7 @@ button:disabled {
 
 .writeEnglishCell img {
   display: block;
-  width: calc(100% - 2px);
+  width: calc(60 / 62 * 100%);
   height: calc(100% * var(--grid-ratio, 0.68));
   object-fit: fill;
 }

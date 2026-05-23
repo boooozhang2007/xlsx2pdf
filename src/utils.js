@@ -12,7 +12,9 @@ export const DEFAULT_CONFIG = {
   showIndex: true,
 }
 
-export const MAX_ROWS_PER_PAGE = 60
+// 四线三格必须始终按 6mm 高度绘制（1-2 线 1.5mm、2-3 线 3mm、3-4 线 1.5mm）。
+// 当前表格正文高度为 30 * 8.8mm = 264mm，因此每页最多 44 行才能保证每行高度 >= 6mm。
+export const MAX_ROWS_PER_PAGE = 44
 
 export const SAMPLE_ROWS = [
   { index: 1, english: 'cheat', chinese: 'v. 欺骗；作弊 n. 骗子' },
