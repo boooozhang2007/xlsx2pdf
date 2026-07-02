@@ -9,15 +9,24 @@ const xmlEscape = (value) => String(value ?? '')
 
 const toTwips = (points) => Math.round(Number(points || 0) * 20)
 
+const buildRunInnerXml = (text) => String(text ?? '')
+  .split('\t')
+  .map((part, index, array) => {
+    const chunks = []
+    if (part) chunks.push(`<w:t xml:space="preserve">${xmlEscape(part)}</w:t>`)
+    if (index < array.length - 1) chunks.push('<w:tab/>')
+    return chunks.join('')
+  })
+  .join('')
+
 const buildRunXml = ({ text = '', bold = false, size = 12, font = '' }) => {
-  const safeText = String(text ?? '').replace(/\t/g, '    ')
   const runProps = [
     bold ? '<w:b/>' : '',
     font ? `<w:rFonts w:ascii="${xmlEscape(font)}" w:hAnsi="${xmlEscape(font)}" w:cs="${xmlEscape(font)}"/>` : '',
     `<w:sz w:val="${Math.round(size * 2)}"/>`,
     `<w:szCs w:val="${Math.round(size * 2)}"/>`,
   ].join('')
-  return `<w:r><w:rPr>${runProps}</w:rPr><w:t xml:space="preserve">${xmlEscape(safeText)}</w:t></w:r>`
+  return `<w:r><w:rPr>${runProps}</w:rPr>${buildRunInnerXml(text)}</w:r>`
 }
 
 const buildParagraphXml = ({
@@ -25,6 +34,7 @@ const buildParagraphXml = ({
   bold = false,
   size = 12,
   font = '',
+  tabs = [],
   align = 'left',
   spaceBefore = 0,
   spaceAfter = 0,
@@ -39,6 +49,7 @@ const buildParagraphXml = ({
   const paragraphProps = [
     pageBreakBefore ? '<w:pageBreakBefore/>' : '',
     align ? `<w:jc w:val="${alignmentMap[align] || 'left'}"/>` : '',
+    tabs.length ? `<w:tabs>${tabs.map((position) => `<w:tab w:val="left" w:pos="${toTwips(position)}"/>`).join('')}</w:tabs>` : '',
     `<w:spacing w:before="${toTwips(spaceBefore)}" w:after="${toTwips(spaceAfter)}"/>`,
   ].join('')
 

@@ -811,6 +811,7 @@ const paragraph = (text, options = {}) => ({
   bold: options.bold || false,
   size: options.size || 12,
   font: options.font || '',
+  tabs: options.tabs || [],
   align: options.align || 'left',
   spaceBefore: options.spaceBefore || 0,
   spaceAfter: options.spaceAfter || 0,
@@ -946,7 +947,7 @@ const generateSynAntJudge = (questionParagraphs, answerParagraphs, group, groupI
   pairs = shuffle(pairs.slice(0, 30), context.rng)
   const answers = []
   pairs.forEach((pair, index) => {
-    questionParagraphs.push(paragraph(`${index + 1}. ${pair[0]} & ${pair[1]} (   )`))
+    questionParagraphs.push(paragraph(`${index + 1}. ${pair[0]} & ${pair[1]} (    )`))
     answers.push([index + 1, pair[2]])
   })
   writeAnswerBlock(answerParagraphs, `第${groupIndex + 1}组 六 同义反义辨析 答案`, answers, 10, groupIndex > 0)
@@ -989,13 +990,16 @@ const generateMatchBlocks = (questionParagraphs, answerParagraphs, group, groupI
     if (!block.length) break
     const rightWords = shuffle(block.map((pair) => pair[1]), context.rng)
     const leftLabels = block.map((pair, index) => `${index + 1}. ${pair[0].displayEnglish}`)
-    const leftWidth = Math.max(...leftLabels.map((item) => item.length), 12) + 3
+    const longestLeftLabel = Math.max(...leftLabels.map((item) => item.length), 14)
+    const tabStop = Math.min(340, Math.max(190, longestLeftLabel * 7.25 + 18))
     questionParagraphs.push(paragraph('', { spaceAfter: 0 }))
     block.forEach((pair, index) => {
       const letter = 'abcde'[rightWords.indexOf(pair[1])] || 'a'
-      const leftText = leftLabels[index].padEnd(leftWidth, ' ')
       questionNumber += 1
-      questionParagraphs.push(paragraph(`${leftText}${'abcde'[index]}. ${rightWords[index]}`, { font: 'Courier New' }))
+      questionParagraphs.push(paragraph(
+        `${leftLabels[index]}\t${'abcde'[index]}. ${rightWords[index]}`,
+        { font: 'Courier New', tabs: [tabStop] },
+      ))
       answers.push([questionNumber, `${index + 1}-${letter}`])
     })
   }
@@ -1010,7 +1014,7 @@ const generateTrueFalse = (questionParagraphs, answerParagraphs, group, groupInd
   chosen.forEach((entry, index) => {
     const material = context.basicMaterialCache.get(entry.key)
     const isTrue = context.rng() >= 0.5
-    questionParagraphs.push(paragraph(`${index + 1}. (   ) ${isTrue ? material?.tfTrue : material?.tfFalse}`))
+    questionParagraphs.push(paragraph(`${index + 1}. (    ) ${isTrue ? material?.tfTrue : material?.tfFalse}`))
     answers.push([index + 1, isTrue ? 'T' : 'F'])
   })
   writeAnswerBlock(answerParagraphs, `第${groupIndex + 1}组 九 判断正误 答案`, answers, 10, groupIndex > 0)

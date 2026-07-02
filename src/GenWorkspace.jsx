@@ -228,7 +228,7 @@ const buildPreviewModel = (typeKey, rows) => {
         subtitle: '一页里混合同义与反义对，保持课堂节奏。',
         items: mapItem((row, index) => ({
           no: index + 1,
-          lines: [`${cleanWord(row.english)}   &   ${index % 2 === 0 ? previewRelation(row.english, 'synonym') : previewRelation(row.english, 'antonym')}   (   )`],
+          lines: [`${cleanWord(row.english)}   &   ${index % 2 === 0 ? previewRelation(row.english, 'synonym') : previewRelation(row.english, 'antonym')}   (    )`],
         })),
         answers: sampleRows.map((row, index) => `${index + 1}.${index % 2 === 0 ? 'S' : 'A'}`),
       }
@@ -264,7 +264,7 @@ const buildPreviewModel = (typeKey, rows) => {
         subtitle: '预览展示 T / F 判断句式。',
         items: mapItem((row, index) => ({
           no: index + 1,
-          lines: [`(   ) ${cleanWord(row.english)} is connected with ${cleanMeaning(row.chinese)}.`],
+          lines: [`(    ) ${cleanWord(row.english)} is connected with ${cleanMeaning(row.chinese)}.`],
         })),
         answers: sampleRows.map((row, index) => `${index + 1}.${index % 2 === 0 ? 'T' : 'F'}`),
       }
