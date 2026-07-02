@@ -33,6 +33,8 @@
 - 生成请求会先提交到服务端队列，刷新页面后仍可继续查看任务状态与下载结果
 - 队列状态与 ZIP 成品依赖现有 R2 配置持久化
 - 依赖 LLM 的题型会读取服务端环境变量中的 `VIVI_LLM_API_KEY`、`VIVI_LLM_BASE_URL`，并支持在后端预设多个 `VIVI_LLM_MODELS` 供前端切换
+- LLM 题型不再回退到本地模板兜底；如果返回内容缺字段或格式错误，任务会继续重试并在最终失败时明确报错
+- 可选接入 Cloudflare KV 持久化 LLM 结果缓存，重复生成相同词条时会明显更快
 
 ## 本地运行
 
@@ -68,6 +70,17 @@ VIVI_LLM_MODEL=默认模型名（兼容旧配置，也可作为多模型默认�
 VIVI_LLM_MODELS=可选，多个模型选项；支持 JSON，例如 [{"id":"gpt-4.1-mini","label":"GPT 4.1 Mini"},{"id":"gpt-4.1","label":"GPT 4.1"}]
 VIVI_LLM_BATCH_SIZE=可选，默认 20
 VIVI_LLM_CONCURRENCY=可选，默认 5
+VIVI_LLM_REQUEST_RETRIES=可选，单次批量请求的重试次数，默认 3
+VIVI_LLM_SINGLE_ITEM_RETRIES=可选，单词级严格重试次数，默认 4
+VIVI_LLM_CACHE_CF_API_TOKEN=可选，Cloudflare API Token，用于 KV 缓存
+VIVI_LLM_CACHE_CF_ACCOUNT_ID=可选，Cloudflare Account ID
+VIVI_LLM_CACHE_CF_NAMESPACE_ID=可选，KV Namespace ID
+VIVI_LLM_CACHE_PREFIX=可选，缓存 key 前缀，默认 vivi-llm-cache
+VIVI_LLM_CACHE_VERSION=可选，缓存版本号；修改提示词或校验逻辑后可递增
+VIVI_LLM_CACHE_TTL_SECONDS=可选，缓存 TTL；0 表示不主动设置 TTL
+GEN_QUEUE_PROGRESS_WRITE_INTERVAL_MS=可选，队列进度写回节流间隔，默认 700
+GEN_QUEUE_PROGRESS_WRITE_WORD_DELTA=可选，词条进度累计到多少再写回，默认 5
+GEN_QUEUE_CANCELLATION_POLL_INTERVAL_MS=可选，取消状态轮询间隔，默认 300
 R2_ENDPOINT=https://<accountid>.r2.cloudflarestorage.com
 R2_BUCKET=bucket 名称
 R2_ACCESS_KEY_ID=R2 S3 API access key

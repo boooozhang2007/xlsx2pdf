@@ -1,11 +1,14 @@
 import crypto from 'node:crypto'
 import { waitUntil } from '@vercel/functions'
 import { generateWorksheetArchive, getDefaultLlmModel } from './genEngine.js'
-import { createGetUrl, deleteObject, getObjectJson, listObjects, putObject } from './r2.js'
+import { deleteObject, getObjectBuffer, getObjectJson, listObjects, putObject } from './r2.js'
 
 const JOB_PREFIX = 'worksheet-jobs'
 const STALE_PROCESSING_MS = 1000 * 60 * 8
 const MAX_LIST_JOBS = 40
+const PROGRESS_WRITE_INTERVAL_MS = Math.max(200, Number.parseInt(process.env.GEN_QUEUE_PROGRESS_WRITE_INTERVAL_MS || '700', 10) || 700)
+const PROGRESS_WRITE_WORD_DELTA = Math.max(1, Number.parseInt(process.env.GEN_QUEUE_PROGRESS_WRITE_WORD_DELTA || '5', 10) || 5)
+const CANCELLATION_POLL_INTERVAL_MS = Math.max(150, Number.parseInt(process.env.GEN_QUEUE_CANCELLATION_POLL_INTERVAL_MS || '300', 10) || 300)
 const CANCELABLE_STATUSES = new Set(['queued', 'processing', 'canceling'])
 const TERMINAL_STATUSES = new Set(['completed', 'failed', 'canceled'])
 
@@ -193,36 +196,71 @@ const processSingleJob = async (job) => {
     startedAt: latestJob.startedAt || now(),
     error: '',
   })
-  const ensureNotCanceled = async () => {
-    const latestJob = await readLatestJobState(job.id)
-    if (latestJob && ['canceling', 'canceled'].includes(latestJob.status)) {
+  let lastPersistedProgress = liveJob.progress || null
+  let lastProgressWriteAt = now()
+  let cancelKnown = false
+  let lastCancelCheckAt = 0
+
+  const shouldCancel = async (force = false) => {
+    if (cancelKnown) return true
+    const elapsed = now() - lastCancelCheckAt
+    if (!force && lastCancelCheckAt && elapsed < CANCELLATION_POLL_INTERVAL_MS) return false
+    lastCancelCheckAt = now()
+    const currentJob = await readLatestJobState(job.id)
+    cancelKnown = Boolean(currentJob && ['canceling', 'canceled'].includes(currentJob.status))
+    return cancelKnown
+  }
+
+  const ensureNotCanceled = async (force = false) => {
+    if (await shouldCancel(force)) {
       const error = new Error('任务已取消。')
       error.code = 'JOB_CANCELED'
       throw error
     }
   }
 
+  const persistProgress = async (nextProgress, force = false) => {
+    liveJob = {
+      ...liveJob,
+      progress: nextProgress,
+    }
+    const previous = lastPersistedProgress || {}
+    const stageChanged =
+      (nextProgress?.currentStep || '') !== (previous.currentStep || '') ||
+      (nextProgress?.stageLabel || '') !== (previous.stageLabel || '') ||
+      (nextProgress?.currentQuestionType || '') !== (previous.currentQuestionType || '')
+    const stageWordDelta = Math.abs(Number(nextProgress?.stageWordCompleted || 0) - Number(previous.stageWordCompleted || 0))
+    const completedStepDelta = Math.abs(Number(nextProgress?.completedSteps || 0) - Number(previous.completedSteps || 0))
+    const intervalElapsed = now() - lastProgressWriteAt >= PROGRESS_WRITE_INTERVAL_MS
+    const shouldFlush =
+      force ||
+      !lastPersistedProgress ||
+      stageChanged ||
+      stageWordDelta >= PROGRESS_WRITE_WORD_DELTA ||
+      completedStepDelta >= 1 ||
+      intervalElapsed ||
+      Number(nextProgress?.percent || 0) >= 100
+
+    if (!shouldFlush) return
+    liveJob = await writeJob(liveJob)
+    lastPersistedProgress = liveJob.progress || nextProgress
+    lastProgressWriteAt = now()
+  }
+
   try {
-    await ensureNotCanceled()
+    await ensureNotCanceled(true)
     const result = await generateWorksheetArchive({
       rows: payload.rows || [],
       fileName: payload.fileName || '词组练习.xlsx',
       questionTypes: payload.questionTypes || latestJob.questionTypes,
       llmModel: payload.llmModel || latestJob.llmModel || getDefaultLlmModel(),
       onProgress: async (event) => {
-        await ensureNotCanceled()
-        liveJob = await writeJob({
-          ...liveJob,
-          progress: progressFromEvent(liveJob, event),
-        })
+        await persistProgress(progressFromEvent(liveJob, event))
       },
-      onShouldCancel: async () => {
-        const latestJob = await readLatestJobState(job.id)
-        return Boolean(latestJob && ['canceling', 'canceled'].includes(latestJob.status))
-      },
+      onShouldCancel: shouldCancel,
     })
 
-    await ensureNotCanceled()
+    await ensureNotCanceled(true)
     const artifactKey = jobArtifactKey(job.id)
     await putObject({
       key: artifactKey,
@@ -404,15 +442,8 @@ export const getWorksheetJobDownload = async (jobId) => {
     error.statusCode = 409
     throw error
   }
-  const url = await createGetUrl({ key: job.artifactKey, expiresIn: 60 * 10 })
-  const response = await fetch(url)
-  if (!response.ok) {
-    const error = new Error('未找到已生成的练习包。')
-    error.statusCode = 404
-    throw error
-  }
   return {
     job: summarizeJob(job),
-    buffer: Buffer.from(await response.arrayBuffer()),
+    buffer: await getObjectBuffer({ key: job.artifactKey }),
   }
 }
