@@ -1,4 +1,6 @@
 const textEncoder = new TextEncoder()
+const ZIP_FLAG_UTF8 = 0x0800
+const ZIP_EXTRA_FIELD_UNICODE_PATH = 0x7075
 
 let crcTable = null
 
@@ -56,6 +58,24 @@ const normalizeBytes = (value) => {
   return Buffer.from(textEncoder.encode(String(value ?? '')))
 }
 
+const hasNonAsciiBytes = (bytes) => {
+  for (let index = 0; index < bytes.length; index += 1) {
+    if (bytes[index] > 0x7f) return true
+  }
+  return false
+}
+
+const createUnicodePathExtraField = (nameBytes) => {
+  if (!hasNonAsciiBytes(nameBytes)) return Buffer.alloc(0)
+  return Buffer.concat([
+    u16(ZIP_EXTRA_FIELD_UNICODE_PATH),
+    u16(5 + nameBytes.length),
+    Buffer.from([1]),
+    u32(crc32(nameBytes)),
+    nameBytes,
+  ])
+}
+
 export const createZipBuffer = (files) => {
   const localParts = []
   const centralParts = []
@@ -64,6 +84,7 @@ export const createZipBuffer = (files) => {
   files.forEach((file) => {
     const name = String(file.name || '').replace(/^\/+/, '')
     const nameBytes = Buffer.from(textEncoder.encode(name))
+    const extraField = createUnicodePathExtraField(nameBytes)
     const dataBytes = normalizeBytes(file.data)
     const { dosTime, dosDate } = getDosDateTime(file.date)
     const checksum = crc32(dataBytes)
@@ -71,7 +92,7 @@ export const createZipBuffer = (files) => {
     const localHeader = Buffer.concat([
       Buffer.from([0x50, 0x4b, 0x03, 0x04]),
       u16(20),
-      u16(0),
+      u16(ZIP_FLAG_UTF8),
       u16(0),
       u16(dosTime),
       u16(dosDate),
@@ -79,8 +100,9 @@ export const createZipBuffer = (files) => {
       u32(dataBytes.length),
       u32(dataBytes.length),
       u16(nameBytes.length),
-      u16(0),
+      u16(extraField.length),
       nameBytes,
+      extraField,
     ])
 
     localParts.push(localHeader, dataBytes)
@@ -89,7 +111,7 @@ export const createZipBuffer = (files) => {
       Buffer.from([0x50, 0x4b, 0x01, 0x02]),
       u16(20),
       u16(20),
-      u16(0),
+      u16(ZIP_FLAG_UTF8),
       u16(0),
       u16(dosTime),
       u16(dosDate),
@@ -97,13 +119,14 @@ export const createZipBuffer = (files) => {
       u32(dataBytes.length),
       u32(dataBytes.length),
       u16(nameBytes.length),
-      u16(0),
+      u16(extraField.length),
       u16(0),
       u16(0),
       u16(0),
       u32(0),
       u32(offset),
       nameBytes,
+      extraField,
     ])
 
     centralParts.push(centralHeader)

@@ -79,6 +79,8 @@ export const downloadNamedBlob = (blob, name) => {
 }
 
 const zipTextEncoder = new TextEncoder()
+const ZIP_FLAG_UTF8 = 0x0800
+const ZIP_EXTRA_FIELD_UNICODE_PATH = 0x7075
 
 let crcTable = null
 
@@ -123,6 +125,24 @@ const getDosDateTime = (date = new Date()) => {
   return { dosTime, dosDate }
 }
 
+const hasNonAsciiBytes = (bytes) => {
+  for (let index = 0; index < bytes.length; index += 1) {
+    if (bytes[index] > 0x7f) return true
+  }
+  return false
+}
+
+const createUnicodePathExtraField = (nameBytes) => {
+  if (!hasNonAsciiBytes(nameBytes)) return new Uint8Array(0)
+  return new Blob([
+    u16(ZIP_EXTRA_FIELD_UNICODE_PATH),
+    u16(5 + nameBytes.byteLength),
+    new Uint8Array([1]),
+    u32(crc32(nameBytes)),
+    nameBytes,
+  ])
+}
+
 const normalizeZipPath = (name) => String(name || 'audio.mp3')
   .replace(/\\/g, '/')
   .replace(/^\/+/, '')
@@ -148,13 +168,14 @@ export const createZipBlob = async (files = []) => {
   for (const file of normalizedFiles) {
     const data = new Uint8Array(await file.blob.arrayBuffer())
     const filename = zipTextEncoder.encode(file.name)
+    const extraField = createUnicodePathExtraField(filename)
     const checksum = crc32(data)
     const size = data.byteLength
     const localOffset = offset
     const localHeader = new Blob([
       u32(0x04034b50),
       u16(20),
-      u16(0x0800),
+      u16(ZIP_FLAG_UTF8),
       u16(0),
       u16(dosTime),
       u16(dosDate),
@@ -162,8 +183,9 @@ export const createZipBlob = async (files = []) => {
       u32(size),
       u32(size),
       u16(filename.byteLength),
-      u16(0),
+      u16(extraField.size ?? extraField.byteLength),
       filename,
+      extraField,
     ])
 
     localParts.push(localHeader, data)
@@ -173,7 +195,7 @@ export const createZipBlob = async (files = []) => {
       u32(0x02014b50),
       u16(20),
       u16(20),
-      u16(0x0800),
+      u16(ZIP_FLAG_UTF8),
       u16(0),
       u16(dosTime),
       u16(dosDate),
@@ -181,13 +203,14 @@ export const createZipBlob = async (files = []) => {
       u32(size),
       u32(size),
       u16(filename.byteLength),
-      u16(0),
+      u16(extraField.size ?? extraField.byteLength),
       u16(0),
       u16(0),
       u16(0),
       u32(0),
       u32(localOffset),
       filename,
+      extraField,
     ]))
   }
 
