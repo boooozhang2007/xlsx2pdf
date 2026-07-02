@@ -1,19 +1,28 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import {
-  Archive,
   ArrowDownToLine,
-  FileSpreadsheet,
   FileText,
   Loader2,
   Lock,
-  LogOut,
   Sparkles,
 } from 'lucide-react'
 import { apiJson, fetchDownloadBlob } from './api'
 import { downloadNamedBlob } from './ttsUtils'
-import { QUESTION_TYPE_OPTIONS, ALL_QUESTION_TYPE_KEYS } from '../shared/worksheetTypes'
+import { ALL_QUESTION_TYPE_KEYS, QUESTION_TYPE_OPTIONS } from '../shared/worksheetTypes'
 
 const DEFAULT_QUESTION_TYPES = ALL_QUESTION_TYPE_KEYS
+
+const PREVIEW_RELATIONS = {
+  cheat: { synonym: 'deceive', antonym: 'be honest' },
+  share: { synonym: 'divide', antonym: 'keep' },
+  energy: { synonym: 'power', antonym: 'weakness' },
+  quick: { synonym: 'fast', antonym: 'slow' },
+  wide: { synonym: 'broad', antonym: 'narrow' },
+  relax: { synonym: 'rest', antonym: 'tense' },
+  teacher: { synonym: 'instructor', antonym: 'student' },
+  home: { synonym: 'house', antonym: 'outside' },
+  offer: { synonym: 'provide', antonym: 'refuse' },
+}
 
 const formatBytes = (value) => {
   const size = Number(value) || 0
@@ -30,6 +39,216 @@ const fallbackArchiveName = (fileName) => {
   return `${base} 练习包.zip`
 }
 
+const cleanMeaning = (value) => String(value || '')
+  .replace(/\u00a0/g, ' ')
+  .replace(/(?<![A-Za-z])(?:vt|vi|v|n|adj|adv|a|ad|pron|prep|conj|num|int|interj|det|aux|pl)\.\s*/gi, '')
+  .replace(/\s+/g, ' ')
+  .trim()
+
+const cleanWord = (value) => String(value || '')
+  .replace(/\u00a0/g, ' ')
+  .replace(/[’‘]/g, "'")
+  .replace(/\([^)]*\)/g, '')
+  .replace(/\s*\(.*$/, '')
+  .replace(/\s*=\s*.*$/, '')
+  .replace(/[^A-Za-z' -]+/g, ' ')
+  .replace(/\s+/g, ' ')
+  .trim()
+
+const spellingCore = (value) => {
+  const word = cleanWord(value).toLowerCase()
+  return word && !word.includes(' ') && /^[a-z]+$/.test(word) ? word : ''
+}
+
+const buildOptions = (rows, index, correctValue, pickField) => {
+  const seen = new Set([correctValue])
+  const options = []
+  for (let offset = 1; offset < rows.length && options.length < 3; offset += 1) {
+    const candidate = rows[(index + offset) % rows.length]
+    const value = pickField(candidate)
+    if (!value || seen.has(value)) continue
+    seen.add(value)
+    options.push(value)
+  }
+  while (options.length < 3) options.push(`备用选项 ${options.length + 1}`)
+  return [correctValue, ...options]
+}
+
+const previewRelation = (english, relationKey) => {
+  const key = cleanWord(english).toLowerCase()
+  const relation = PREVIEW_RELATIONS[key]?.[relationKey]
+  if (relation) return relation
+  return relationKey === 'synonym' ? 'related word' : 'opposite idea'
+}
+
+const buildPreviewModel = (typeKey, rows) => {
+  const sampleRows = rows.slice(0, Math.min(rows.length, 6))
+  if (!sampleRows.length) {
+    return {
+      title: '等待词表',
+      subtitle: '上传或调整读表设置后，这里会即时显示练习排版预览。',
+      items: [],
+      answers: [],
+    }
+  }
+
+  const mapItem = (builder) => sampleRows.map((row, index) => builder(row, index))
+
+  switch (typeKey) {
+    case '一_释义匹配':
+      return {
+        title: '释义匹配',
+        subtitle: '按题目页的节奏展示定义与四选项。',
+        items: mapItem((row, index) => ({
+          no: index + 1,
+          lines: [
+            `Definition: ${cleanMeaning(row.chinese) || 'a classroom-friendly meaning'}`,
+            buildOptions(sampleRows, index, cleanWord(row.english), (item) => cleanWord(item.english))
+              .map((item, optionIndex) => `${'ABCD'[optionIndex]}. ${item}`)
+              .join('   '),
+          ],
+        })),
+        answers: sampleRows.map((row, index) => `${index + 1}.A ${cleanWord(row.english)}`),
+      }
+    case '二_选择题':
+      return {
+        title: '单词选择题',
+        subtitle: '实时预览会用稳定模板句代替 LLM 生成句。',
+        items: mapItem((row, index) => ({
+          no: index + 1,
+          lines: [
+            `The word meaning "${cleanMeaning(row.chinese)}" is ______.`,
+            buildOptions(sampleRows, index, cleanWord(row.english), (item) => cleanWord(item.english))
+              .map((item, optionIndex) => `${'ABCD'[optionIndex]}. ${item}`)
+              .join('   '),
+          ],
+        })),
+        answers: sampleRows.map((row, index) => `${index + 1}.A ${cleanWord(row.english)}`),
+      }
+    case '三_同义替换':
+      return {
+        title: '同义替换',
+        subtitle: '预览展示句型与替换位，正式导出会走服务端题面。',
+        items: mapItem((row, index) => {
+          const synonym = previewRelation(row.english, 'synonym')
+          return {
+            no: index + 1,
+            lines: [
+              `${cleanWord(row.english)} means ${cleanMeaning(row.chinese)}.`,
+              `The word "${cleanWord(row.english)}" can be replaced by _______.`,
+              buildOptions(sampleRows, index, synonym, (item) => previewRelation(item.english, 'synonym'))
+                .map((item, optionIndex) => `${'ABCD'[optionIndex]}. ${item}`)
+                .join('   '),
+            ],
+          }
+        }),
+        answers: sampleRows.map((row, index) => `${index + 1}.A ${previewRelation(row.english, 'synonym')}`),
+      }
+    case '四_乱序拼写':
+      return {
+        title: '乱序拼写',
+        subtitle: '按练习页样式即时展示打乱后的字母。',
+        items: mapItem((row, index) => {
+          const core = spellingCore(row.english) || cleanWord(row.english).replace(/\s+/g, '')
+          const scrambled = core.length > 2 ? `${core.slice(1)} ${core[0]}` : core
+          return {
+            no: index + 1,
+            lines: [`${scrambled.split('').join(' ')}   ->   ____________`, `(${cleanMeaning(row.chinese)})`],
+          }
+        }),
+        answers: sampleRows.map((row, index) => `${index + 1}.${cleanWord(row.english)}`),
+      }
+    case '五_缺字母填空':
+      return {
+        title: '缺字母填空',
+        subtitle: '每个词保留首字母，隐藏部分中段字母。',
+        items: mapItem((row, index) => {
+          const core = spellingCore(row.english) || cleanWord(row.english).replace(/\s+/g, '')
+          const masked = core
+            .split('')
+            .map((char, charIndex) => (charIndex > 0 && charIndex % 3 === 0 ? '_' : char))
+            .join(' ')
+          return {
+            no: index + 1,
+            lines: [`${masked}`, `(${cleanMeaning(row.chinese)})`],
+          }
+        }),
+        answers: sampleRows.map((row, index) => `${index + 1}.${cleanWord(row.english)}`),
+      }
+    case '六_同义反义辨析':
+      return {
+        title: '同反义辨析',
+        subtitle: '一页里混合同义与反义对，保持课堂节奏。',
+        items: mapItem((row, index) => ({
+          no: index + 1,
+          lines: [`${cleanWord(row.english)}   &   ${index % 2 === 0 ? previewRelation(row.english, 'synonym') : previewRelation(row.english, 'antonym')}   (   )`],
+        })),
+        answers: sampleRows.map((row, index) => `${index + 1}.${index % 2 === 0 ? 'S' : 'A'}`),
+      }
+    case '七_同义词匹配':
+      return {
+        title: '同义词匹配',
+        subtitle: '预览显示成块状配对题，方便看清版式密度。',
+        items: mapItem((row, index) => ({
+          no: index + 1,
+          lines: [`${index + 1}. ${cleanWord(row.english)}          ${'abcde'[index] || 'a'}. ${previewRelation(row.english, 'synonym')}`],
+        })),
+        answers: sampleRows.map((row, index) => `${index + 1}.${index + 1}-${'abcde'[index] || 'a'}`),
+      }
+    case '八_反义词匹配':
+      return {
+        title: '反义词匹配',
+        subtitle: '右栏预览即时切成反义词版式。',
+        items: mapItem((row, index) => ({
+          no: index + 1,
+          lines: [`${index + 1}. ${cleanWord(row.english)}          ${'abcde'[index] || 'a'}. ${previewRelation(row.english, 'antonym')}`],
+        })),
+        answers: sampleRows.map((row, index) => `${index + 1}.${index + 1}-${'abcde'[index] || 'a'}`),
+      }
+    case '九_判断正误':
+      return {
+        title: '判断正误',
+        subtitle: '预览展示 T / F 判断句式。',
+        items: mapItem((row, index) => ({
+          no: index + 1,
+          lines: [`( ) ${cleanWord(row.english)} is connected with ${cleanMeaning(row.chinese)}.`],
+        })),
+        answers: sampleRows.map((row, index) => `${index + 1}.${index % 2 === 0 ? 'T' : 'F'}`),
+      }
+    case '十_汉译英':
+      return {
+        title: '汉译英',
+        subtitle: '右侧按译题页的四选一结构即时预览。',
+        items: mapItem((row, index) => ({
+          no: index + 1,
+          lines: [
+            cleanMeaning(row.chinese),
+            buildOptions(sampleRows, index, cleanWord(row.english), (item) => cleanWord(item.english))
+              .map((item, optionIndex) => `${'ABCD'[optionIndex]}. ${item}`)
+              .join('   '),
+          ],
+        })),
+        answers: sampleRows.map((row, index) => `${index + 1}.A ${cleanWord(row.english)}`),
+      }
+    case '十一_英译汉':
+    default:
+      return {
+        title: '英译汉',
+        subtitle: '实时预览会按照最终 PDF 的信息密度排列题目。',
+        items: mapItem((row, index) => ({
+          no: index + 1,
+          lines: [
+            cleanWord(row.english),
+            buildOptions(sampleRows, index, cleanMeaning(row.chinese), (item) => cleanMeaning(item.chinese))
+              .map((item, optionIndex) => `${'ABCD'[optionIndex]}. ${item}`)
+              .join('   '),
+          ],
+        })),
+        answers: sampleRows.map((row, index) => `${index + 1}.A ${cleanMeaning(row.chinese)}`),
+      }
+  }
+}
+
 function GenWorkspace({ rows, fileName, activeSheetName }) {
   const [authenticated, setAuthenticated] = useState(false)
   const [authChecked, setAuthChecked] = useState(false)
@@ -38,6 +257,7 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
   const [busy, setBusy] = useState(false)
   const [status, setStatus] = useState('输入访问密码后即可生成练习包。')
   const [selectedTypes, setSelectedTypes] = useState(DEFAULT_QUESTION_TYPES)
+  const [activePreviewType, setActivePreviewType] = useState(DEFAULT_QUESTION_TYPES[0])
   const [downloadState, setDownloadState] = useState({
     receivedBytes: 0,
     totalBytes: 0,
@@ -54,6 +274,7 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
     () => QUESTION_TYPE_OPTIONS.filter((item) => selectedTypes.includes(item.key)),
     [selectedTypes],
   )
+
   const llmTypeCount = useMemo(
     () => selectedTypeMeta.filter((item) => item.needsLlm).length,
     [selectedTypeMeta],
@@ -65,8 +286,11 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
       ? 100
       : 0
 
-  const taskState = busy ? '生成中' : downloadState.completedAt ? '已完成' : usableRows.length ? '已就绪' : '等待数据'
-  const taskTone = busy ? 'running' : downloadState.completedAt ? 'done' : usableRows.length ? 'ready' : 'idle'
+  const previewType = selectedTypeMeta.find((item) => item.key === activePreviewType) || selectedTypeMeta[0] || QUESTION_TYPE_OPTIONS[0]
+  const previewModel = useMemo(
+    () => buildPreviewModel(previewType?.key, usableRows),
+    [previewType, usableRows],
+  )
 
   useEffect(() => {
     apiJson('/api/auth/me')
@@ -77,6 +301,11 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
       .catch(() => setAuthenticated(false))
       .finally(() => setAuthChecked(true))
   }, [])
+
+  useEffect(() => {
+    if (selectedTypes.includes(activePreviewType)) return
+    setActivePreviewType(selectedTypes[0] || QUESTION_TYPE_OPTIONS[0].key)
+  }, [activePreviewType, selectedTypes])
 
   const login = async (event) => {
     event.preventDefault()
@@ -94,25 +323,16 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
     }
   }
 
-  const logout = async () => {
-    await apiJson('/api/auth/logout', { method: 'POST', body: JSON.stringify({}) }).catch(() => {})
-    setAuthenticated(false)
-    setBusy(false)
-    setStatus('已退出练习生成板块。')
-    setDownloadState({
-      receivedBytes: 0,
-      totalBytes: 0,
-      fileName: '',
-      completedAt: 0,
-    })
-  }
-
   const toggleType = (key) => {
-    setSelectedTypes((current) => (
-      current.includes(key)
+    setSelectedTypes((current) => {
+      const next = current.includes(key)
         ? current.filter((item) => item !== key)
         : [...current, key]
-    ))
+      if (next.length && (!current.includes(key) || activePreviewType === key)) {
+        setActivePreviewType(current.includes(key) ? next[0] : key)
+      }
+      return next
+    })
   }
 
   const generateArchive = async () => {
@@ -132,7 +352,7 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
       fileName: '',
       completedAt: 0,
     })
-    setStatus(`正在用服务端生成 ${selectedTypes.length} 个题型的练习包…`)
+    setStatus(`正在生成 ${selectedTypes.length} 个题型的练习包…`)
 
     try {
       const { blob, fileName: downloadedName } = await fetchDownloadBlob(
@@ -206,31 +426,24 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
       <aside className="ttsControls genControls">
         <div className="panelBlock">
           <div className="blockTitle">
-            <Archive size={17} />
-            <span>生成范围</span>
+            <Sparkles size={17} />
+            <span>题型设置</span>
           </div>
-          <p className="statusLine">
-            这里直接复用当前页面已经解析好的英汉词表。依赖 LLM 的题型会读取服务端环境变量里的 `VIVI_LLM_*` 配置。
-          </p>
-          <div className="genMetaGrid">
+          <div className="genMetaGrid genMetaCompact">
             <div>
               <small>当前文件</small>
               <strong>{fileName}</strong>
             </div>
             <div>
-              <small>当前表</small>
+              <small>工作表</small>
               <strong>{activeSheetName || '示例数据'}</strong>
             </div>
             <div>
-              <small>可用词条</small>
+              <small>词条</small>
               <strong>{usableRows.length}</strong>
             </div>
             <div>
-              <small>函数时长</small>
-              <strong>300s</strong>
-            </div>
-            <div>
-              <small>LLM 题型</small>
+              <small>LLM</small>
               <strong>{llmTypeCount}</strong>
             </div>
           </div>
@@ -239,18 +452,20 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
         <div className="panelBlock">
           <div className="blockTitle">
             <FileText size={17} />
-            <span>题型选择</span>
+            <span>选择题型</span>
           </div>
-          <div className="questionTypeGrid">
+          <div className="questionTypeGrid compact">
             {QUESTION_TYPE_OPTIONS.map((item) => {
               const active = selectedTypes.includes(item.key)
               return (
-                <label className={`questionTypeCard${active ? ' active' : ''}`} key={item.key}>
+                <label className={`questionTypeCard compact${active ? ' active' : ''}`} key={item.key}>
                   <input
+                    className="questionTypeInput"
                     type="checkbox"
                     checked={active}
                     onChange={() => toggleType(item.key)}
                   />
+                  <span className="questionTypeMark" aria-hidden="true" />
                   <strong>{item.title}</strong>
                   {item.needsLlm ? <em>LLM</em> : null}
                   <span>{item.description}</span>
@@ -260,118 +475,93 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
           </div>
         </div>
 
-        <div className="panelBlock">
-          <div className="blockTitle">
-            <Sparkles size={17} />
-            <span>下载方式</span>
-          </div>
-          <p className="statusLine">
-            服务端先生成练习目录并打包 ZIP，然后浏览器按文件流接收。下载阶段会显示已接收字节数；若勾选了 LLM 题型，会调用 `VIVI_LLM_BASE_URL` 和 `VIVI_LLM_MODEL`。
-          </p>
-          <div className="genMetaGrid">
-            <div>
-              <small>已选题型</small>
-              <strong>{selectedTypeMeta.length}</strong>
-            </div>
-            <div>
-              <small>LLM 题型</small>
-              <strong>{llmTypeCount}</strong>
-            </div>
-            <div>
-              <small>传输进度</small>
-              <strong>{progressPercent}%</strong>
-            </div>
-            <div>
-              <small>目标大小</small>
-              <strong>{downloadState.totalBytes ? formatBytes(downloadState.totalBytes) : '等待返回'}</strong>
-            </div>
-            <div>
-              <small>已接收</small>
-              <strong>{formatBytes(downloadState.receivedBytes)}</strong>
-            </div>
-          </div>
-        </div>
-
-        <button className="exportButton" type="button" onClick={generateArchive} disabled={busy || !usableRows.length || !selectedTypes.length}>
-          {busy ? <Loader2 className="spin" size={19} /> : <ArrowDownToLine size={19} />}
-          生成 ZIP 练习包
-        </button>
-
-        <button className="logoutButton genLogoutButton" type="button" onClick={logout}>
-          <LogOut size={16} />
-          退出练习板块
-        </button>
-
-        <p className="statusLine">{status}</p>
+        <p className="statusLine genStatusLine">{status}</p>
       </aside>
 
-      <section className="ttsStage genStage">
-        <div className={`taskPanel ${taskTone}`}>
-          <div className="taskPanelHeader">
-            <div>
-              <span className="eyebrow">Worksheet Export</span>
-              <h3>练习生成</h3>
-            </div>
-            <strong>{taskState}</strong>
+      <section className="previewStage genPreviewStage">
+        <div className="stageHeader genStageHeader">
+          <div>
+            <span className="eyebrow">实时预览</span>
+            <h2>{previewModel.title}</h2>
+            <p className="genStageSubtitle">{previewModel.subtitle}</p>
           </div>
-          <p>当前版本复用主页面读表设置，从当前词表直接导出题目与答案 ZIP。后端生成完成后，文件会按流式响应传回浏览器。</p>
-          <div className="taskProgress">
-            <span style={{ width: `${progressPercent}%` }} />
-          </div>
-          <div className="taskMetrics">
-            <div>
-              <small>词条</small>
-              <strong>{usableRows.length}</strong>
-            </div>
-            <div>
-              <small>题型</small>
-              <strong>{selectedTypeMeta.length}</strong>
-            </div>
-            <div>
-              <small>LLM</small>
-              <strong>{llmTypeCount}</strong>
-            </div>
-            <div>
-              <small>下载</small>
-              <strong>{downloadState.fileName || '等待生成'}</strong>
-            </div>
+          <div className="stageActions">
+            <button
+              className="exportButton genExportButton"
+              type="button"
+              onClick={generateArchive}
+              disabled={busy || !usableRows.length || !selectedTypes.length}
+            >
+              {busy ? <Loader2 className="spin" size={18} /> : <ArrowDownToLine size={18} />}
+              生成 ZIP
+            </button>
           </div>
         </div>
 
-        <div className="genContentGrid">
-          <article className="genPanel">
-            <div className="blockTitle">
-              <FileSpreadsheet size={17} />
-              <span>当前词表快照</span>
-            </div>
-            <div className="genRowsPreview">
-              {usableRows.slice(0, 8).map((row) => (
-                <div className="genRow" key={`${row.index}-${row.english}`}>
-                  <strong>{row.english}</strong>
-                  <span>{row.chinese || '—'}</span>
-                </div>
-              ))}
-              {!usableRows.length ? <p className="genEmpty">当前还没有可用词条。</p> : null}
-            </div>
-          </article>
+        <div className="statStrip genStatStrip">
+          <div>
+            <small>已选题型</small>
+            <strong>{selectedTypeMeta.length}</strong>
+          </div>
+          <div>
+            <small>LLM 题型</small>
+            <strong>{llmTypeCount}</strong>
+          </div>
+          <div>
+            <small>已接收</small>
+            <strong>{formatBytes(downloadState.receivedBytes)}</strong>
+          </div>
+          <div>
+            <small>进度</small>
+            <strong>{progressPercent}%</strong>
+          </div>
+        </div>
 
-          <article className="genPanel">
-            <div className="blockTitle">
-              <Archive size={17} />
-              <span>导出内容</span>
+        <div className="genPreviewRail">
+          {selectedTypeMeta.map((item) => (
+            <button
+              key={item.key}
+              className={`genPreviewChip${activePreviewType === item.key ? ' active' : ''}`}
+              type="button"
+              onClick={() => setActivePreviewType(item.key)}
+            >
+              {item.title}
+            </button>
+          ))}
+        </div>
+
+        <div className="genPreviewCanvas">
+          <div className="genPreviewPaper">
+            <div className="genPreviewPaperHeader">
+              <span>{previewModel.title}</span>
+              <small>{fileName.replace(/\.[^.]+$/, '') || 'worksheet-preview'}.pdf</small>
             </div>
-            <div className="selectedTypeList">
-              {selectedTypeMeta.map((item) => (
-                <div className="selectedTypeItem" key={item.key}>
-                  <strong>{item.title}</strong>
-                  <span>{item.description}</span>
-                </div>
+            <div className="genPreviewPaperBody">
+              {previewModel.items.map((item) => (
+                <article className="genPreviewQuestion" key={`${previewType.key}-${item.no}`}>
+                  <strong>{item.no}.</strong>
+                  <div>
+                    {item.lines.map((line) => (
+                      <p key={line}>{line}</p>
+                    ))}
+                  </div>
+                </article>
               ))}
             </div>
-            <p className="genNote">
-              ZIP 内会按题型分目录输出，包含题目和答案文件。勾选了 LLM 题型时，服务端会按环境变量配置去请求模型服务。
-            </p>
-          </article>
+            <div className="genPreviewPageNumber">1</div>
+          </div>
+
+          <aside className="genAnswerPanel">
+            <div className="genAnswerPanelHeader">
+              <strong>答案预览</strong>
+              <span>{previewType.title}</span>
+            </div>
+            <div className="genAnswerList">
+              {previewModel.answers.map((answer) => (
+                <p key={answer}>{answer}</p>
+              ))}
+            </div>
+          </aside>
         </div>
       </section>
     </section>
