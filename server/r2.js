@@ -1,4 +1,4 @@
-import { S3Client, PutObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3'
+import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand, ListObjectsV2Command } from '@aws-sdk/client-s3'
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 import { getEnv } from './auth.js'
 
@@ -45,3 +45,50 @@ export const putObject = async ({ key, body, contentType = 'application/octet-st
     ContentType: contentType,
   }),
 )
+
+const readBodyToBuffer = async (body) => {
+  if (!body) return Buffer.alloc(0)
+  if (typeof body.transformToByteArray === 'function') {
+    return Buffer.from(await body.transformToByteArray())
+  }
+  const chunks = []
+  for await (const chunk of body) chunks.push(Buffer.from(chunk))
+  return Buffer.concat(chunks)
+}
+
+export const getObjectBuffer = async ({ key }) => {
+  const response = await getR2Client().send(
+    new GetObjectCommand({
+      Bucket: getEnv('R2_BUCKET'),
+      Key: key,
+    }),
+  )
+  return readBodyToBuffer(response.Body)
+}
+
+export const getObjectText = async ({ key }) => (await getObjectBuffer({ key })).toString('utf8')
+export const getObjectJson = async ({ key }) => JSON.parse(await getObjectText({ key }))
+
+export const deleteObject = async ({ key }) => getR2Client().send(
+  new DeleteObjectCommand({
+    Bucket: getEnv('R2_BUCKET'),
+    Key: key,
+  }),
+)
+
+export const listObjects = async ({ prefix }) => {
+  const items = []
+  let continuationToken
+  do {
+    const response = await getR2Client().send(
+      new ListObjectsV2Command({
+        Bucket: getEnv('R2_BUCKET'),
+        Prefix: prefix,
+        ContinuationToken: continuationToken,
+      }),
+    )
+    items.push(...(response.Contents || []))
+    continuationToken = response.IsTruncated ? response.NextContinuationToken : undefined
+  } while (continuationToken)
+  return items
+}

@@ -30,8 +30,8 @@
 - `/gen` 进入受密码保护的练习生成板块
 - 复用主页面当前 XLSX 读表设置与已解析的英汉词表
 - 支持一次性勾选全部 11 个题型并导出 ZIP
-- 生成结果由 Vercel Node.js Function 打包后返回浏览器下载
-- 下载阶段按文件流接收，界面会显示已接收字节数
+- 生成请求会先提交到服务端队列，刷新页面后仍可继续查看任务状态与下载结果
+- 队列状态与 ZIP 成品依赖现有 R2 配置持久化
 - 依赖 LLM 的题型会读取服务端环境变量中的 `VIVI_LLM_API_KEY`、`VIVI_LLM_BASE_URL`、`VIVI_LLM_MODEL`
 
 ## 本地运行
@@ -55,7 +55,7 @@ npm run build
 
 ## Vercel 环境变量
 
-朗读板块需要在 Vercel Project Settings 中配置：
+朗读板块与练习生成队列需要在 Vercel Project Settings 中配置：
 
 ```text
 TTS_ACCESS_PASSWORD=访问密码
@@ -65,7 +65,7 @@ AZURE_SPEECH_REGION=Azure Speech 区域，例如 eastus
 VIVI_LLM_API_KEY=练习生成所用 LLM API key
 VIVI_LLM_BASE_URL=练习生成所用 LLM base URL，例如 https://your-provider.example
 VIVI_LLM_MODEL=练习生成所用模型名
-VIVI_LLM_BATCH_SIZE=可选，默认 60
+VIVI_LLM_BATCH_SIZE=可选，默认 20
 VIVI_LLM_CONCURRENCY=可选，默认 5
 R2_ENDPOINT=https://<accountid>.r2.cloudflarestorage.com
 R2_BUCKET=bucket 名称

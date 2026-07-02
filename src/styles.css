@@ -983,6 +983,101 @@ button:disabled {
   margin-top: 2px;
 }
 
+.genQueuePanel {
+  gap: 10px;
+}
+
+.genQueueRefresh {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  background: transparent;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.genQueueList {
+  display: grid;
+  gap: 8px;
+  max-height: 280px;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.genQueueEmpty {
+  margin: 0;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.genQueueItem {
+  display: grid;
+  gap: 8px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 16px;
+  background: rgba(248, 250, 252, 0.94);
+  padding: 10px 12px;
+}
+
+.genQueueItem.processing {
+  border-color: rgba(37, 99, 235, 0.22);
+  background: rgba(239, 246, 255, 0.82);
+}
+
+.genQueueItem.completed {
+  border-color: rgba(34, 197, 94, 0.2);
+  background: rgba(240, 253, 244, 0.88);
+}
+
+.genQueueItem.failed {
+  border-color: rgba(239, 68, 68, 0.2);
+  background: rgba(254, 242, 242, 0.88);
+}
+
+.genQueueHead,
+.genQueueFoot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.genQueueHead strong {
+  display: block;
+  color: #0f172a;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.genQueueHead span,
+.genQueueItem p,
+.genQueueFoot small {
+  color: #64748b;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.genQueueItem p {
+  margin: 0;
+}
+
+.genQueueFoot button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  border-radius: 999px;
+  background: #0f172a;
+  color: #fff;
+  padding: 6px 10px;
+  font-size: 11px;
+  font-weight: 900;
+}
+
 .genPreviewStage {
   display: grid;
   gap: 18px;
@@ -1006,6 +1101,20 @@ button:disabled {
 
 .genStatStrip {
   margin-bottom: 0;
+}
+
+.genQueueBanner {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  width: fit-content;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 999px;
+  background: rgba(248, 250, 252, 0.92);
+  color: #475569;
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 850;
 }
 
 .genPreviewRail {

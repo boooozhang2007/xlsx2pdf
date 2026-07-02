@@ -1,12 +1,16 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import {
   ArrowDownToLine,
+  CheckCircle2,
+  Clock3,
   FileText,
   Loader2,
   Lock,
+  RefreshCw,
   Sparkles,
+  XCircle,
 } from 'lucide-react'
-import { apiJson, fetchDownloadBlob } from './api'
+import { apiJson, fetchDownloadRequest } from './api'
 import { downloadNamedBlob } from './ttsUtils'
 import { ALL_QUESTION_TYPE_KEYS, QUESTION_TYPE_OPTIONS } from '../shared/worksheetTypes'
 
@@ -24,12 +28,33 @@ const PREVIEW_RELATIONS = {
   offer: { synonym: 'provide', antonym: 'refuse' },
 }
 
+const STATUS_META = {
+  queued: { label: '排队中', icon: Clock3 },
+  processing: { label: '生成中', icon: RefreshCw },
+  completed: { label: '已完成', icon: CheckCircle2 },
+  failed: { label: '失败', icon: XCircle },
+}
+
 const formatBytes = (value) => {
   const size = Number(value) || 0
   if (!size) return '0 B'
   if (size < 1024) return `${size} B`
   if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`
   return `${(size / (1024 * 1024)).toFixed(1)} MB`
+}
+
+const formatTime = (value) => {
+  if (!value) return '—'
+  try {
+    return new Date(value).toLocaleString('zh-CN', {
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    })
+  } catch {
+    return '—'
+  }
 }
 
 const fallbackArchiveName = (fileName) => {
@@ -255,15 +280,12 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
   const [password, setPassword] = useState('')
   const [loginError, setLoginError] = useState('')
   const [busy, setBusy] = useState(false)
+  const [queueBusy, setQueueBusy] = useState(false)
+  const [downloadingJobId, setDownloadingJobId] = useState('')
   const [status, setStatus] = useState('输入访问密码后即可生成练习包。')
+  const [jobs, setJobs] = useState([])
   const [selectedTypes, setSelectedTypes] = useState(DEFAULT_QUESTION_TYPES)
   const [activePreviewType, setActivePreviewType] = useState(DEFAULT_QUESTION_TYPES[0])
-  const [downloadState, setDownloadState] = useState({
-    receivedBytes: 0,
-    totalBytes: 0,
-    fileName: '',
-    completedAt: 0,
-  })
 
   const usableRows = useMemo(
     () => rows.filter((row) => String(row?.english || '').trim()),
@@ -280,17 +302,30 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
     [selectedTypeMeta],
   )
 
-  const progressPercent = downloadState.totalBytes
-    ? Math.min(100, Math.round((downloadState.receivedBytes / downloadState.totalBytes) * 100))
-    : busy && downloadState.receivedBytes
-      ? 100
-      : 0
+  const activeJobs = useMemo(
+    () => jobs.filter((job) => ['queued', 'processing'].includes(job.status)),
+    [jobs],
+  )
 
+  const latestJob = jobs[0] || null
+  const progressPercent = Math.max(0, Math.min(100, Number(latestJob?.progress?.percent || 0)))
   const previewType = selectedTypeMeta.find((item) => item.key === activePreviewType) || selectedTypeMeta[0] || QUESTION_TYPE_OPTIONS[0]
   const previewModel = useMemo(
     () => buildPreviewModel(previewType?.key, usableRows),
     [previewType, usableRows],
   )
+
+  const loadJobs = async (silent = false) => {
+    if (!silent) setQueueBusy(true)
+    try {
+      const data = await apiJson('/api/gen/jobs', { method: 'GET' })
+      setJobs(Array.isArray(data.jobs) ? data.jobs : [])
+    } catch (error) {
+      if (!silent) setStatus(error.message || '读取队列失败。')
+    } finally {
+      if (!silent) setQueueBusy(false)
+    }
+  }
 
   useEffect(() => {
     apiJson('/api/auth/me')
@@ -301,6 +336,19 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
       .catch(() => setAuthenticated(false))
       .finally(() => setAuthChecked(true))
   }, [])
+
+  useEffect(() => {
+    if (!authenticated) return
+    loadJobs()
+  }, [authenticated])
+
+  useEffect(() => {
+    if (!authenticated || !activeJobs.length) return
+    const timer = window.setInterval(() => {
+      loadJobs(true)
+    }, 3500)
+    return () => window.clearInterval(timer)
+  }, [authenticated, activeJobs.length])
 
   useEffect(() => {
     if (selectedTypes.includes(activePreviewType)) return
@@ -346,45 +394,46 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
     }
 
     setBusy(true)
-    setDownloadState({
-      receivedBytes: 0,
-      totalBytes: 0,
-      fileName: '',
-      completedAt: 0,
-    })
-    setStatus(`正在生成 ${selectedTypes.length} 个题型的练习包…`)
+    setStatus(`正在提交 ${selectedTypes.length} 个题型到服务器队列…`)
 
     try {
-      const { blob, fileName: downloadedName } = await fetchDownloadBlob(
-        '/api/gen/export',
-        {
+      const data = await apiJson('/api/gen/jobs', {
+        method: 'POST',
+        body: JSON.stringify({
           fileName,
           rows: usableRows,
           questionTypes: selectedTypes,
-        },
-        ({ receivedBytes, totalBytes }) => {
-          setDownloadState((current) => ({
-            ...current,
-            receivedBytes,
-            totalBytes,
-          }))
-        },
-      )
-      const archiveName = downloadedName || fallbackArchiveName(fileName)
-      downloadNamedBlob(blob, archiveName)
-      setDownloadState((current) => ({
-        receivedBytes: blob.size || current.receivedBytes,
-        totalBytes: blob.size || current.totalBytes,
-        fileName: archiveName,
-        completedAt: Date.now(),
-      }))
-      setStatus('练习包已生成，并已开始下载。')
+        }),
+      })
+      setJobs((current) => [data.job, ...current.filter((job) => job.id !== data.job.id)])
+      setStatus('已提交到服务器队列。页面刷新后仍可继续查看和下载。')
+      loadJobs(true)
     } catch (error) {
-      setStatus(error.message || '练习包生成失败。')
+      setStatus(error.message || '提交队列失败。')
     } finally {
       setBusy(false)
     }
   }
+
+  const downloadJob = async (job) => {
+    if (!job?.id) return
+    setDownloadingJobId(job.id)
+    try {
+      const { blob, fileName: downloadedName } = await fetchDownloadRequest(
+        `/api/gen/jobs/download?id=${encodeURIComponent(job.id)}`,
+        { method: 'GET' },
+      )
+      downloadNamedBlob(blob, downloadedName || job.exportFileName || fallbackArchiveName(job.fileName))
+      setStatus('练习包已开始下载。')
+      loadJobs(true)
+    } catch (error) {
+      setStatus(error.message || '下载任务失败。')
+    } finally {
+      setDownloadingJobId('')
+    }
+  }
+
+  const progressLabel = latestJob?.progress?.message || (activeJobs.length ? '服务器正在处理队列…' : '当前没有进行中的队列任务。')
 
   if (!authChecked) {
     return (
@@ -475,6 +524,46 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
           </div>
         </div>
 
+        <div className="panelBlock genQueuePanel">
+          <div className="blockTitle">
+            <Clock3 size={17} />
+            <span>服务器队列</span>
+            <button className="genQueueRefresh" type="button" onClick={() => loadJobs()} disabled={queueBusy}>
+              {queueBusy ? <Loader2 className="spin" size={14} /> : <RefreshCw size={14} />}
+              刷新
+            </button>
+          </div>
+          <div className="genQueueList">
+            {jobs.length ? jobs.map((job) => {
+              const meta = STATUS_META[job.status] || STATUS_META.queued
+              const Icon = meta.icon
+              return (
+                <article className={`genQueueItem ${job.status}`} key={job.id}>
+                  <div className="genQueueHead">
+                    <div>
+                      <strong>{job.fileName.replace(/\.[^.]+$/, '')}</strong>
+                      <span>{meta.label} · {job.questionTypes?.length || 0} 题型</span>
+                    </div>
+                    <Icon size={16} className={job.status === 'processing' ? 'spin' : ''} />
+                  </div>
+                  <p>{job.progress?.message || job.error || '等待处理。'}</p>
+                  <div className="genQueueFoot">
+                    <small>{formatTime(job.updatedAt || job.createdAt)}</small>
+                    {job.status === 'completed' ? (
+                      <button type="button" onClick={() => downloadJob(job)} disabled={downloadingJobId === job.id}>
+                        {downloadingJobId === job.id ? <Loader2 className="spin" size={14} /> : <ArrowDownToLine size={14} />}
+                        下载
+                      </button>
+                    ) : null}
+                  </div>
+                </article>
+              )
+            }) : (
+              <p className="genQueueEmpty">还没有已提交的练习任务。</p>
+            )}
+          </div>
+        </div>
+
         <p className="statusLine genStatusLine">{status}</p>
       </aside>
 
@@ -493,28 +582,33 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
               disabled={busy || !usableRows.length || !selectedTypes.length}
             >
               {busy ? <Loader2 className="spin" size={18} /> : <ArrowDownToLine size={18} />}
-              生成 ZIP
+              提交队列
             </button>
           </div>
         </div>
 
         <div className="statStrip genStatStrip">
           <div>
-            <small>已选题型</small>
-            <strong>{selectedTypeMeta.length}</strong>
+            <small>队列中</small>
+            <strong>{activeJobs.length}</strong>
           </div>
           <div>
-            <small>LLM 题型</small>
-            <strong>{llmTypeCount}</strong>
+            <small>已完成</small>
+            <strong>{jobs.filter((job) => job.status === 'completed').length}</strong>
           </div>
           <div>
-            <small>已接收</small>
-            <strong>{formatBytes(downloadState.receivedBytes)}</strong>
-          </div>
-          <div>
-            <small>进度</small>
+            <small>当前进度</small>
             <strong>{progressPercent}%</strong>
           </div>
+          <div>
+            <small>最近成品</small>
+            <strong>{latestJob?.exportFileName || '等待生成'}</strong>
+          </div>
+        </div>
+
+        <div className="genQueueBanner">
+          <RefreshCw size={15} className={activeJobs.length ? 'spin' : ''} />
+          <span>{progressLabel}</span>
         </div>
 
         <div className="genPreviewRail">

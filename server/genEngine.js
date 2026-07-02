@@ -86,6 +86,51 @@ const stripCodeFence = (text) => String(text || '')
   .replace(/\s*```$/, '')
   .trim()
 
+const countBlankSlots = (text) => (String(text || '').match(/_{4,}/g) || []).length
+
+const extractBalancedJson = (text, startIndex) => {
+  const source = String(text || '')
+  const opener = source[startIndex]
+  const closer = opener === '[' ? ']' : '}'
+  let depth = 0
+  let inString = false
+  let escaped = false
+  for (let index = startIndex; index < source.length; index += 1) {
+    const char = source[index]
+    if (escaped) {
+      escaped = false
+      continue
+    }
+    if (char === '\\') {
+      escaped = true
+      continue
+    }
+    if (char === '"') {
+      inString = !inString
+      continue
+    }
+    if (inString) continue
+    if (char === opener) depth += 1
+    if (char === closer) depth -= 1
+    if (depth === 0) return source.slice(startIndex, index + 1)
+  }
+  return ''
+}
+
+const extractJsonCandidate = (text) => {
+  const cleaned = stripCodeFence(text)
+  if (!cleaned) return ''
+  const starts = ['[', '{']
+    .map((char) => cleaned.indexOf(char))
+    .filter((index) => index >= 0)
+    .sort((left, right) => left - right)
+  for (const startIndex of starts) {
+    const candidate = extractBalancedJson(cleaned, startIndex)
+    if (candidate) return candidate
+  }
+  return cleaned
+}
+
 const displayWord = (value) => {
   let text = String(value ?? '').replace(/\u00a0/g, ' ').trim()
   text = text.replace(/[’‘]/g, "'").replace(/…/g, '...')
@@ -210,6 +255,8 @@ const chunkGroups = (items, size = GROUP_SIZE) => {
   return groups
 }
 
+const dedupeEntriesByKey = (entries) => Array.from(new Map((entries || []).map((entry) => [entry.key, entry])).values())
+
 const normalizeQuestionTypes = (questionTypes) => {
   const keys = Array.isArray(questionTypes) && questionTypes.length ? questionTypes : ALL_QUESTION_TYPE_KEYS
   const seen = new Set()
@@ -246,12 +293,28 @@ const getRequiredEnv = (name) => {
   return value
 }
 
+const STRICT_JSON_ONLY_RULES = [
+  'Return exactly one valid JSON array and nothing else.',
+  'Do not output markdown, code fences, comments, headings, explanations, or any extra text.',
+  'The array length must exactly match the number of input items.',
+  'Keep every input id exactly once.',
+  'Preserve the input order.',
+  'Every array item must be a JSON object containing all required fields.',
+  'If a value is unknown or unsafe, return an empty string instead of omitting the field.',
+]
+
+const buildStrictJsonInstruction = (requiredFields, example) => [
+  ...STRICT_JSON_ONLY_RULES,
+  `Each object must contain exactly these fields: ${requiredFields.join(', ')}.`,
+  `Example output item: ${JSON.stringify(example)}.`,
+].join(' ')
+
 const getLlmConfig = () => {
   const apiKey = getRequiredEnv('VIVI_LLM_API_KEY')
   let baseUrl = getRequiredEnv('VIVI_LLM_BASE_URL').replace(/\/+$/, '')
   if (!baseUrl.startsWith('http')) baseUrl = `https://${baseUrl}`
   const model = getRequiredEnv('VIVI_LLM_MODEL')
-  const batchSize = Number.parseInt(process.env.VIVI_LLM_BATCH_SIZE || '60', 10) || 60
+  const batchSize = Number.parseInt(process.env.VIVI_LLM_BATCH_SIZE || '20', 10) || 20
   const concurrency = Math.max(1, Number.parseInt(process.env.VIVI_LLM_CONCURRENCY || '5', 10) || 5)
   return {
     apiKey,
@@ -264,10 +327,30 @@ const getLlmConfig = () => {
 }
 
 const parseJsonArrayContent = (content) => {
-  const parsed = JSON.parse(stripCodeFence(content))
+  const parsed = JSON.parse(extractJsonCandidate(content))
   if (Array.isArray(parsed)) return parsed
   if (parsed && Array.isArray(parsed.items)) return parsed.items
+  if (parsed && Array.isArray(parsed.data)) return parsed.data
+  if (parsed && Array.isArray(parsed.results)) return parsed.results
   throw new Error('LLM 响应不是数组')
+}
+
+const extractLlmMessageContent = (data) => {
+  const content = data?.choices?.[0]?.message?.content
+  if (typeof content === 'string') return content
+  if (Array.isArray(content)) {
+    return content
+      .map((item) => (typeof item?.text === 'string' ? item.text : typeof item === 'string' ? item : ''))
+      .join('')
+  }
+  if (typeof data?.output_text === 'string') return data.output_text
+  if (Array.isArray(data?.output)) {
+    return data.output
+      .flatMap((item) => item?.content || [])
+      .map((item) => (typeof item?.text === 'string' ? item.text : ''))
+      .join('')
+  }
+  return ''
 }
 
 const fetchLlmArray = async (payload, kind) => {
@@ -284,8 +367,14 @@ const fetchLlmArray = async (payload, kind) => {
         body: JSON.stringify(payload),
       })
       if (!response.ok) throw new Error(`${kind} 请求失败：${response.status}`)
-      const data = await response.json()
-      return parseJsonArrayContent(data?.choices?.[0]?.message?.content || '').filter(Boolean)
+      const rawText = await response.text()
+      let data = null
+      try {
+        data = JSON.parse(rawText)
+      } catch {
+        data = { choices: [{ message: { content: rawText } }] }
+      }
+      return parseJsonArrayContent(extractLlmMessageContent(data)).filter(Boolean)
     } catch (error) {
       lastError = error
       await new Promise((resolve) => setTimeout(resolve, 600 * (attempt + 1)))
@@ -298,7 +387,10 @@ const callLlmForLexical = async (entries) => {
   const { model } = getLlmConfig()
   const system = [
     'You create vocabulary metadata for Chinese middle-school students.',
-    'Return valid JSON only, as an array.',
+    buildStrictJsonInstruction(
+      ['id', 'definition_en', 'synonym', 'antonym'],
+      { id: 'sample-id', definition_en: 'to make something clear', synonym: 'explain', antonym: '' },
+    ),
     'For each input item, keep the same id and produce: definition_en, synonym, antonym.',
     'Rules for definition_en: short, clear English explanation, do not repeat the target word, no brackets.',
     'Rules for synonym and antonym: use very common classroom-friendly English words or short phrases, base form only, same part of speech when possible.',
@@ -311,14 +403,18 @@ const callLlmForLexical = async (entries) => {
       { role: 'system', content: system },
       {
         role: 'user',
-        content: JSON.stringify(entries.map((entry) => ({
-          id: entry.key,
-          word: entry.displayEnglish,
-          meaning: entry.plainChinese,
-        }))),
+        content: [
+          'Input JSON array:',
+          JSON.stringify(entries.map((entry) => ({
+            id: entry.key,
+            word: entry.displayEnglish,
+            meaning: entry.plainChinese,
+          }))),
+          'Return JSON array only.',
+        ].join('\n'),
       },
     ],
-    temperature: 0.2,
+    temperature: 0,
     max_tokens: Math.max(2048, Math.min(32000, 180 * entries.length)),
   }
   return fetchLlmArray(payload, 'LLM 词汇')
@@ -345,7 +441,24 @@ const callLlmForMaterials = async (entries, requireSynonym) => {
   }
   const system = [
     'You create English vocabulary worksheet items for Chinese students.',
-    'Return valid JSON only, as an array.',
+    buildStrictJsonInstruction(
+      requireSynonym
+        ? ['id', 'synonym', 'synonym_original', 'synonym_rewrite_full']
+        : ['id', 'cloze_full_sentence', 'tf_true', 'tf_false'],
+      requireSynonym
+        ? {
+            id: 'sample-id',
+            synonym: 'quick',
+            synonym_original: 'The runner is fast today.',
+            synonym_rewrite_full: 'The runner is quick today.',
+          }
+        : {
+            id: 'sample-id',
+            cloze_full_sentence: 'We will share the food after class.',
+            tf_true: 'We can share our ideas in class.',
+            tf_false: 'Share means to hide everything from others.',
+          },
+    ),
     `For each input item, keep the same id and produce: ${requestedFields}.`,
     ...rules,
   ].join(' ')
@@ -364,9 +477,16 @@ const callLlmForMaterials = async (entries, requireSynonym) => {
     model,
     messages: [
       { role: 'system', content: system },
-      { role: 'user', content: JSON.stringify(userItems) },
+      {
+        role: 'user',
+        content: [
+          'Input JSON array:',
+          JSON.stringify(userItems),
+          'Return JSON array only.',
+        ].join('\n'),
+      },
     ],
-    temperature: entries.length === 1 ? 0 : 0.2,
+    temperature: 0,
     max_tokens: Math.max(2048, Math.min(32000, 260 * entries.length)),
   }
   return fetchLlmArray(payload, 'LLM 题面')
@@ -374,13 +494,13 @@ const callLlmForMaterials = async (entries, requireSynonym) => {
 
 const sanitizeLexical = (raw, entry) => {
   if (!raw || typeof raw !== 'object') throw new Error('词汇结果为空')
-  const definitionEn = String(raw.definition_en || '').trim().replace(/\s+/g, ' ')
+  const definitionEn = String(raw.definition_en || raw.definitionEn || raw.definition || raw.meaning_en || '').trim().replace(/\s+/g, ' ')
   if (!definitionEn) throw new Error('缺少 definition_en')
   if (new RegExp(`(?<![A-Za-z])${entry.displayEnglish.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![A-Za-z])`, 'i').test(definitionEn)) {
     throw new Error('definition_en 不能重复目标词')
   }
-  const synonym = normalizeRelationTerm(raw.synonym || '')
-  const antonym = normalizeRelationTerm(raw.antonym || '')
+  const synonym = normalizeRelationTerm(raw.synonym || raw.synonyms || raw.similar_word || '')
+  const antonym = normalizeRelationTerm(raw.antonym || raw.antonyms || raw.opposite_word || '')
   return {
     definitionEn,
     synonym: synonym && !isMorphVariant(synonym, entry.displayEnglish) ? synonym : '',
@@ -391,12 +511,15 @@ const sanitizeLexical = (raw, entry) => {
 const sanitizeMaterial = (raw, entry, lexical, requireSynonym) => {
   if (!raw || typeof raw !== 'object') throw new Error('题面结果为空')
   if (requireSynonym) {
-    const synonym = normalizeRelationTerm(raw.synonym || lexical?.synonym || '')
-    const synonymOriginal = String(raw.synonym_original || '').trim()
-    const synonymRewriteFull = String(raw.synonym_rewrite_full || raw.synonym_rewrite_blank || '').trim()
-    if (!synonym || !synonymOriginal || !synonymRewriteFull) throw new Error('同义替换题面缺字段')
-    const synonymRewriteBlank = replaceAnswerWithBlank(synonymRewriteFull, synonym)
-    if ((synonymRewriteBlank.match(/______/g) || []).length !== 1) throw new Error('同义替换空格替换失败')
+    const synonym = normalizeRelationTerm(raw.synonym || raw.synonyms || lexical?.synonym || '')
+    const synonymOriginal = String(raw.synonym_original || raw.original_sentence || raw.source_sentence || '').trim()
+    const rewriteFull = String(raw.synonym_rewrite_full || raw.rewrite_full || '').trim()
+    const rewriteBlankSource = String(raw.synonym_rewrite_blank || raw.rewrite_blank || '').trim()
+    const synonymRewriteBlank = countBlankSlots(rewriteBlankSource) === 1
+      ? rewriteBlankSource
+      : replaceAnswerWithBlank(rewriteFull, synonym)
+    if (!synonym || !synonymOriginal || !synonymRewriteBlank) throw new Error('同义替换题面缺字段')
+    if (countBlankSlots(synonymRewriteBlank) !== 1) throw new Error('同义替换空格替换失败')
     return {
       synonym,
       synonymOriginal,
@@ -404,12 +527,15 @@ const sanitizeMaterial = (raw, entry, lexical, requireSynonym) => {
     }
   }
 
-  const clozeFullSentence = String(raw.cloze_full_sentence || raw.cloze_sentence || '').trim()
-  const clozeSentence = replaceAnswerWithBlank(clozeFullSentence, entry.displayEnglish)
-  const tfTrue = String(raw.tf_true || '').trim()
-  const tfFalse = String(raw.tf_false || '').trim()
+  const clozeFullSentence = String(raw.cloze_full_sentence || raw.cloze_sentence_full || raw.full_sentence || '').trim()
+  const clozeBlankSource = String(raw.cloze_sentence || raw.cloze_blank || raw.blank_sentence || '').trim()
+  const clozeSentence = countBlankSlots(clozeBlankSource) === 1
+    ? clozeBlankSource
+    : replaceAnswerWithBlank(clozeFullSentence, entry.displayEnglish)
+  const tfTrue = String(raw.tf_true || raw.true_sentence || raw.trueStatement || '').trim()
+  const tfFalse = String(raw.tf_false || raw.false_sentence || raw.falseStatement || '').trim()
   if (!clozeSentence || !tfTrue || !tfFalse) throw new Error('基础题面缺字段')
-  if ((clozeSentence.match(/______/g) || []).length !== 1) throw new Error('cloze 替换失败')
+  if (countBlankSlots(clozeSentence) !== 1) throw new Error('cloze 替换失败')
   return { clozeSentence, tfTrue, tfFalse }
 }
 
@@ -427,17 +553,142 @@ const runWithConcurrency = async (items, concurrency, worker) => {
   return results
 }
 
+const fallbackLexical = (entry) => ({
+  definitionEn: `Chinese meaning: ${entry.plainChinese || 'see the Chinese meaning'}`,
+  synonym: '',
+  antonym: '',
+})
+
+const fallbackBasicMaterial = (entry) => ({
+  clozeSentence: `The word meaning "${entry.plainChinese}" is ______.`,
+  tfTrue: `${entry.displayEnglish} is related to ${entry.plainChinese}.`,
+  tfFalse: `${entry.displayEnglish} means something completely different.`,
+})
+
+const fallbackSynonymValue = (entry, lexical) => {
+  const synonym = normalizeRelationTerm(lexical?.synonym || '')
+  if (synonym && !isMorphVariant(synonym, entry.displayEnglish)) return synonym
+  return `similar to ${entry.plainChinese || 'the same idea'}`
+}
+
+const fallbackSynonymMaterial = (entry, lexical) => ({
+  synonym: fallbackSynonymValue(entry, lexical),
+  synonymOriginal: `${entry.displayEnglish} means ${entry.plainChinese}.`,
+  synonymRewriteBlank: `The word "${entry.displayEnglish}" can be replaced by _______.`,
+})
+
+const resolveResponseItems = (entries, responseItems, sanitizeEntry, onResolved) => {
+  const byId = new Map()
+  responseItems.forEach((item) => {
+    if (!item || typeof item !== 'object' || item.id == null) return
+    const id = String(item.id)
+    if (!byId.has(id)) byId.set(id, item)
+  })
+  const canFallbackByIndex = responseItems.length === entries.length && byId.size === 0
+  const unresolved = []
+  entries.forEach((entry, index) => {
+    const fallbackByIndex = canFallbackByIndex ? responseItems[index] : null
+    const raw = byId.get(entry.key) || fallbackByIndex || null
+    try {
+      onResolved(entry, sanitizeEntry(raw, entry))
+    } catch (error) {
+      unresolved.push({ entry, error })
+    }
+  })
+  return unresolved
+}
+
+const resolveSingleEntryWithFallback = async ({
+  entry,
+  callLlm,
+  sanitizeEntry,
+  onResolved,
+  fallbackForEntry,
+}) => {
+  let lastError = null
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const responseItems = await callLlm([entry])
+      const unresolved = resolveResponseItems([entry], responseItems, sanitizeEntry, onResolved)
+      if (!unresolved.length) return false
+      lastError = unresolved[0]?.error || null
+    } catch (error) {
+      lastError = error
+    }
+  }
+  onResolved(entry, fallbackForEntry(entry, lastError))
+  return true
+}
+
+const resolveLlmEntries = async ({
+  entries,
+  batchSize,
+  concurrency,
+  kind,
+  callLlm,
+  sanitizeEntry,
+  onResolved,
+  fallbackForEntry,
+}) => {
+  const batches = chunkGroups(dedupeEntriesByKey(entries), batchSize)
+  const fallbackCounts = await runWithConcurrency(batches, concurrency, async (batch) => {
+    let pending = batch
+    let subBatchSize = batch.length
+    let guard = 0
+
+    while (pending.length > 1 && subBatchSize > 1 && guard < 12) {
+      guard += 1
+      const unresolved = []
+      for (const chunk of chunkGroups(pending, subBatchSize)) {
+        try {
+          const responseItems = await callLlm(chunk)
+          unresolved.push(...resolveResponseItems(chunk, responseItems, sanitizeEntry, onResolved).map((item) => item.entry))
+        } catch {
+          unresolved.push(...chunk)
+        }
+      }
+      pending = dedupeEntriesByKey(unresolved)
+      if (!pending.length) return 0
+      const ceiling = Math.min(subBatchSize, pending.length)
+      subBatchSize = ceiling > 1 ? Math.max(1, Math.floor(ceiling / 2)) : 1
+    }
+
+    if (!pending.length) return 0
+    const singleResults = await runWithConcurrency(
+      pending,
+      Math.min(3, pending.length),
+      (entry) => resolveSingleEntryWithFallback({
+        entry,
+        callLlm,
+        sanitizeEntry,
+        onResolved,
+        fallbackForEntry,
+      }),
+    )
+    return singleResults.filter(Boolean).length
+  })
+  const fallbackCount = fallbackCounts.reduce((sum, value) => sum + value, 0)
+  if (fallbackCount) {
+    console.warn(`[genEngine] ${kind} 有 ${fallbackCount} 条使用了本地兜底模板。`)
+  }
+  return fallbackCount
+}
+
 const ensureLexicalData = async (entries, context) => {
-  const missing = entries.filter((entry) => !context.lexicalCache.has(entry.key))
+  const missing = dedupeEntriesByKey(entries.filter((entry) => !context.lexicalCache.has(entry.key)))
   if (!missing.length) return context.lexicalCache
   const { batchSize, concurrency } = getLlmConfig()
-  const batches = chunkGroups(missing, batchSize)
-  await runWithConcurrency(batches, concurrency, async (batch) => {
-    const responseItems = await callLlmForLexical(batch)
-    const responseMap = new Map(responseItems.map((item) => [String(item.id), item]))
-    batch.forEach((entry) => {
-      context.lexicalCache.set(entry.key, sanitizeLexical(responseMap.get(entry.key), entry))
-    })
+  await resolveLlmEntries({
+    entries: missing,
+    batchSize,
+    concurrency,
+    kind: 'LLM 词汇',
+    callLlm: callLlmForLexical,
+    sanitizeEntry: sanitizeLexical,
+    onResolved: (entry, value) => {
+      context.lexicalCache.set(entry.key, value)
+    },
+    fallbackForEntry: (entry) => fallbackLexical(entry),
   })
   return context.lexicalCache
 }
@@ -445,19 +696,27 @@ const ensureLexicalData = async (entries, context) => {
 const ensureMaterials = async (entries, context, requireSynonym) => {
   const cache = requireSynonym ? context.synonymMaterialCache : context.basicMaterialCache
   const lexicalCache = context.lexicalCache
-  const missing = entries.filter((entry) => !cache.has(entry.key))
-  if (!missing.length) return cache
-  const { batchSize, concurrency } = getLlmConfig()
-  const batches = chunkGroups(missing.map((entry) => ({
+  const missing = dedupeEntriesByKey(entries.filter((entry) => !cache.has(entry.key))).map((entry) => ({
     ...entry,
     requiredSynonym: lexicalCache.get(entry.key)?.synonym || '',
-  })), batchSize)
-  await runWithConcurrency(batches, concurrency, async (batch) => {
-    const responseItems = await callLlmForMaterials(batch, requireSynonym)
-    const responseMap = new Map(responseItems.map((item) => [String(item.id), item]))
-    batch.forEach((entry) => {
-      cache.set(entry.key, sanitizeMaterial(responseMap.get(entry.key), entry, lexicalCache.get(entry.key), requireSynonym))
-    })
+  }))
+  if (!missing.length) return cache
+  const { batchSize, concurrency } = getLlmConfig()
+  await resolveLlmEntries({
+    entries: missing,
+    batchSize,
+    concurrency,
+    kind: requireSynonym ? 'LLM 同义替换题面' : 'LLM 基础题面',
+    callLlm: (batch) => callLlmForMaterials(batch, requireSynonym),
+    sanitizeEntry: (raw, entry) => sanitizeMaterial(raw, entry, lexicalCache.get(entry.key), requireSynonym),
+    onResolved: (entry, value) => {
+      cache.set(entry.key, value)
+    },
+    fallbackForEntry: (entry) => (
+      requireSynonym
+        ? fallbackSynonymMaterial(entry, lexicalCache.get(entry.key))
+        : fallbackBasicMaterial(entry)
+    ),
   })
   return cache
 }
@@ -1014,7 +1273,11 @@ export const generateWorksheetArchive = async ({
   fileName = '词组练习.xlsx',
   questionTypes = ALL_QUESTION_TYPE_KEYS,
   rowLimit = MAX_EXPORT_ROWS,
+  onProgress,
 }) => {
+  const report = async (message) => {
+    if (typeof onProgress === 'function') await onProgress(message)
+  }
   const words = normalizeRows(rows, rowLimit)
   if (!words.length) throw new Error('没有可生成的词条')
 
@@ -1026,7 +1289,11 @@ export const generateWorksheetArchive = async ({
   const groups = chunkGroups(words)
   const needsLexical = selectedKeys.some((key) => LLM_REQUIRED_KEYS.has(key))
 
+  await report(`[${exportName}] 准备生成 ${words.length} 个词条`)
+  await report(`[${exportName}] 共 ${groups.length} 组`)
+
   if (needsLexical) {
+    await report(`[${exportName}] 预热 LLM 词汇关系`)
     await ensureLexicalData(words, context)
   }
 
@@ -1035,21 +1302,26 @@ export const generateWorksheetArchive = async ({
     const { plan, basicEntries, synonymEntries } = buildChoicePlan(groups, context)
     context.choicePlan = plan
     if (selectedKeys.includes('二_选择题') || selectedKeys.includes('九_判断正误')) {
+      await report(`[${exportName}] 预热 LLM 基础题面材料`)
       await ensureMaterials(Array.from(new Map(basicEntries.map((entry) => [entry.key, entry])).values()), context, false)
     }
     if (selectedKeys.includes('三_同义替换')) {
+      await report(`[${exportName}] 预热 LLM 同义替换题面材料`)
       await ensureMaterials(Array.from(new Map(synonymEntries.map((entry) => [entry.key, entry])).values()), context, true)
     }
   }
 
   const files = []
   for (const questionKey of selectedKeys) {
+    await report(`[${exportName}] 开始生成 ${questionKey}`)
     const questionFiles = questionKey === '十_汉译英' || questionKey === '十一_英译汉'
       ? await createTranslationFiles(questionKey, groups, context)
       : await createNonTranslationFiles(questionKey, groups, context)
     files.push(...questionFiles)
+    await report(`  ✓ ${questionKey}`)
   }
 
+  await report(`[${exportName}] 已打包为 ZIP`)
   return {
     exportName,
     fileName: `${exportName}.zip`,

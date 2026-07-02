@@ -52,12 +52,14 @@ const parseContentDispositionName = (headerValue) => {
   return plainMatch?.[1] || ''
 }
 
-export const fetchDownloadBlob = async (url, payload, onProgress) => {
+export const fetchDownloadRequest = async (url, options = {}, onProgress) => {
   const response = await fetch(url, {
-    method: 'POST',
     credentials: 'include',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
+    ...options,
+    headers: {
+      ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+      ...(options.headers || {}),
+    },
   })
   const contentType = response.headers.get('content-type') || ''
   if (!response.ok) {
@@ -100,3 +102,12 @@ export const fetchDownloadBlob = async (url, payload, onProgress) => {
     totalBytes: receivedBytes || totalBytes,
   }
 }
+
+export const fetchDownloadBlob = async (url, payload, onProgress) => fetchDownloadRequest(
+  url,
+  {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  },
+  onProgress,
+)
