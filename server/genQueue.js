@@ -35,6 +35,7 @@ const summarizeJob = (job) => ({
   wordCount: job.wordCount || 0,
   questionTypes: job.questionTypes || [],
   llmModel: job.llmModel || '',
+  reuseLlmCache: job.reuseLlmCache !== false,
   progress: job.progress || null,
   error: job.error || '',
   artifactReady: Boolean(job.artifactKey),
@@ -254,6 +255,7 @@ const processSingleJob = async (job) => {
       fileName: payload.fileName || '词组练习.xlsx',
       questionTypes: payload.questionTypes || latestJob.questionTypes,
       llmModel: payload.llmModel || latestJob.llmModel || getDefaultLlmModel(),
+      reuseLlmCache: payload.reuseLlmCache !== false && latestJob.reuseLlmCache !== false,
       onProgress: async (event) => {
         await persistProgress(progressFromEvent(liveJob, event))
       },
@@ -336,7 +338,7 @@ export const scheduleWorksheetJobQueue = () => {
   waitUntil(kickWorksheetJobQueue())
 }
 
-export const submitWorksheetJob = async ({ rows, fileName, questionTypes, llmModel }) => {
+export const submitWorksheetJob = async ({ rows, fileName, questionTypes, llmModel, reuseLlmCache = true }) => {
   const id = crypto.randomUUID()
   const submittedAt = now()
   const totalSteps = buildTotalSteps(questionTypes)
@@ -345,6 +347,7 @@ export const submitWorksheetJob = async ({ rows, fileName, questionTypes, llmMod
     fileName: String(fileName || '词组练习.xlsx'),
     questionTypes,
     llmModel: String(llmModel || getDefaultLlmModel()).trim(),
+    reuseLlmCache: reuseLlmCache !== false,
     createdAt: submittedAt,
     submittedAt,
     updatedAt: submittedAt,
@@ -365,6 +368,7 @@ export const submitWorksheetJob = async ({ rows, fileName, questionTypes, llmMod
         fileName: job.fileName,
         questionTypes,
         llmModel: job.llmModel,
+        reuseLlmCache: job.reuseLlmCache,
       },
     }),
     writeJsonObject({

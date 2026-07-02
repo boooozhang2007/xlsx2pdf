@@ -878,18 +878,24 @@ const ensureLexicalData = async (entries, context) => {
   const resolvedKeys = new Set()
   const stageLabel = '预热 LLM 词汇关系'
   const pendingCacheWrites = new Map()
-  const loadedCache = await loadPersistentCacheEntries({
-    entries: uncachedEntries,
-    context,
-    cacheKind: 'lexical',
-    sanitizeEntry: sanitizeLexical,
-    onResolved: async (entry, value) => {
-      const isNew = !resolvedKeys.has(entry.key)
-      if (isNew) resolvedKeys.add(entry.key)
-      context.lexicalCache.set(entry.key, value)
-      return isNew
-    },
-  })
+  const loadedCache = context.reuseLlmCache
+    ? await loadPersistentCacheEntries({
+        entries: uncachedEntries,
+        context,
+        cacheKind: 'lexical',
+        sanitizeEntry: sanitizeLexical,
+        onResolved: async (entry, value) => {
+          const isNew = !resolvedKeys.has(entry.key)
+          if (isNew) resolvedKeys.add(entry.key)
+          context.lexicalCache.set(entry.key, value)
+          return isNew
+        },
+      })
+    : {
+        cacheHitCount: 0,
+        cacheKeyByEntry: new Map(uncachedEntries.map((entry) => [entry.key, ''])),
+        missingEntries: uncachedEntries,
+      }
   if (loadedCache.cacheHitCount) {
     await context.reportProgress({
       message: `[${context.exportName}] ${stageLabel} ${loadedCache.cacheHitCount}/${uncachedEntries.length}`,
@@ -928,7 +934,9 @@ const ensureLexicalData = async (entries, context) => {
     }),
     onTick: context.checkForCancellation,
   })
-  await writeLlmCacheJsonValues(Array.from(pendingCacheWrites.values()))
+  if (context.reuseLlmCache) {
+    await writeLlmCacheJsonValues(Array.from(pendingCacheWrites.values()))
+  }
   return context.lexicalCache
 }
 
@@ -945,18 +953,24 @@ const ensureMaterials = async (entries, context, requireSynonym) => {
   const stageLabel = requireSynonym ? '预热 LLM 同义替换题面材料' : '预热 LLM 基础题面材料'
   const pendingCacheWrites = new Map()
   const cacheKind = requireSynonym ? 'synonymMaterial' : 'basicMaterial'
-  const loadedCache = await loadPersistentCacheEntries({
-    entries: uncachedEntries,
-    context,
-    cacheKind,
-    sanitizeEntry: (raw, entry) => sanitizeMaterial(raw, entry, lexicalCache.get(entry.key), requireSynonym),
-    onResolved: async (entry, value) => {
-      const isNew = !resolvedKeys.has(entry.key)
-      if (isNew) resolvedKeys.add(entry.key)
-      cache.set(entry.key, value)
-      return isNew
-    },
-  })
+  const loadedCache = context.reuseLlmCache
+    ? await loadPersistentCacheEntries({
+        entries: uncachedEntries,
+        context,
+        cacheKind,
+        sanitizeEntry: (raw, entry) => sanitizeMaterial(raw, entry, lexicalCache.get(entry.key), requireSynonym),
+        onResolved: async (entry, value) => {
+          const isNew = !resolvedKeys.has(entry.key)
+          if (isNew) resolvedKeys.add(entry.key)
+          cache.set(entry.key, value)
+          return isNew
+        },
+      })
+    : {
+        cacheHitCount: 0,
+        cacheKeyByEntry: new Map(uncachedEntries.map((entry) => [entry.key, ''])),
+        missingEntries: uncachedEntries,
+      }
   if (loadedCache.cacheHitCount) {
     await context.reportProgress({
       message: `[${context.exportName}] ${stageLabel} ${loadedCache.cacheHitCount}/${uncachedEntries.length}`,
@@ -995,7 +1009,9 @@ const ensureMaterials = async (entries, context, requireSynonym) => {
     }),
     onTick: context.checkForCancellation,
   })
-  await writeLlmCacheJsonValues(Array.from(pendingCacheWrites.values()))
+  if (context.reuseLlmCache) {
+    await writeLlmCacheJsonValues(Array.from(pendingCacheWrites.values()))
+  }
   return cache
 }
 
@@ -1608,11 +1624,21 @@ const createCanceledError = () => {
   return error
 }
 
-const createGenerationContext = (words, exportName, selectedKeys, fileName, reportProgress, checkForCancellation, llmModel) => ({
+const createGenerationContext = (
+  words,
+  exportName,
+  selectedKeys,
+  fileName,
+  reportProgress,
+  checkForCancellation,
+  llmModel,
+  reuseLlmCache,
+) => ({
   exportName,
   selectedKeys,
   wordCount: words.length,
   llmModel: String(llmModel || '').trim(),
+  reuseLlmCache: Boolean(reuseLlmCache),
   rng: createSeededRng(`${fileName}|${exportName}|${words.map((word) => word.key).join('|')}`),
   lexicalCache: new Map(),
   basicMaterialCache: new Map(),
@@ -1629,6 +1655,7 @@ export const generateWorksheetArchive = async ({
   onProgress,
   onShouldCancel,
   llmModel,
+  reuseLlmCache = true,
 }) => {
   const checkForCancellation = async () => {
     if (typeof onShouldCancel === 'function' && await onShouldCancel()) throw createCanceledError()
@@ -1645,7 +1672,16 @@ export const generateWorksheetArchive = async ({
   if (!selectedKeys.length) throw new Error('请至少选择一个题型')
 
   const exportName = sanitizeExportName(`${String(fileName || '词组练习').replace(/\.[^.]+$/, '')} 练习包`)
-  const context = createGenerationContext(words, exportName, selectedKeys, fileName, report, checkForCancellation, llmModel || getDefaultLlmModel())
+  const context = createGenerationContext(
+    words,
+    exportName,
+    selectedKeys,
+    fileName,
+    report,
+    checkForCancellation,
+    llmModel || getDefaultLlmModel(),
+    reuseLlmCache,
+  )
   const groups = chunkGroups(words)
   const needsLexical = selectedKeys.some((key) => LEXICAL_QUESTION_KEYS.has(key))
   const needsBasicMaterials = selectedKeys.some((key) => BASIC_MATERIAL_QUESTION_KEYS.has(key))

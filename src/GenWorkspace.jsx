@@ -317,6 +317,8 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
   const [selectedTypes, setSelectedTypes] = useState(DEFAULT_QUESTION_TYPES)
   const [llmModels, setLlmModels] = useState([])
   const [selectedLlmModel, setSelectedLlmModel] = useState('')
+  const [llmCacheAvailable, setLlmCacheAvailable] = useState(false)
+  const [reuseLlmCache, setReuseLlmCache] = useState(true)
 
   const usableRows = useMemo(
     () => rows.filter((row) => String(row?.english || '').trim()),
@@ -356,6 +358,9 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
       setJobs(Array.isArray(data.jobs) ? data.jobs : [])
       const models = Array.isArray(data.llmModels) ? data.llmModels : []
       setLlmModels(models)
+      const cacheAvailable = Boolean(data.llmCacheAvailable)
+      setLlmCacheAvailable(cacheAvailable)
+      setReuseLlmCache((current) => (cacheAvailable ? current : false))
       setSelectedLlmModel((current) => {
         if (current && models.some((item) => item.id === current)) return current
         if (data.defaultLlmModel && models.some((item) => item.id === data.defaultLlmModel)) return data.defaultLlmModel
@@ -435,6 +440,7 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
           rows: usableRows,
           questionTypes: selectedTypes,
           llmModel: selectedLlmModel,
+          reuseLlmCache,
         }),
       })
       setJobs((current) => [data.job, ...current.filter((job) => job.id !== data.job.id)])
@@ -625,6 +631,7 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
                     <span className={`genQueueChip ${job.status}`}>{meta.label}</span>
                     <span>{job.questionTypes?.length || 0} 题型</span>
                     {job.llmModel ? <span>{llmModelLabelById.get(job.llmModel) || job.llmModel}</span> : null}
+                    <span>{job.reuseLlmCache === false ? '缓存关' : '缓存开'}</span>
                     <span>{formatWordProgress(job)}</span>
                   </div>
                   <p>{job.progress?.message || job.error || '等待处理。'}</p>
@@ -720,6 +727,10 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
               <small>题型数</small>
               <strong>{selectedTypes.length}</strong>
             </div>
+            <div>
+              <small>缓存</small>
+              <strong>{llmCacheAvailable ? (reuseLlmCache ? '复用中' : '关闭') : '未配置'}</strong>
+            </div>
           </div>
         </div>
 
@@ -741,6 +752,15 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
               </select>
             </div>
           ) : null}
+          <label className="toggleLine">
+            <input
+              type="checkbox"
+              checked={reuseLlmCache}
+              onChange={(event) => setReuseLlmCache(event.target.checked)}
+              disabled={!llmCacheAvailable}
+            />
+            <span>{llmCacheAvailable ? '复用单词缓存' : '单词缓存未配置'}</span>
+          </label>
           <div className="questionTypeGrid compact">
             {QUESTION_TYPE_OPTIONS.map((item) => {
               const active = selectedTypes.includes(item.key)
