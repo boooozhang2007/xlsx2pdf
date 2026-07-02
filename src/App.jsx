@@ -25,6 +25,7 @@ import {
 import { createPdfFromRows, downloadBlob } from './pdf'
 import MobileListenPage from './MobileListenPage'
 import TtsWorkspace from './TtsWorkspace'
+import GenWorkspace from './GenWorkspace'
 import './styles.css'
 
 window.XLSX = XLSX
@@ -58,6 +59,18 @@ const InputField = ({ label, value, onChange, min = 1, max = 999, suffix, icon: 
 
 const Pill = ({ children, tone = 'neutral' }) => <span className={`pill pill-${tone}`}>{children}</span>
 
+const getToolFromPath = (pathname) => {
+  if (pathname.startsWith('/tts')) return 'tts'
+  if (pathname.startsWith('/gen')) return 'gen'
+  return 'pdf'
+}
+
+const getToolPath = (tool) => {
+  if (tool === 'tts') return '/tts'
+  if (tool === 'gen') return '/gen'
+  return '/'
+}
+
 function App() {
   const [workbook, setWorkbook] = useState(null)
   const [fileName, setFileName] = useState('example.xlsx')
@@ -67,7 +80,7 @@ function App() {
   const [isExporting, setIsExporting] = useState(false)
   const [previewMode, setPreviewMode] = useState('page')
   const [previewPage, setPreviewPage] = useState(1)
-  const [activeTool, setActiveTool] = useState(() => (window.location.pathname.startsWith('/tts') ? 'tts' : 'pdf'))
+  const [activeTool, setActiveTool] = useState(() => getToolFromPath(window.location.pathname))
   const fileInputRef = useRef(null)
 
   const sheetNames = workbook?.SheetNames || []
@@ -161,7 +174,7 @@ function App() {
   }, [])
 
   useEffect(() => {
-    const syncPath = () => setActiveTool(window.location.pathname.startsWith('/tts') ? 'tts' : 'pdf')
+    const syncPath = () => setActiveTool(getToolFromPath(window.location.pathname))
     window.addEventListener('popstate', syncPath)
     return () => window.removeEventListener('popstate', syncPath)
   }, [])
@@ -172,13 +185,19 @@ function App() {
 
   const setTool = (tool) => {
     setActiveTool(tool)
-    window.history.pushState(null, '', tool === 'tts' ? '/tts' : '/')
+    window.history.pushState(null, '', getToolPath(tool))
   }
 
   const handleDrop = (event) => {
     event.preventDefault()
     const file = event.dataTransfer.files?.[0]
     if (file) loadWorkbook(file)
+  }
+
+  const handleFileInputChange = (event) => {
+    const file = event.target.files?.[0]
+    if (file) loadWorkbook(file)
+    event.target.value = ''
   }
 
   const handleExport = async () => {
@@ -200,9 +219,42 @@ function App() {
 
   const samplePreviewRows = rows.slice(0, 5)
   const emptyPreviewSlots = Math.max(0, rowsPerPage - currentPreviewRows.length)
+  const heroMeta = {
+    pdf: {
+      pill: '自动从 example.xlsx 输出 example.pdf',
+      title: '把英汉词表变成可打印 PDF。',
+      description: '上传 XLSX，指定英语与汉语从哪一行、哪一列开始，实时查看排版，并用访问者电脑完成 PDF 生成。',
+      mockTitle: '英汉词表',
+      mockSubTitle: `${stats.file.replace(/\.[^.]+$/, '')}.pdf`,
+      mockRight: (row) => row.chinese || '—',
+    },
+    tts: {
+      pill: 'Azure TTS + 手机二维码播放',
+      title: '生成单词朗读音频。',
+      description: '粘贴或导入词表，选择英/美音、速度、音色和停顿，生成可试听 MP3，并用二维码在手机播放。',
+      mockTitle: 'Audio batches',
+      mockSubTitle: `${rows.length || 0} words`,
+      mockRight: () => '▶︎  Azure neural voice',
+    },
+    gen: {
+      pill: '受保护的服务端练习包生成',
+      title: '把当前词表变成练习 ZIP。',
+      description: '复用当前 XLSX 读表设置，在受保护页面里调用 Vercel Node.js 后端生成练习包，并以 ZIP 下载。',
+      mockTitle: 'Worksheet pack',
+      mockSubTitle: `${rows.length || 0} entries`,
+      mockRight: () => '11 类题型 / ZIP export',
+    },
+  }[activeTool]
 
   return (
     <main className="appShell">
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".xlsx,.xls"
+        hidden
+        onChange={handleFileInputChange}
+      />
       <section className="heroPanel">
         <div className="ambient ambientOne" />
         <div className="ambient ambientTwo" />
@@ -218,20 +270,19 @@ function App() {
             <button className={activeTool === 'tts' ? 'active' : ''} type="button" onClick={() => setTool('tts')}>
               <Headphones size={15} /> 单词朗读
             </button>
+            <button className={activeTool === 'gen' ? 'active' : ''} type="button" onClick={() => setTool('gen')}>
+              <Sparkles size={15} /> 练习生成
+            </button>
           </div>
         </nav>
 
         <div className="heroGrid">
           <div className="heroCopy">
             <Pill tone="blue">
-              <Sparkles size={14} /> {activeTool === 'tts' ? 'Azure TTS + 手机二维码播放' : '自动从 example.xlsx 输出 example.pdf'}
+              <Sparkles size={14} /> {heroMeta.pill}
             </Pill>
-            <h1>{activeTool === 'tts' ? '生成单词朗读音频。' : '把英汉词表变成可打印 PDF。'}</h1>
-            <p>
-              {activeTool === 'tts'
-                ? '粘贴或导入词表，选择英/美音、速度、音色和停顿，生成可试听 MP3，并用二维码在手机播放。'
-                : '上传 XLSX，指定英语与汉语从哪一行、哪一列开始，实时查看排版，并用访问者电脑完成 PDF 生成。'}
-            </p>
+            <h1>{heroMeta.title}</h1>
+            <p>{heroMeta.description}</p>
             <div className="heroActions">
               {activeTool === 'tts' ? (
                 <>
@@ -240,6 +291,16 @@ function App() {
                   </button>
                   <button className="ghostButton" onClick={() => setTool('pdf')}>
                     <FileText size={17} /> 返回 PDF
+                  </button>
+                </>
+              ) : activeTool === 'gen' ? (
+                <>
+                  <button className="primaryButton" onClick={() => fileInputRef.current?.click()}>
+                    <UploadCloud size={18} /> 上传 XLSX
+                  </button>
+                  <button className="ghostButton" onClick={loadBundledExample} disabled={isLoading}>
+                    {isLoading ? <Loader2 className="spin" size={17} /> : <FileSpreadsheet size={17} />}
+                    使用 example.xlsx
                   </button>
                 </>
               ) : (
@@ -258,13 +319,13 @@ function App() {
 
           <div className={activeTool === 'tts' ? 'paperMock audioMock' : 'paperMock'} aria-label="preview mock">
             <div className="paperHeader">
-              <span>{activeTool === 'tts' ? 'Audio batches' : '英汉词表'}</span>
-              <small>{activeTool === 'tts' ? `${rows.length || 0} words` : `${stats.file.replace(/\.[^.]+$/, '')}.pdf`}</small>
+              <span>{heroMeta.mockTitle}</span>
+              <small>{heroMeta.mockSubTitle}</small>
             </div>
             {samplePreviewRows.map((row) => (
               <div className="mockRow" key={`${row.index}-${row.english}`}>
                 <strong>{row.english || '—'}</strong>
-                <span>{activeTool === 'tts' ? '▶︎  Azure neural voice' : row.chinese || '—'}</span>
+                <span>{heroMeta.mockRight(row)}</span>
               </div>
             ))}
           </div>
@@ -273,6 +334,8 @@ function App() {
 
       {activeTool === 'tts' ? (
         <TtsWorkspace rows={rows} loadWorkbook={loadWorkbook} fileName={fileName} activeSheetName={activeSheetName} />
+      ) : activeTool === 'gen' ? (
+        <GenWorkspace rows={rows} fileName={fileName} activeSheetName={activeSheetName} />
       ) : (
       <section className="workspace">
         <aside className="controlRail">
@@ -284,17 +347,6 @@ function App() {
             role="button"
             tabIndex={0}
           >
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".xlsx,.xls"
-              hidden
-              onChange={(event) => {
-                const file = event.target.files?.[0]
-                if (file) loadWorkbook(file)
-                event.target.value = ''
-              }}
-            />
             <UploadCloud size={26} />
             <strong>上传或拖入 XLSX</strong>
             <span>{fileName}</span>
@@ -547,4 +599,3 @@ function App() {
 }
 
 export default App
-

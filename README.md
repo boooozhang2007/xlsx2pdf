@@ -25,6 +25,15 @@
 - `/listen?token=...` 为移动端适配播放页，支持保存到当前设备播放库、复制长期链接、逐段下载
 - 桌面端会把已生成的音频保存在当前浏览器 IndexedDB，本地刷新后可从“管理已生成”恢复继续播放或重新生成二维码
 
+### 练习生成
+
+- `/gen` 进入受密码保护的练习生成板块
+- 复用主页面当前 XLSX 读表设置与已解析的英汉词表
+- 支持一次性勾选全部 11 个题型并导出 ZIP
+- 生成结果由 Vercel Node.js Function 打包后返回浏览器下载
+- 下载阶段按文件流接收，界面会显示已接收字节数
+- 依赖 LLM 的题型会读取服务端环境变量中的 `VIVI_LLM_API_KEY`、`VIVI_LLM_BASE_URL`、`VIVI_LLM_MODEL`
+
 ## 本地运行
 
 ```bash
@@ -53,6 +62,11 @@ TTS_ACCESS_PASSWORD=访问密码
 TTS_SESSION_SECRET=用于签名会话 cookie 的长随机字符串
 AZURE_SPEECH_KEY=Azure Speech 资源密钥
 AZURE_SPEECH_REGION=Azure Speech 区域，例如 eastus
+VIVI_LLM_API_KEY=练习生成所用 LLM API key
+VIVI_LLM_BASE_URL=练习生成所用 LLM base URL，例如 https://your-provider.example
+VIVI_LLM_MODEL=练习生成所用模型名
+VIVI_LLM_BATCH_SIZE=可选，默认 60
+VIVI_LLM_CONCURRENCY=可选，默认 5
 R2_ENDPOINT=https://<accountid>.r2.cloudflarestorage.com
 R2_BUCKET=bucket 名称
 R2_ACCESS_KEY_ID=R2 S3 API access key
@@ -74,6 +88,7 @@ R2 中每次二维码分享会保存为一个可浏览前缀，并按“批次�
 - Build Command: `npm run build`
 - Output Directory: `dist`
 - `/api/*` 保留给 Vercel Functions，其它路径回落到 Vite SPA
+- `api/gen/export.js` 已配置 `maxDuration: 300`，用于练习包生成
 
 推送到 GitHub 后在 Vercel 导入仓库即可，或使用：
 
@@ -85,6 +100,7 @@ npx vercel
 
 - `src/App.jsx`：主控制台、PDF/朗读板块切换
 - `src/TtsWorkspace.jsx`：受保护的单词朗读工作台
+- `src/GenWorkspace.jsx`：受保护的练习生成工作台
 - `src/MobileListenPage.jsx`：手机播放页面
 - `api/`：Vercel Functions，包含认证、Azure TTS、Edge-TTS 和 R2 分享签名
 - `server/`：Vercel Functions 复用的认证、TTS、R2 工具

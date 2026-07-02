@@ -5,7 +5,8 @@
   "framework": "vite",
   "functions": {
     "api/tts/azure.js": { "maxDuration": 60 },
-    "api/tts/edge.py": { "maxDuration": 60 }
+    "api/tts/edge.py": { "maxDuration": 60 },
+    "api/gen/export.js": { "maxDuration": 300 }
   },
   "rewrites": [
     { "source": "/(.*)", "destination": "/index.html" }

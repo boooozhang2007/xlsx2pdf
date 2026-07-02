@@ -848,6 +848,178 @@ button:disabled {
   padding: clamp(20px, 3vw, 34px);
 }
 
+.genWorkspace {
+  grid-template-columns: minmax(320px, 400px) minmax(0, 1fr);
+}
+
+.genControls {
+  gap: 18px;
+}
+
+.genStage {
+  gap: 18px;
+}
+
+.genStage .taskMetrics {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.genMetaGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.genMetaGrid div,
+.genPanel,
+.questionTypeCard {
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  background: rgba(255, 255, 255, 0.7);
+}
+
+.genMetaGrid div {
+  min-width: 0;
+  border-radius: 18px;
+  padding: 12px;
+}
+
+.genMetaGrid small {
+  display: block;
+  margin-bottom: 5px;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 850;
+}
+
+.genMetaGrid strong {
+  display: block;
+  overflow: hidden;
+  color: #0f172a;
+  font-size: 14px;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.questionTypeGrid {
+  display: grid;
+  gap: 10px;
+}
+
+.questionTypeCard {
+  position: relative;
+  display: grid;
+  gap: 6px;
+  border-radius: 20px;
+  padding: 14px 16px 14px 44px;
+  transition:
+    border-color 160ms ease,
+    background 160ms ease,
+    transform 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.questionTypeCard:hover {
+  transform: translateY(-1px);
+  border-color: rgba(37, 99, 235, 0.2);
+  box-shadow: 0 14px 28px rgba(15, 23, 42, 0.06);
+}
+
+.questionTypeCard.active {
+  border-color: rgba(37, 99, 235, 0.34);
+  background: rgba(239, 246, 255, 0.88);
+}
+
+.questionTypeCard input {
+  position: absolute;
+  left: 16px;
+  top: 16px;
+  width: 18px;
+  height: 18px;
+  accent-color: #2563eb;
+}
+
+.questionTypeCard strong,
+.selectedTypeItem strong {
+  color: #0f172a;
+  font-size: 14px;
+  font-weight: 900;
+}
+
+.questionTypeCard em {
+  width: fit-content;
+  border-radius: 999px;
+  background: #dbeafe;
+  color: #1d4ed8;
+  padding: 3px 8px;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 900;
+}
+
+.questionTypeCard span,
+.selectedTypeItem span,
+.genEmpty,
+.genNote {
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.genLogoutButton {
+  align-self: flex-start;
+  margin-top: -6px;
+}
+
+.genContentGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(280px, 0.9fr);
+  gap: 18px;
+}
+
+.genPanel {
+  display: grid;
+  gap: 14px;
+  border-radius: 28px;
+  padding: 18px;
+}
+
+.genRowsPreview,
+.selectedTypeList {
+  display: grid;
+  gap: 10px;
+}
+
+.genRow,
+.selectedTypeItem {
+  display: grid;
+  gap: 5px;
+  border-radius: 18px;
+  background: rgba(248, 250, 252, 0.9);
+  padding: 12px 14px;
+}
+
+.genRow strong {
+  color: #0f172a;
+  font-size: 14px;
+  font-weight: 900;
+}
+
+.genRow span {
+  color: #475569;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.genEmpty {
+  margin: 0;
+  padding: 8px 2px 0;
+}
+
+.genNote {
+  margin: 0;
+}
+
 .wordInput {
   width: 100%;
   min-height: 180px;
@@ -2755,6 +2927,7 @@ button:disabled {
   .heroGrid,
   .workspace,
   .ttsWorkspace,
+  .genContentGrid,
   .studioBoard,
   .audioGrid,
   .compactAudioShell,
@@ -2844,6 +3017,7 @@ button:disabled {
   .twoCols,
   .statStrip,
   .ttsStats,
+  .genMetaGrid,
   .tinyActions,
   .mobileControls,
   .mobileSaveBar {
