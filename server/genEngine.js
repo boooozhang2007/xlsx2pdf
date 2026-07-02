@@ -376,6 +376,68 @@ export const getDefaultLlmModel = () => {
   return options[0]?.id || ''
 }
 
+const parseFallbackModelConfig = () => {
+  const raw = String(process.env.VIVI_LLM_FALLBACK_MODELS || '').trim()
+  if (!raw) return { defaultChain: [], byModel: new Map() }
+
+  try {
+    const parsed = JSON.parse(raw)
+    if (Array.isArray(parsed)) {
+      return {
+        defaultChain: parsed.map((item) => String(item || '').trim()).filter(Boolean),
+        byModel: new Map(),
+      }
+    }
+    if (parsed && typeof parsed === 'object') {
+      const byModel = new Map()
+      let defaultChain = []
+      Object.entries(parsed).forEach(([key, value]) => {
+        const items = Array.isArray(value)
+          ? value.map((item) => String(item || '').trim()).filter(Boolean)
+          : String(value || '').split(/[\n,]+/g).map((item) => item.trim()).filter(Boolean)
+        if (!items.length) return
+        if (key === 'default') {
+          defaultChain = items
+          return
+        }
+        byModel.set(String(key || '').trim(), items)
+      })
+      return { defaultChain, byModel }
+    }
+  } catch {
+    return {
+      defaultChain: raw.split(/[\n,]+/g).map((item) => item.trim()).filter(Boolean),
+      byModel: new Map(),
+    }
+  }
+
+  return { defaultChain: [], byModel: new Map() }
+}
+
+export const getFallbackLlmModels = (primaryModel = '') => {
+  const primary = String(primaryModel || getDefaultLlmModel()).trim()
+  const available = parseLlmModelOptions().map((item) => item.id)
+  const { defaultChain, byModel } = parseFallbackModelConfig()
+  const configured = byModel.get(primary) || defaultChain
+  const candidates = configured.length ? configured : available.filter((item) => item !== primary)
+  const deduped = []
+  const seen = new Set([primary])
+  for (const candidate of candidates) {
+    const model = String(candidate || '').trim()
+    if (!model || seen.has(model) || !available.includes(model)) continue
+    seen.add(model)
+    deduped.push(model)
+  }
+  if (configured.length) {
+    for (const fallback of available) {
+      if (!fallback || seen.has(fallback) || fallback === primary) continue
+      seen.add(fallback)
+      deduped.push(fallback)
+    }
+  }
+  return deduped
+}
+
 const getLlmConfig = (options = {}) => {
   const apiKey = getRequiredEnv('VIVI_LLM_API_KEY')
   let baseUrl = getRequiredEnv('VIVI_LLM_BASE_URL').replace(/\/+$/, '')
@@ -385,8 +447,10 @@ const getLlmConfig = (options = {}) => {
   const model = requestedModel && models.some((item) => item.id === requestedModel)
     ? requestedModel
     : getDefaultLlmModel()
-  const batchSize = Number.parseInt(process.env.VIVI_LLM_BATCH_SIZE || '20', 10) || 20
-  const concurrency = Math.max(1, Number.parseInt(process.env.VIVI_LLM_CONCURRENCY || '5', 10) || 5)
+  const configuredBatchSize = Number.parseInt(process.env.VIVI_LLM_BATCH_SIZE || '20', 10) || 20
+  const configuredConcurrency = Math.max(1, Number.parseInt(process.env.VIVI_LLM_CONCURRENCY || '5', 10) || 5)
+  const batchSize = Math.max(1, Number.parseInt(options.batchSize, 10) || configuredBatchSize)
+  const concurrency = Math.max(1, Number.parseInt(options.concurrency, 10) || configuredConcurrency)
   return {
     apiKey,
     baseUrl,
@@ -394,6 +458,20 @@ const getLlmConfig = (options = {}) => {
     batchSize,
     concurrency,
     url: `${baseUrl}/v1/chat/completions`,
+  }
+}
+
+export const getLlmJobRuntime = (selectedModel = '', overrides = {}) => {
+  const config = getLlmConfig({
+    model: selectedModel,
+    batchSize: overrides.batchSize,
+    concurrency: overrides.concurrency,
+  })
+  return {
+    model: config.model,
+    batchSize: config.batchSize,
+    concurrency: config.concurrency,
+    fallbackModels: getFallbackLlmModels(config.model),
   }
 }
 
@@ -405,6 +483,14 @@ const getLlmRetryPolicy = () => ({
 const createLlmError = (message, options = {}) => Object.assign(new Error(message), options)
 
 const isRetryableLlmStatus = (status) => status === 408 || status === 409 || status === 425 || status === 429 || status >= 500
+
+const parseRetryAfterMs = (value) => {
+  const source = String(value || '').trim()
+  if (!source) return 0
+  if (/^\d+(\.\d+)?$/.test(source)) return Math.max(0, Math.round(Number(source) * 1000))
+  const timestamp = Date.parse(source)
+  return Number.isFinite(timestamp) ? Math.max(0, timestamp - Date.now()) : 0
+}
 
 const parseJsonArrayContent = (content) => {
   const parsed = JSON.parse(extractJsonCandidate(content))
@@ -448,9 +534,14 @@ const fetchLlmArray = async (payload, kind, llmOptions = {}) => {
         body: JSON.stringify(payload),
       })
       if (!response.ok) {
+        const retryAfterMs = parseRetryAfterMs(response.headers.get('retry-after'))
+        const isRateLimited = response.status === 429
         throw createLlmError(`${kind} 请求失败：${response.status}`, {
+          code: isRateLimited ? 'LLM_RATE_LIMITED' : 'LLM_REQUEST_FAILED',
           status: response.status,
+          retryAfterMs,
           retryable: isRetryableLlmStatus(response.status),
+          model: payload.model,
         })
       }
       const rawText = await response.text()
@@ -784,6 +875,10 @@ const resolveSingleEntryStrict = async ({
     }
     if (attempt < singleItemRetries - 1) await sleep(250 * (attempt + 1))
   }
+  if (lastError?.code === 'LLM_RATE_LIMITED') {
+    lastError.failedEntry = entry.displayEnglish || entry.english || entry.key || ''
+    throw lastError
+  }
   throw createLlmResolutionError(kind, [{ entry, error: lastError }])
 }
 
@@ -819,7 +914,11 @@ const resolveLlmEntries = async ({
           resolvedTotal += resolvedCount
           if (resolvedCount) await onProgress?.(resolvedTotal, totalEntries)
           unresolved.push(...chunkUnresolved.map((item) => item.entry))
-        } catch {
+        } catch (error) {
+          if (error?.code === 'LLM_RATE_LIMITED') {
+            error.failedEntries = chunk.map((entry) => entry.displayEnglish || entry.english || entry.key || '')
+            throw error
+          }
           unresolved.push(...chunk)
         }
       }
@@ -874,7 +973,11 @@ const resolveLlmEntries = async ({
 const ensureLexicalData = async (entries, context) => {
   const uncachedEntries = dedupeEntriesByKey(entries.filter((entry) => !context.lexicalCache.has(entry.key)))
   if (!uncachedEntries.length) return context.lexicalCache
-  const { batchSize, concurrency } = getLlmConfig({ model: context.llmModel })
+  const { batchSize, concurrency } = getLlmConfig({
+    model: context.llmModel,
+    batchSize: context.llmBatchSize,
+    concurrency: context.llmConcurrency,
+  })
   const resolvedKeys = new Set()
   const stageLabel = '预热 LLM 词汇关系'
   const pendingCacheWrites = new Map()
@@ -907,35 +1010,38 @@ const ensureLexicalData = async (entries, context) => {
     })
   }
   if (!loadedCache.missingEntries.length) return context.lexicalCache
-  await resolveLlmEntries({
-    entries: loadedCache.missingEntries,
-    batchSize,
-    concurrency,
-    kind: 'LLM 词汇',
-    callLlm: (batch) => callLlmForLexical(batch, { model: context.llmModel }),
-    sanitizeEntry: sanitizeLexical,
-    onResolved: async (entry, value) => {
-      const isNew = !resolvedKeys.has(entry.key)
-      if (isNew) resolvedKeys.add(entry.key)
-      context.lexicalCache.set(entry.key, value)
-      pendingCacheWrites.set(entry.key, {
-        key: loadedCache.cacheKeyByEntry.get(entry.key),
-        value: toCacheValue('lexical', value),
-      })
-      return isNew
-    },
-    onProgress: async (resolvedCount) => context.reportProgress({
-      message: `[${context.exportName}] ${stageLabel} ${loadedCache.cacheHitCount + resolvedCount}/${uncachedEntries.length}`,
-      currentStep: stageLabel,
-      stageLabel,
-      stageWordCompleted: loadedCache.cacheHitCount + resolvedCount,
-      stageWordTotal: uncachedEntries.length,
-      totalWords: context.wordCount,
-    }),
-    onTick: context.checkForCancellation,
-  })
-  if (context.reuseLlmCache) {
-    await writeLlmCacheJsonValues(Array.from(pendingCacheWrites.values()))
+  try {
+    await resolveLlmEntries({
+      entries: loadedCache.missingEntries,
+      batchSize,
+      concurrency,
+      kind: 'LLM 词汇',
+      callLlm: (batch) => callLlmForLexical(batch, { model: context.llmModel }),
+      sanitizeEntry: sanitizeLexical,
+      onResolved: async (entry, value) => {
+        const isNew = !resolvedKeys.has(entry.key)
+        if (isNew) resolvedKeys.add(entry.key)
+        context.lexicalCache.set(entry.key, value)
+        pendingCacheWrites.set(entry.key, {
+          key: loadedCache.cacheKeyByEntry.get(entry.key),
+          value: toCacheValue('lexical', value),
+        })
+        return isNew
+      },
+      onProgress: async (resolvedCount) => context.reportProgress({
+        message: `[${context.exportName}] ${stageLabel} ${loadedCache.cacheHitCount + resolvedCount}/${uncachedEntries.length}`,
+        currentStep: stageLabel,
+        stageLabel,
+        stageWordCompleted: loadedCache.cacheHitCount + resolvedCount,
+        stageWordTotal: uncachedEntries.length,
+        totalWords: context.wordCount,
+      }),
+      onTick: context.checkForCancellation,
+    })
+  } finally {
+    if (context.reuseLlmCache && pendingCacheWrites.size) {
+      await writeLlmCacheJsonValues(Array.from(pendingCacheWrites.values()))
+    }
   }
   return context.lexicalCache
 }
@@ -948,7 +1054,11 @@ const ensureMaterials = async (entries, context, requireSynonym) => {
     requiredSynonym: lexicalCache.get(entry.key)?.synonym || '',
   }))
   if (!uncachedEntries.length) return cache
-  const { batchSize, concurrency } = getLlmConfig({ model: context.llmModel })
+  const { batchSize, concurrency } = getLlmConfig({
+    model: context.llmModel,
+    batchSize: context.llmBatchSize,
+    concurrency: context.llmConcurrency,
+  })
   const resolvedKeys = new Set()
   const stageLabel = requireSynonym ? '预热 LLM 同义替换题面材料' : '预热 LLM 基础题面材料'
   const pendingCacheWrites = new Map()
@@ -982,35 +1092,38 @@ const ensureMaterials = async (entries, context, requireSynonym) => {
     })
   }
   if (!loadedCache.missingEntries.length) return cache
-  await resolveLlmEntries({
-    entries: loadedCache.missingEntries,
-    batchSize,
-    concurrency,
-    kind: requireSynonym ? 'LLM 同义替换题面' : 'LLM 基础题面',
-    callLlm: (batch) => callLlmForMaterials(batch, requireSynonym, { model: context.llmModel }),
-    sanitizeEntry: (raw, entry) => sanitizeMaterial(raw, entry, lexicalCache.get(entry.key), requireSynonym),
-    onResolved: async (entry, value) => {
-      const isNew = !resolvedKeys.has(entry.key)
-      if (isNew) resolvedKeys.add(entry.key)
-      cache.set(entry.key, value)
-      pendingCacheWrites.set(entry.key, {
-        key: loadedCache.cacheKeyByEntry.get(entry.key),
-        value: toCacheValue(cacheKind, value),
-      })
-      return isNew
-    },
-    onProgress: async (resolvedCount) => context.reportProgress({
-      message: `[${context.exportName}] ${stageLabel} ${loadedCache.cacheHitCount + resolvedCount}/${uncachedEntries.length}`,
-      currentStep: stageLabel,
-      stageLabel,
-      stageWordCompleted: loadedCache.cacheHitCount + resolvedCount,
-      stageWordTotal: uncachedEntries.length,
-      totalWords: context.wordCount,
-    }),
-    onTick: context.checkForCancellation,
-  })
-  if (context.reuseLlmCache) {
-    await writeLlmCacheJsonValues(Array.from(pendingCacheWrites.values()))
+  try {
+    await resolveLlmEntries({
+      entries: loadedCache.missingEntries,
+      batchSize,
+      concurrency,
+      kind: requireSynonym ? 'LLM 同义替换题面' : 'LLM 基础题面',
+      callLlm: (batch) => callLlmForMaterials(batch, requireSynonym, { model: context.llmModel }),
+      sanitizeEntry: (raw, entry) => sanitizeMaterial(raw, entry, lexicalCache.get(entry.key), requireSynonym),
+      onResolved: async (entry, value) => {
+        const isNew = !resolvedKeys.has(entry.key)
+        if (isNew) resolvedKeys.add(entry.key)
+        cache.set(entry.key, value)
+        pendingCacheWrites.set(entry.key, {
+          key: loadedCache.cacheKeyByEntry.get(entry.key),
+          value: toCacheValue(cacheKind, value),
+        })
+        return isNew
+      },
+      onProgress: async (resolvedCount) => context.reportProgress({
+        message: `[${context.exportName}] ${stageLabel} ${loadedCache.cacheHitCount + resolvedCount}/${uncachedEntries.length}`,
+        currentStep: stageLabel,
+        stageLabel,
+        stageWordCompleted: loadedCache.cacheHitCount + resolvedCount,
+        stageWordTotal: uncachedEntries.length,
+        totalWords: context.wordCount,
+      }),
+      onTick: context.checkForCancellation,
+    })
+  } finally {
+    if (context.reuseLlmCache && pendingCacheWrites.size) {
+      await writeLlmCacheJsonValues(Array.from(pendingCacheWrites.values()))
+    }
   }
   return cache
 }
@@ -1632,12 +1745,16 @@ const createGenerationContext = (
   reportProgress,
   checkForCancellation,
   llmModel,
+  llmBatchSize,
+  llmConcurrency,
   reuseLlmCache,
 ) => ({
   exportName,
   selectedKeys,
   wordCount: words.length,
   llmModel: String(llmModel || '').trim(),
+  llmBatchSize: Math.max(1, Number.parseInt(llmBatchSize, 10) || getLlmJobRuntime(llmModel).batchSize),
+  llmConcurrency: Math.max(1, Number.parseInt(llmConcurrency, 10) || getLlmJobRuntime(llmModel).concurrency),
   reuseLlmCache: Boolean(reuseLlmCache),
   rng: createSeededRng(`${fileName}|${exportName}|${words.map((word) => word.key).join('|')}`),
   lexicalCache: new Map(),
@@ -1655,6 +1772,8 @@ export const generateWorksheetArchive = async ({
   onProgress,
   onShouldCancel,
   llmModel,
+  llmBatchSize,
+  llmConcurrency,
   reuseLlmCache = true,
 }) => {
   const checkForCancellation = async () => {
@@ -1680,6 +1799,8 @@ export const generateWorksheetArchive = async ({
     report,
     checkForCancellation,
     llmModel || getDefaultLlmModel(),
+    llmBatchSize,
+    llmConcurrency,
     reuseLlmCache,
   )
   const groups = chunkGroups(words)
