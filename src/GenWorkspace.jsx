@@ -312,7 +312,7 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
   const [downloadingJobId, setDownloadingJobId] = useState('')
   const [cancelingJobId, setCancelingJobId] = useState('')
   const [deletingJobId, setDeletingJobId] = useState('')
-  const [status, setStatus] = useState('输入访问密码后即可生成练习包。')
+  const [status, setStatus] = useState('')
   const [jobs, setJobs] = useState([])
   const [selectedTypes, setSelectedTypes] = useState(DEFAULT_QUESTION_TYPES)
 
@@ -359,7 +359,6 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
     apiJson('/api/auth?action=me')
       .then((data) => {
         setAuthenticated(Boolean(data.authenticated))
-        if (data.authenticated) setStatus('已解锁练习生成板块。')
       })
       .catch(() => setAuthenticated(false))
       .finally(() => setAuthChecked(true))
@@ -388,7 +387,7 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
       })
       setAuthenticated(true)
       setPassword('')
-      setStatus('已解锁练习生成板块。')
+      setStatus('')
     } catch (error) {
       setLoginError(error.message || '登录失败。')
     }
@@ -425,7 +424,7 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
         }),
       })
       setJobs((current) => [data.job, ...current.filter((job) => job.id !== data.job.id)])
-      setStatus('已提交到服务器队列。页面刷新后仍可继续查看和下载。')
+      setStatus('已提交。')
       loadJobs(true)
     } catch (error) {
       setStatus(error.message || '提交队列失败。')
@@ -514,7 +513,6 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
           <Lock size={34} />
           <span className="eyebrow">Protected Worksheet</span>
           <h2>练习生成</h2>
-          <p>该板块复用当前站点的密码保护。登录后由 Vercel Node.js 函数生成 ZIP 练习包，并以文件流返回浏览器下载。</p>
           <form onSubmit={login}>
             <input
               type="password"
@@ -578,7 +576,6 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
           <div>
             <span className="eyebrow">Server Queue</span>
             <h2>服务器队列</h2>
-            <p className="genStageSubtitle">保留完整任务记录，但把重点信息压缩到上面的监控卡里。</p>
           </div>
         </div>
 
@@ -673,7 +670,6 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
             <Sparkles size={17} />
             <span>提交配置</span>
           </div>
-          <p className="genConfigCopy">右侧只保留题型选择和提交入口，提交后任务会进入左侧服务器队列。</p>
           <button
             className="exportButton genExportButton"
             type="button"

@@ -240,7 +240,7 @@ const processSingleJob = async (job) => {
         ...(liveJob.progress || createProgress(buildTotalSteps(latestJob.questionTypes || []), latestJob.wordCount || 0)),
         completedSteps: buildTotalSteps(latestJob.questionTypes || []),
         currentStep: '打包完成',
-        message: '练习包已生成，可直接下载。',
+        message: '已完成',
         percent: 100,
         stageLabel: '打包完成',
         stageWordTotal: latestJob.wordCount || result.wordCount || 0,
