@@ -6,6 +6,8 @@ import { createGetUrl, getObjectBuffer, getObjectJson, listObjects, putObject } 
 const JOB_PREFIX = 'worksheet-jobs'
 const STALE_PROCESSING_MS = 1000 * 60 * 8
 const MAX_LIST_JOBS = 40
+const CANCELABLE_STATUSES = new Set(['queued', 'processing', 'canceling'])
+const TERMINAL_STATUSES = new Set(['completed', 'failed', 'canceled'])
 
 let queueLoopPromise = null
 
@@ -26,6 +28,7 @@ const summarizeJob = (job) => ({
   startedAt: job.startedAt || 0,
   completedAt: job.completedAt || 0,
   failedAt: job.failedAt || 0,
+  canceledAt: job.canceledAt || 0,
   wordCount: job.wordCount || 0,
   questionTypes: job.questionTypes || [],
   progress: job.progress || null,
@@ -40,12 +43,17 @@ const writeJsonObject = async ({ key, value }) => putObject({
   contentType: 'application/json; charset=utf-8',
 })
 
-const createProgress = (totalSteps) => ({
+const createProgress = (totalSteps, totalWords = 0) => ({
   totalSteps,
   completedSteps: 0,
   currentStep: '',
   message: '已入队，等待服务器处理。',
   percent: 0,
+  totalWords,
+  stageLabel: '',
+  stageWordTotal: 0,
+  stageWordCompleted: 0,
+  currentQuestionType: '',
 })
 
 const buildTotalSteps = (questionTypes) => {
@@ -55,9 +63,14 @@ const buildTotalSteps = (questionTypes) => {
   return questionTypes.length + (needsLexical ? 1 : 0) + (needsBasicMaterials ? 1 : 0) + (needsSynonymMaterials ? 1 : 0)
 }
 
+const clampPercent = (value) => Math.max(0, Math.min(100, Number(value) || 0))
+const percentFromSteps = (progress) => (progress.totalSteps
+  ? Math.round((progress.completedSteps / progress.totalSteps) * 100)
+  : 0)
+
 const progressFromMessage = (job, message) => {
   const progress = {
-    ...(job.progress || createProgress(buildTotalSteps(job.questionTypes || []))),
+    ...(job.progress || createProgress(buildTotalSteps(job.questionTypes || []), job.wordCount || 0)),
     message,
     currentStep: message,
   }
@@ -69,24 +82,50 @@ const progressFromMessage = (job, message) => {
   for (const pattern of patterns) {
     if (pattern.regex.test(message)) {
       if (!pattern.advance) {
-        progress.percent = progress.totalSteps ? Math.round((progress.completedSteps / progress.totalSteps) * 100) : 0
+        progress.percent = percentFromSteps(progress)
       }
       return progress
     }
   }
   if (/\[.+\] 开始生成 /.test(message)) {
-    progress.percent = progress.totalSteps ? Math.round((progress.completedSteps / progress.totalSteps) * 100) : 0
+    progress.percent = percentFromSteps(progress)
     return progress
   }
   if (/^\s*✓ /.test(message)) {
     progress.completedSteps = Math.min(progress.totalSteps, progress.completedSteps + 1)
-    progress.percent = progress.totalSteps ? Math.round((progress.completedSteps / progress.totalSteps) * 100) : 0
+    progress.percent = percentFromSteps(progress)
     return progress
   }
   if (/预热 LLM 词汇关系|预热 LLM 基础题面材料|预热 LLM 同义替换题面材料/.test(message)) {
     progress.completedSteps = Math.min(progress.totalSteps, progress.completedSteps + 1)
-    progress.percent = progress.totalSteps ? Math.round((progress.completedSteps / progress.totalSteps) * 100) : 0
+    progress.percent = percentFromSteps(progress)
   }
+  return progress
+}
+
+const progressFromEvent = (job, event) => {
+  if (!event || typeof event === 'string') return progressFromMessage(job, String(event || ''))
+  const progress = {
+    ...(job.progress || createProgress(buildTotalSteps(job.questionTypes || []), job.wordCount || 0)),
+  }
+
+  if (typeof event.message === 'string') progress.message = event.message
+  if (typeof event.currentStep === 'string') progress.currentStep = event.currentStep
+  if (typeof event.stageLabel === 'string') progress.stageLabel = event.stageLabel
+  if (typeof event.currentQuestionType === 'string') progress.currentQuestionType = event.currentQuestionType
+  if (Number.isFinite(event.totalWords)) progress.totalWords = Math.max(0, Number(event.totalWords) || 0)
+  if (Number.isFinite(event.stageWordTotal)) progress.stageWordTotal = Math.max(0, Number(event.stageWordTotal) || 0)
+  if (Number.isFinite(event.stageWordCompleted)) {
+    progress.stageWordCompleted = Math.max(0, Number(event.stageWordCompleted) || 0)
+  }
+  if (Number.isFinite(event.totalSteps)) progress.totalSteps = Math.max(0, Number(event.totalSteps) || 0)
+  if (Number.isFinite(event.completedSteps)) {
+    progress.completedSteps = Math.max(0, Math.min(progress.totalSteps || Number(event.completedSteps), Number(event.completedSteps) || 0))
+  }
+  if (Number.isFinite(event.stepDelta)) {
+    progress.completedSteps = Math.min(progress.totalSteps, progress.completedSteps + (Number(event.stepDelta) || 0))
+  }
+  progress.percent = Number.isFinite(event.percent) ? clampPercent(event.percent) : percentFromSteps(progress)
   return progress
 }
 
@@ -102,13 +141,32 @@ const writeJob = async (job) => {
   return nextJob
 }
 
+const readLatestJobState = async (jobId) => readJob(jobId).catch(() => null)
+
+const settleStaleCanceledJobs = async (jobs) => Promise.all((jobs || []).map(async (job) => {
+  if (job?.status !== 'canceling') return job
+  if (now() - Number(job.updatedAt || 0) <= STALE_PROCESSING_MS) return job
+  return writeJob({
+    ...job,
+    status: 'canceled',
+    canceledAt: job.canceledAt || now(),
+    error: '',
+    progress: {
+      ...(job.progress || createProgress(buildTotalSteps(job.questionTypes || []), job.wordCount || 0)),
+      currentStep: '已取消',
+      message: '任务已取消。',
+    },
+  })
+}))
+
 const listJobStates = async () => {
   const objects = await listObjects({ prefix: `${JOB_PREFIX}/` })
   const jobKeys = objects
     .map((item) => item.Key)
     .filter((key) => key?.endsWith('/job.json'))
   const jobs = await Promise.all(jobKeys.map((key) => getObjectJson({ key }).catch(() => null)))
-  return jobs
+  const normalizedJobs = await settleStaleCanceledJobs(jobs.filter(Boolean))
+  return normalizedJobs
     .filter(Boolean)
     .sort((left, right) => (right.createdAt || 0) - (left.createdAt || 0))
     .slice(0, MAX_LIST_JOBS)
@@ -123,6 +181,7 @@ const findNextProcessableJob = async () => {
 }
 
 const processSingleJob = async (job) => {
+  if (!job || TERMINAL_STATUSES.has(job.status) || job.status === 'canceling') return
   const payload = await readJobPayload(job.id)
   let liveJob = await writeJob({
     ...job,
@@ -130,20 +189,35 @@ const processSingleJob = async (job) => {
     startedAt: job.startedAt || now(),
     error: '',
   })
+  const ensureNotCanceled = async () => {
+    const latestJob = await readLatestJobState(job.id)
+    if (latestJob && ['canceling', 'canceled'].includes(latestJob.status)) {
+      const error = new Error('任务已取消。')
+      error.code = 'JOB_CANCELED'
+      throw error
+    }
+  }
 
   try {
+    await ensureNotCanceled()
     const result = await generateWorksheetArchive({
       rows: payload.rows || [],
       fileName: payload.fileName || '词组练习.xlsx',
       questionTypes: payload.questionTypes || job.questionTypes,
-      onProgress: async (message) => {
+      onProgress: async (event) => {
+        await ensureNotCanceled()
         liveJob = await writeJob({
           ...liveJob,
-          progress: progressFromMessage(liveJob, message),
+          progress: progressFromEvent(liveJob, event),
         })
+      },
+      onShouldCancel: async () => {
+        const latestJob = await readLatestJobState(job.id)
+        return Boolean(latestJob && ['canceling', 'canceled'].includes(latestJob.status))
       },
     })
 
+    await ensureNotCanceled()
     const artifactKey = jobArtifactKey(job.id)
     await putObject({
       key: artifactKey,
@@ -160,21 +234,39 @@ const processSingleJob = async (job) => {
       wordCount: result.wordCount,
       downloadSize: result.buffer.length,
       progress: {
-        ...(liveJob.progress || createProgress(buildTotalSteps(job.questionTypes || []))),
+        ...(liveJob.progress || createProgress(buildTotalSteps(job.questionTypes || []), job.wordCount || 0)),
         completedSteps: buildTotalSteps(job.questionTypes || []),
         currentStep: '打包完成',
         message: '练习包已生成，可直接下载。',
         percent: 100,
+        stageLabel: '打包完成',
+        stageWordTotal: job.wordCount || result.wordCount || 0,
+        stageWordCompleted: job.wordCount || result.wordCount || 0,
       },
     })
   } catch (error) {
+    if (error?.code === 'JOB_CANCELED') {
+      const latestJob = await readLatestJobState(job.id)
+      await writeJob({
+        ...(latestJob || liveJob),
+        status: 'canceled',
+        canceledAt: now(),
+        error: '',
+        progress: {
+          ...((latestJob && latestJob.progress) || liveJob.progress || createProgress(buildTotalSteps(job.questionTypes || []), job.wordCount || 0)),
+          currentStep: '已取消',
+          message: '任务已取消。',
+        },
+      })
+      return
+    }
     await writeJob({
       ...liveJob,
       status: 'failed',
       failedAt: now(),
       error: error.message || '生成失败。',
       progress: {
-        ...(liveJob.progress || createProgress(buildTotalSteps(job.questionTypes || []))),
+        ...(liveJob.progress || createProgress(buildTotalSteps(job.questionTypes || []), job.wordCount || 0)),
         message: error.message || '生成失败。',
       },
     })
@@ -214,7 +306,7 @@ export const submitWorksheetJob = async ({ rows, fileName, questionTypes }) => {
     updatedAt: submittedAt,
     status: 'queued',
     wordCount: Array.isArray(rows) ? rows.length : 0,
-    progress: createProgress(totalSteps),
+    progress: createProgress(totalSteps, Array.isArray(rows) ? rows.length : 0),
     error: '',
     artifactKey: '',
     exportFileName: '',
@@ -245,6 +337,44 @@ export const listWorksheetJobs = async () => {
 }
 
 export const getWorksheetJob = async (jobId) => summarizeJob(await readJob(jobId))
+
+export const cancelWorksheetJob = async (jobId) => {
+  const job = await readJob(jobId)
+  if (!job) {
+    const error = new Error('未找到对应任务。')
+    error.statusCode = 404
+    throw error
+  }
+
+  if (!CANCELABLE_STATUSES.has(job.status)) return summarizeJob(job)
+
+  if (job.status === 'queued') {
+    const canceledJob = await writeJob({
+      ...job,
+      status: 'canceled',
+      canceledAt: now(),
+      error: '',
+      progress: {
+        ...(job.progress || createProgress(buildTotalSteps(job.questionTypes || []), job.wordCount || 0)),
+        currentStep: '已取消',
+        message: '任务已取消。',
+      },
+    })
+    return summarizeJob(canceledJob)
+  }
+
+  const cancelingJob = await writeJob({
+    ...job,
+    status: 'canceling',
+    error: '',
+    progress: {
+      ...(job.progress || createProgress(buildTotalSteps(job.questionTypes || []), job.wordCount || 0)),
+      currentStep: '正在停止',
+      message: '正在停止任务…',
+    },
+  })
+  return summarizeJob(cancelingJob)
+}
 
 export const getWorksheetJobDownload = async (jobId) => {
   const job = await readJob(jobId)

@@ -577,7 +577,7 @@ const fallbackSynonymMaterial = (entry, lexical) => ({
   synonymRewriteBlank: `The word "${entry.displayEnglish}" can be replaced by _______.`,
 })
 
-const resolveResponseItems = (entries, responseItems, sanitizeEntry, onResolved) => {
+const resolveResponseItems = async (entries, responseItems, sanitizeEntry, onResolved) => {
   const byId = new Map()
   responseItems.forEach((item) => {
     if (!item || typeof item !== 'object' || item.id == null) return
@@ -586,16 +586,19 @@ const resolveResponseItems = (entries, responseItems, sanitizeEntry, onResolved)
   })
   const canFallbackByIndex = responseItems.length === entries.length && byId.size === 0
   const unresolved = []
-  entries.forEach((entry, index) => {
+  let resolvedCount = 0
+  for (let index = 0; index < entries.length; index += 1) {
+    const entry = entries[index]
     const fallbackByIndex = canFallbackByIndex ? responseItems[index] : null
     const raw = byId.get(entry.key) || fallbackByIndex || null
     try {
-      onResolved(entry, sanitizeEntry(raw, entry))
+      const didResolve = await onResolved(entry, sanitizeEntry(raw, entry))
+      if (didResolve !== false) resolvedCount += 1
     } catch (error) {
       unresolved.push({ entry, error })
     }
-  })
-  return unresolved
+  }
+  return { unresolved, resolvedCount }
 }
 
 const resolveSingleEntryWithFallback = async ({
@@ -604,20 +607,26 @@ const resolveSingleEntryWithFallback = async ({
   sanitizeEntry,
   onResolved,
   fallbackForEntry,
+  onTick,
 }) => {
   let lastError = null
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
+      await onTick?.()
       const responseItems = await callLlm([entry])
-      const unresolved = resolveResponseItems([entry], responseItems, sanitizeEntry, onResolved)
-      if (!unresolved.length) return false
+      const { unresolved, resolvedCount } = await resolveResponseItems([entry], responseItems, sanitizeEntry, onResolved)
+      if (!unresolved.length) return { usedFallback: false, resolvedCount }
       lastError = unresolved[0]?.error || null
     } catch (error) {
       lastError = error
     }
   }
-  onResolved(entry, fallbackForEntry(entry, lastError))
-  return true
+  await onTick?.()
+  const didResolve = await onResolved(entry, fallbackForEntry(entry, lastError))
+  return {
+    usedFallback: true,
+    resolvedCount: didResolve === false ? 0 : 1,
+  }
 }
 
 const resolveLlmEntries = async ({
@@ -629,8 +638,13 @@ const resolveLlmEntries = async ({
   sanitizeEntry,
   onResolved,
   fallbackForEntry,
+  onProgress,
+  onTick,
 }) => {
-  const batches = chunkGroups(dedupeEntriesByKey(entries), batchSize)
+  const uniqueEntries = dedupeEntriesByKey(entries)
+  const totalEntries = uniqueEntries.length
+  let resolvedTotal = 0
+  const batches = chunkGroups(uniqueEntries, batchSize)
   const fallbackCounts = await runWithConcurrency(batches, concurrency, async (batch) => {
     let pending = batch
     let subBatchSize = batch.length
@@ -641,8 +655,12 @@ const resolveLlmEntries = async ({
       const unresolved = []
       for (const chunk of chunkGroups(pending, subBatchSize)) {
         try {
+          await onTick?.()
           const responseItems = await callLlm(chunk)
-          unresolved.push(...resolveResponseItems(chunk, responseItems, sanitizeEntry, onResolved).map((item) => item.entry))
+          const { unresolved: chunkUnresolved, resolvedCount } = await resolveResponseItems(chunk, responseItems, sanitizeEntry, onResolved)
+          resolvedTotal += resolvedCount
+          if (resolvedCount) await onProgress?.(resolvedTotal, totalEntries)
+          unresolved.push(...chunkUnresolved.map((item) => item.entry))
         } catch {
           unresolved.push(...chunk)
         }
@@ -663,9 +681,15 @@ const resolveLlmEntries = async ({
         sanitizeEntry,
         onResolved,
         fallbackForEntry,
+        onTick,
       }),
     )
-    return singleResults.filter(Boolean).length
+    for (const result of singleResults) {
+      if (!result) continue
+      resolvedTotal += result.resolvedCount || 0
+      if (result.resolvedCount) await onProgress?.(resolvedTotal, totalEntries)
+    }
+    return singleResults.filter((result) => result?.usedFallback).length
   })
   const fallbackCount = fallbackCounts.reduce((sum, value) => sum + value, 0)
   if (fallbackCount) {
@@ -678,6 +702,8 @@ const ensureLexicalData = async (entries, context) => {
   const missing = dedupeEntriesByKey(entries.filter((entry) => !context.lexicalCache.has(entry.key)))
   if (!missing.length) return context.lexicalCache
   const { batchSize, concurrency } = getLlmConfig()
+  const resolvedKeys = new Set()
+  const stageLabel = '预热 LLM 词汇关系'
   await resolveLlmEntries({
     entries: missing,
     batchSize,
@@ -685,10 +711,22 @@ const ensureLexicalData = async (entries, context) => {
     kind: 'LLM 词汇',
     callLlm: callLlmForLexical,
     sanitizeEntry: sanitizeLexical,
-    onResolved: (entry, value) => {
+    onResolved: async (entry, value) => {
+      const isNew = !resolvedKeys.has(entry.key)
+      if (isNew) resolvedKeys.add(entry.key)
       context.lexicalCache.set(entry.key, value)
+      return isNew
     },
     fallbackForEntry: (entry) => fallbackLexical(entry),
+    onProgress: async (resolvedCount, totalCount) => context.reportProgress({
+      message: `[${context.exportName}] ${stageLabel} ${resolvedCount}/${totalCount}`,
+      currentStep: stageLabel,
+      stageLabel,
+      stageWordCompleted: resolvedCount,
+      stageWordTotal: totalCount,
+      totalWords: context.wordCount,
+    }),
+    onTick: context.checkForCancellation,
   })
   return context.lexicalCache
 }
@@ -702,6 +740,8 @@ const ensureMaterials = async (entries, context, requireSynonym) => {
   }))
   if (!missing.length) return cache
   const { batchSize, concurrency } = getLlmConfig()
+  const resolvedKeys = new Set()
+  const stageLabel = requireSynonym ? '预热 LLM 同义替换题面材料' : '预热 LLM 基础题面材料'
   await resolveLlmEntries({
     entries: missing,
     batchSize,
@@ -709,14 +749,26 @@ const ensureMaterials = async (entries, context, requireSynonym) => {
     kind: requireSynonym ? 'LLM 同义替换题面' : 'LLM 基础题面',
     callLlm: (batch) => callLlmForMaterials(batch, requireSynonym),
     sanitizeEntry: (raw, entry) => sanitizeMaterial(raw, entry, lexicalCache.get(entry.key), requireSynonym),
-    onResolved: (entry, value) => {
+    onResolved: async (entry, value) => {
+      const isNew = !resolvedKeys.has(entry.key)
+      if (isNew) resolvedKeys.add(entry.key)
       cache.set(entry.key, value)
+      return isNew
     },
     fallbackForEntry: (entry) => (
       requireSynonym
         ? fallbackSynonymMaterial(entry, lexicalCache.get(entry.key))
         : fallbackBasicMaterial(entry)
     ),
+    onProgress: async (resolvedCount, totalCount) => context.reportProgress({
+      message: `[${context.exportName}] ${stageLabel} ${resolvedCount}/${totalCount}`,
+      currentStep: stageLabel,
+      stageLabel,
+      stageWordCompleted: resolvedCount,
+      stageWordTotal: totalCount,
+      totalWords: context.wordCount,
+    }),
+    onTick: context.checkForCancellation,
   })
   return cache
 }
@@ -1188,8 +1240,11 @@ const createNonTranslationFiles = async (questionKey, groups, context) => {
   const typeInfo = QUESTION_TYPE_MAP.get(questionKey)
   const questionParagraphs = createDocxParagraphs(`单词练习 · ${typeInfo.title} (${context.exportName})`)
   const answerParagraphs = createAnswerParagraphs(`${typeInfo.title}答案 (${context.exportName})`)
+  let processedWords = 0
 
-  groups.forEach((group, groupIndex) => {
+  for (let groupIndex = 0; groupIndex < groups.length; groupIndex += 1) {
+    const group = groups[groupIndex]
+    await context.checkForCancellation()
     const [start, end] = groupRange(groupIndex, group)
     questionParagraphs.push(paragraph(`第 ${groupIndex + 1} 组（第${start}～${end}词）`, {
       size: 14,
@@ -1208,7 +1263,19 @@ const createNonTranslationFiles = async (questionKey, groups, context) => {
     if (questionKey === '七_同义词匹配') generateMatchBlocks(questionParagraphs, answerParagraphs, group, groupIndex, context, 'synonym', '七. Synonym Matching 同义词匹配', '七 同义词匹配')
     if (questionKey === '八_反义词匹配') generateMatchBlocks(questionParagraphs, answerParagraphs, group, groupIndex, context, 'antonym', '八. Antonym Matching 反义词匹配', '八 反义词匹配')
     if (questionKey === '九_判断正误') generateTrueFalse(questionParagraphs, answerParagraphs, group, groupIndex, context)
-  })
+    processedWords += group.length
+    await context.reportProgress({
+      message: `[${context.exportName}] ${typeInfo.title} ${processedWords}/${context.wordCount}`,
+      currentStep: `生成 ${typeInfo.title}`,
+      stageLabel: typeInfo.title,
+      stageWordCompleted: processedWords,
+      stageWordTotal: context.wordCount,
+      totalWords: context.wordCount,
+      currentQuestionType: questionKey,
+    })
+  }
+
+  await context.checkForCancellation()
 
   return [
     {
@@ -1230,8 +1297,11 @@ const createTranslationFiles = async (questionKey, groups, context) => {
   const tempPdf = await PDFDocument.create()
   tempPdf.registerFontkit(fontkit)
   const font = await tempPdf.embedFont(fontBytes, { subset: true })
+  let processedWords = 0
 
-  groups.forEach((group, groupIndex) => {
+  for (let groupIndex = 0; groupIndex < groups.length; groupIndex += 1) {
+    const group = groups[groupIndex]
+    await context.checkForCancellation()
     const [start, end] = groupRange(groupIndex, group)
     const rows = generateTranslationRows(group, context, questionKey === '十_汉译英' ? 'cn2en' : 'en2cn')
     pages.push({
@@ -1243,9 +1313,21 @@ const createTranslationFiles = async (questionKey, groups, context) => {
       rangeTitle: `${start}～${end}答案`,
       answers: rows.map((row) => row.answer),
     })
-  })
+    processedWords += group.length
+    await context.reportProgress({
+      message: `[${context.exportName}] ${typeInfo.title} ${processedWords}/${context.wordCount}`,
+      currentStep: `生成 ${typeInfo.title}`,
+      stageLabel: typeInfo.title,
+      stageWordCompleted: processedWords,
+      stageWordTotal: context.wordCount,
+      totalWords: context.wordCount,
+      currentQuestionType: questionKey,
+    })
+  }
 
+  await context.checkForCancellation()
   const questionPdf = await renderTranslationQuestionsPdf(pages, typeInfo.title)
+  await context.checkForCancellation()
   const answerPdf = await renderTranslationAnswersPdf(answerGroups, `${typeInfo.title}答案`)
   return [
     {
@@ -1259,13 +1341,22 @@ const createTranslationFiles = async (questionKey, groups, context) => {
   ]
 }
 
-const createGenerationContext = (words, exportName, selectedKeys, fileName) => ({
+const createCanceledError = () => {
+  const error = new Error('任务已取消。')
+  error.code = 'JOB_CANCELED'
+  return error
+}
+
+const createGenerationContext = (words, exportName, selectedKeys, fileName, reportProgress, checkForCancellation) => ({
   exportName,
   selectedKeys,
+  wordCount: words.length,
   rng: createSeededRng(`${fileName}|${exportName}|${words.map((word) => word.key).join('|')}`),
   lexicalCache: new Map(),
   basicMaterialCache: new Map(),
   synonymMaterialCache: new Map(),
+  reportProgress,
+  checkForCancellation,
 })
 
 export const generateWorksheetArchive = async ({
@@ -1274,9 +1365,15 @@ export const generateWorksheetArchive = async ({
   questionTypes = ALL_QUESTION_TYPE_KEYS,
   rowLimit = MAX_EXPORT_ROWS,
   onProgress,
+  onShouldCancel,
 }) => {
-  const report = async (message) => {
-    if (typeof onProgress === 'function') await onProgress(message)
+  const checkForCancellation = async () => {
+    if (typeof onShouldCancel === 'function' && await onShouldCancel()) throw createCanceledError()
+  }
+  const report = async (payload) => {
+    await checkForCancellation()
+    if (typeof onProgress === 'function') await onProgress(payload)
+    await checkForCancellation()
   }
   const words = normalizeRows(rows, rowLimit)
   if (!words.length) throw new Error('没有可生成的词条')
@@ -1285,43 +1382,132 @@ export const generateWorksheetArchive = async ({
   if (!selectedKeys.length) throw new Error('请至少选择一个题型')
 
   const exportName = sanitizeExportName(`${String(fileName || '词组练习').replace(/\.[^.]+$/, '')} 练习包`)
-  const context = createGenerationContext(words, exportName, selectedKeys, fileName)
+  const context = createGenerationContext(words, exportName, selectedKeys, fileName, report, checkForCancellation)
   const groups = chunkGroups(words)
   const needsLexical = selectedKeys.some((key) => LLM_REQUIRED_KEYS.has(key))
 
-  await report(`[${exportName}] 准备生成 ${words.length} 个词条`)
-  await report(`[${exportName}] 共 ${groups.length} 组`)
+  await report({
+    message: `[${exportName}] 准备生成 ${words.length} 个词条`,
+    currentStep: '准备生成',
+    stageLabel: '准备生成',
+    totalWords: words.length,
+    stageWordTotal: words.length,
+    stageWordCompleted: 0,
+  })
+  await report({
+    message: `[${exportName}] 共 ${groups.length} 组`,
+    currentStep: '准备生成',
+    stageLabel: '准备生成',
+    totalWords: words.length,
+    stageWordTotal: words.length,
+    stageWordCompleted: 0,
+  })
 
   if (needsLexical) {
-    await report(`[${exportName}] 预热 LLM 词汇关系`)
+    await report({
+      message: `[${exportName}] 预热 LLM 词汇关系`,
+      currentStep: '预热 LLM 词汇关系',
+      stageLabel: '预热 LLM 词汇关系',
+      totalWords: words.length,
+      stageWordTotal: words.length,
+      stageWordCompleted: 0,
+    })
     await ensureLexicalData(words, context)
+    await report({
+      message: `[${exportName}] 词汇关系已完成`,
+      currentStep: '预热 LLM 词汇关系',
+      stageLabel: '预热 LLM 词汇关系',
+      totalWords: words.length,
+      stageWordTotal: words.length,
+      stageWordCompleted: words.length,
+      stepDelta: 1,
+    })
   }
 
   context.choicePlan = new Map()
   if (selectedKeys.some((key) => ['二_选择题', '三_同义替换', '九_判断正误'].includes(key))) {
     const { plan, basicEntries, synonymEntries } = buildChoicePlan(groups, context)
+    const uniqueBasicEntries = Array.from(new Map(basicEntries.map((entry) => [entry.key, entry])).values())
+    const uniqueSynonymEntries = Array.from(new Map(synonymEntries.map((entry) => [entry.key, entry])).values())
     context.choicePlan = plan
     if (selectedKeys.includes('二_选择题') || selectedKeys.includes('九_判断正误')) {
-      await report(`[${exportName}] 预热 LLM 基础题面材料`)
-      await ensureMaterials(Array.from(new Map(basicEntries.map((entry) => [entry.key, entry])).values()), context, false)
+      await report({
+        message: `[${exportName}] 预热 LLM 基础题面材料`,
+        currentStep: '预热 LLM 基础题面材料',
+        stageLabel: '预热 LLM 基础题面材料',
+        totalWords: words.length,
+        stageWordTotal: uniqueBasicEntries.length,
+        stageWordCompleted: 0,
+      })
+      await ensureMaterials(uniqueBasicEntries, context, false)
+      await report({
+        message: `[${exportName}] 基础题面材料已完成`,
+        currentStep: '预热 LLM 基础题面材料',
+        stageLabel: '预热 LLM 基础题面材料',
+        totalWords: words.length,
+        stageWordTotal: uniqueBasicEntries.length,
+        stageWordCompleted: uniqueBasicEntries.length,
+        stepDelta: 1,
+      })
     }
     if (selectedKeys.includes('三_同义替换')) {
-      await report(`[${exportName}] 预热 LLM 同义替换题面材料`)
-      await ensureMaterials(Array.from(new Map(synonymEntries.map((entry) => [entry.key, entry])).values()), context, true)
+      await report({
+        message: `[${exportName}] 预热 LLM 同义替换题面材料`,
+        currentStep: '预热 LLM 同义替换题面材料',
+        stageLabel: '预热 LLM 同义替换题面材料',
+        totalWords: words.length,
+        stageWordTotal: uniqueSynonymEntries.length,
+        stageWordCompleted: 0,
+      })
+      await ensureMaterials(uniqueSynonymEntries, context, true)
+      await report({
+        message: `[${exportName}] 同义替换题面材料已完成`,
+        currentStep: '预热 LLM 同义替换题面材料',
+        stageLabel: '预热 LLM 同义替换题面材料',
+        totalWords: words.length,
+        stageWordTotal: uniqueSynonymEntries.length,
+        stageWordCompleted: uniqueSynonymEntries.length,
+        stepDelta: 1,
+      })
     }
   }
 
   const files = []
   for (const questionKey of selectedKeys) {
-    await report(`[${exportName}] 开始生成 ${questionKey}`)
+    const typeInfo = QUESTION_TYPE_MAP.get(questionKey)
+    await report({
+      message: `[${exportName}] 开始生成 ${questionKey}`,
+      currentStep: `生成 ${typeInfo?.title || questionKey}`,
+      stageLabel: typeInfo?.title || questionKey,
+      totalWords: words.length,
+      stageWordTotal: words.length,
+      stageWordCompleted: 0,
+      currentQuestionType: questionKey,
+    })
     const questionFiles = questionKey === '十_汉译英' || questionKey === '十一_英译汉'
       ? await createTranslationFiles(questionKey, groups, context)
       : await createNonTranslationFiles(questionKey, groups, context)
     files.push(...questionFiles)
-    await report(`  ✓ ${questionKey}`)
+    await report({
+      message: `  ✓ ${questionKey}`,
+      currentStep: `${typeInfo?.title || questionKey} 完成`,
+      stageLabel: typeInfo?.title || questionKey,
+      totalWords: words.length,
+      stageWordTotal: words.length,
+      stageWordCompleted: words.length,
+      currentQuestionType: questionKey,
+      stepDelta: 1,
+    })
   }
 
-  await report(`[${exportName}] 已打包为 ZIP`)
+  await report({
+    message: `[${exportName}] 已打包为 ZIP`,
+    currentStep: '打包 ZIP',
+    stageLabel: '打包 ZIP',
+    totalWords: words.length,
+    stageWordTotal: words.length,
+    stageWordCompleted: words.length,
+  })
   return {
     exportName,
     fileName: `${exportName}.zip`,

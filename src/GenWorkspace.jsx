@@ -7,6 +7,7 @@ import {
   Loader2,
   Lock,
   RefreshCw,
+  Square,
   Sparkles,
   XCircle,
 } from 'lucide-react'
@@ -31,7 +32,9 @@ const PREVIEW_RELATIONS = {
 const STATUS_META = {
   queued: { label: '排队中', icon: Clock3 },
   processing: { label: '生成中', icon: RefreshCw },
+  canceling: { label: '停止中', icon: Loader2 },
   completed: { label: '已完成', icon: CheckCircle2 },
+  canceled: { label: '已取消', icon: XCircle },
   failed: { label: '失败', icon: XCircle },
 }
 
@@ -63,6 +66,23 @@ const fallbackArchiveName = (fileName) => {
     .trim() || '词组练习'
   return `${base} 练习包.zip`
 }
+
+const clampPercent = (value) => Math.max(0, Math.min(100, Number(value) || 0))
+
+const getStageWordTotal = (job) => Number(job?.progress?.stageWordTotal || 0)
+const getStageWordCompleted = (job) => {
+  const total = getStageWordTotal(job)
+  const completed = Number(job?.progress?.stageWordCompleted || 0)
+  return total ? Math.max(0, Math.min(total, completed)) : 0
+}
+
+const formatWordProgress = (job) => {
+  const total = getStageWordTotal(job)
+  if (!total) return job?.wordCount ? `共 ${job.wordCount} 词` : '等待开始'
+  return `${getStageWordCompleted(job)} / ${total}`
+}
+
+const getStageLabel = (job) => String(job?.progress?.stageLabel || job?.progress?.currentStep || '').trim() || '等待处理'
 
 const cleanMeaning = (value) => String(value || '')
   .replace(/\u00a0/g, ' ')
@@ -282,6 +302,7 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
   const [busy, setBusy] = useState(false)
   const [queueBusy, setQueueBusy] = useState(false)
   const [downloadingJobId, setDownloadingJobId] = useState('')
+  const [cancelingJobId, setCancelingJobId] = useState('')
   const [status, setStatus] = useState('输入访问密码后即可生成练习包。')
   const [jobs, setJobs] = useState([])
   const [selectedTypes, setSelectedTypes] = useState(DEFAULT_QUESTION_TYPES)
@@ -303,12 +324,12 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
   )
 
   const activeJobs = useMemo(
-    () => jobs.filter((job) => ['queued', 'processing'].includes(job.status)),
+    () => jobs.filter((job) => ['queued', 'processing', 'canceling'].includes(job.status)),
     [jobs],
   )
 
-  const latestJob = jobs[0] || null
-  const progressPercent = Math.max(0, Math.min(100, Number(latestJob?.progress?.percent || 0)))
+  const latestJob = activeJobs[0] || jobs[0] || null
+  const progressPercent = clampPercent(latestJob?.progress?.percent || 0)
   const previewType = selectedTypeMeta.find((item) => item.key === activePreviewType) || selectedTypeMeta[0] || QUESTION_TYPE_OPTIONS[0]
   const previewModel = useMemo(
     () => buildPreviewModel(previewType?.key, usableRows),
@@ -433,7 +454,28 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
     }
   }
 
+  const cancelJob = async (job) => {
+    if (!job?.id || ['completed', 'failed', 'canceled'].includes(job.status)) return
+    setCancelingJobId(job.id)
+    try {
+      const data = await apiJson(`/api/gen/jobs?id=${encodeURIComponent(job.id)}`, {
+        method: 'DELETE',
+      })
+      if (data?.job) {
+        setJobs((current) => current.map((item) => (item.id === data.job.id ? data.job : item)))
+      }
+      setStatus(job.status === 'queued' ? '任务已从服务器队列移除。' : '已向服务器发送停止请求。')
+      loadJobs(true)
+    } catch (error) {
+      setStatus(error.message || '停止任务失败。')
+    } finally {
+      setCancelingJobId('')
+    }
+  }
+
   const progressLabel = latestJob?.progress?.message || (activeJobs.length ? '服务器正在处理队列…' : '当前没有进行中的队列任务。')
+  const stageLabel = latestJob ? getStageLabel(latestJob) : '等待处理'
+  const stageWordProgress = latestJob ? formatWordProgress(latestJob) : '—'
 
   if (!authChecked) {
     return (
@@ -537,6 +579,9 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
             {jobs.length ? jobs.map((job) => {
               const meta = STATUS_META[job.status] || STATUS_META.queued
               const Icon = meta.icon
+              const jobPercent = clampPercent(job.progress?.percent || 0)
+              const canCancel = ['queued', 'processing', 'canceling'].includes(job.status)
+              const stopping = cancelingJobId === job.id || job.status === 'canceling'
               return (
                 <article className={`genQueueItem ${job.status}`} key={job.id}>
                   <div className="genQueueHead">
@@ -544,17 +589,38 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
                       <strong>{job.fileName.replace(/\.[^.]+$/, '')}</strong>
                       <span>{meta.label} · {job.questionTypes?.length || 0} 题型</span>
                     </div>
-                    <Icon size={16} className={job.status === 'processing' ? 'spin' : ''} />
+                    <Icon size={16} className={['processing', 'canceling'].includes(job.status) ? 'spin' : ''} />
                   </div>
                   <p>{job.progress?.message || job.error || '等待处理。'}</p>
+                  <div className="genQueueMetrics">
+                    <span>{getStageLabel(job)}</span>
+                    <strong>词条 {formatWordProgress(job)}</strong>
+                    <em>{jobPercent}%</em>
+                  </div>
+                  <div className="genQueueProgressBar" aria-hidden="true">
+                    <span style={{ width: `${jobPercent}%` }} />
+                  </div>
                   <div className="genQueueFoot">
                     <small>{formatTime(job.updatedAt || job.createdAt)}</small>
-                    {job.status === 'completed' ? (
-                      <button type="button" onClick={() => downloadJob(job)} disabled={downloadingJobId === job.id}>
+                    <div className="genQueueActions">
+                      {canCancel ? (
+                        <button
+                          className="genQueueStop"
+                          type="button"
+                          onClick={() => cancelJob(job)}
+                          disabled={stopping}
+                        >
+                          {stopping ? <Loader2 className="spin" size={14} /> : <Square size={13} />}
+                          {job.status === 'queued' ? '移除' : '停止'}
+                        </button>
+                      ) : null}
+                      {job.status === 'completed' ? (
+                        <button type="button" onClick={() => downloadJob(job)} disabled={downloadingJobId === job.id}>
                         {downloadingJobId === job.id ? <Loader2 className="spin" size={14} /> : <ArrowDownToLine size={14} />}
                         下载
                       </button>
-                    ) : null}
+                      ) : null}
+                    </div>
                   </div>
                 </article>
               )
@@ -601,14 +667,15 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
             <strong>{progressPercent}%</strong>
           </div>
           <div>
-            <small>最近成品</small>
-            <strong>{latestJob?.exportFileName || '等待生成'}</strong>
+            <small>词条进度</small>
+            <strong>{stageWordProgress}</strong>
           </div>
         </div>
 
         <div className="genQueueBanner">
           <RefreshCw size={15} className={activeJobs.length ? 'spin' : ''} />
           <span>{progressLabel}</span>
+          {latestJob ? <strong>{stageLabel} · {stageWordProgress}</strong> : null}
         </div>
 
         <div className="genPreviewRail">

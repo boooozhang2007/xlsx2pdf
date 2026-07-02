@@ -1038,6 +1038,12 @@ button:disabled {
   background: rgba(254, 242, 242, 0.88);
 }
 
+.genQueueItem.canceling,
+.genQueueItem.canceled {
+  border-color: rgba(249, 115, 22, 0.22);
+  background: rgba(255, 247, 237, 0.9);
+}
+
 .genQueueHead,
 .genQueueFoot {
   display: flex;
@@ -1065,6 +1071,60 @@ button:disabled {
   margin: 0;
 }
 
+.genQueueMetrics {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.genQueueMetrics span,
+.genQueueMetrics strong,
+.genQueueMetrics em {
+  min-width: 0;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.genQueueMetrics span {
+  overflow: hidden;
+  color: #475569;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.genQueueMetrics strong {
+  color: #0f172a;
+  font-weight: 900;
+}
+
+.genQueueMetrics em {
+  color: #2563eb;
+  font-style: normal;
+  font-weight: 900;
+}
+
+.genQueueProgressBar {
+  position: relative;
+  overflow: hidden;
+  height: 7px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.22);
+}
+
+.genQueueProgressBar span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #2563eb 0%, #38bdf8 100%);
+}
+
+.genQueueActions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .genQueueFoot button {
   display: inline-flex;
   align-items: center;
@@ -1076,6 +1136,15 @@ button:disabled {
   padding: 6px 10px;
   font-size: 11px;
   font-weight: 900;
+}
+
+.genQueueStop {
+  background: rgba(15, 23, 42, 0.08) !important;
+  color: #334155 !important;
+}
+
+.genQueueStop:disabled {
+  opacity: 0.72;
 }
 
 .genPreviewStage {
@@ -1106,6 +1175,7 @@ button:disabled {
 .genQueueBanner {
   display: inline-flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
   width: fit-content;
   border: 1px solid rgba(15, 23, 42, 0.08);
@@ -1115,6 +1185,12 @@ button:disabled {
   padding: 8px 12px;
   font-size: 12px;
   font-weight: 850;
+}
+
+.genQueueBanner strong {
+  color: #0f172a;
+  font-size: 12px;
+  font-weight: 900;
 }
 
 .genPreviewRail {
