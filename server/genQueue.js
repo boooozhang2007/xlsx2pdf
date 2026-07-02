@@ -1,7 +1,7 @@
 import crypto from 'node:crypto'
 import { waitUntil } from '@vercel/functions'
 import { generateWorksheetArchive } from './genEngine.js'
-import { createGetUrl, getObjectBuffer, getObjectJson, listObjects, putObject } from './r2.js'
+import { createGetUrl, deleteObject, getObjectJson, listObjects, putObject } from './r2.js'
 
 const JOB_PREFIX = 'worksheet-jobs'
 const STALE_PROCESSING_MS = 1000 * 60 * 8
@@ -182,11 +182,14 @@ const findNextProcessableJob = async () => {
 
 const processSingleJob = async (job) => {
   if (!job || TERMINAL_STATUSES.has(job.status) || job.status === 'canceling') return
-  const payload = await readJobPayload(job.id)
+  const latestJob = await readLatestJobState(job.id)
+  if (!latestJob || TERMINAL_STATUSES.has(latestJob.status) || latestJob.status === 'canceling') return
+  const payload = await readJobPayload(job.id).catch(() => null)
+  if (!payload) return
   let liveJob = await writeJob({
-    ...job,
+    ...latestJob,
     status: 'processing',
-    startedAt: job.startedAt || now(),
+    startedAt: latestJob.startedAt || now(),
     error: '',
   })
   const ensureNotCanceled = async () => {
@@ -203,7 +206,7 @@ const processSingleJob = async (job) => {
     const result = await generateWorksheetArchive({
       rows: payload.rows || [],
       fileName: payload.fileName || '词组练习.xlsx',
-      questionTypes: payload.questionTypes || job.questionTypes,
+      questionTypes: payload.questionTypes || latestJob.questionTypes,
       onProgress: async (event) => {
         await ensureNotCanceled()
         liveJob = await writeJob({
@@ -234,14 +237,14 @@ const processSingleJob = async (job) => {
       wordCount: result.wordCount,
       downloadSize: result.buffer.length,
       progress: {
-        ...(liveJob.progress || createProgress(buildTotalSteps(job.questionTypes || []), job.wordCount || 0)),
-        completedSteps: buildTotalSteps(job.questionTypes || []),
+        ...(liveJob.progress || createProgress(buildTotalSteps(latestJob.questionTypes || []), latestJob.wordCount || 0)),
+        completedSteps: buildTotalSteps(latestJob.questionTypes || []),
         currentStep: '打包完成',
         message: '练习包已生成，可直接下载。',
         percent: 100,
         stageLabel: '打包完成',
-        stageWordTotal: job.wordCount || result.wordCount || 0,
-        stageWordCompleted: job.wordCount || result.wordCount || 0,
+        stageWordTotal: latestJob.wordCount || result.wordCount || 0,
+        stageWordCompleted: latestJob.wordCount || result.wordCount || 0,
       },
     })
   } catch (error) {
@@ -253,7 +256,7 @@ const processSingleJob = async (job) => {
         canceledAt: now(),
         error: '',
         progress: {
-          ...((latestJob && latestJob.progress) || liveJob.progress || createProgress(buildTotalSteps(job.questionTypes || []), job.wordCount || 0)),
+          ...((latestJob && latestJob.progress) || liveJob.progress || createProgress(buildTotalSteps((latestJob && latestJob.questionTypes) || job.questionTypes || []), (latestJob && latestJob.wordCount) || job.wordCount || 0)),
           currentStep: '已取消',
           message: '任务已取消。',
         },
@@ -266,7 +269,7 @@ const processSingleJob = async (job) => {
       failedAt: now(),
       error: error.message || '生成失败。',
       progress: {
-        ...(liveJob.progress || createProgress(buildTotalSteps(job.questionTypes || []), job.wordCount || 0)),
+        ...(liveJob.progress || createProgress(buildTotalSteps(latestJob.questionTypes || []), latestJob.wordCount || 0)),
         message: error.message || '生成失败。',
       },
     })
@@ -374,6 +377,20 @@ export const cancelWorksheetJob = async (jobId) => {
     },
   })
   return summarizeJob(cancelingJob)
+}
+
+export const deleteWorksheetJob = async (jobId) => {
+  const job = await readJob(jobId).catch(() => null)
+  if (!job) return { ok: true }
+  if (['processing', 'canceling'].includes(job.status)) {
+    const error = new Error('请先停止该任务，再删除记录。')
+    error.statusCode = 409
+    throw error
+  }
+
+  const keys = await listObjects({ prefix: `${jobPrefix(jobId)}/` })
+  await Promise.all(keys.map((item) => deleteObject({ key: item.Key }).catch(() => null)))
+  return { ok: true }
 }
 
 export const getWorksheetJobDownload = async (jobId) => {

@@ -9,6 +9,8 @@ import {
   RefreshCw,
   Square,
   Sparkles,
+  Trash2,
+  Upload,
   XCircle,
 } from 'lucide-react'
 import { apiJson, fetchDownloadRequest } from './api'
@@ -234,20 +236,26 @@ const buildPreviewModel = (typeKey, rows) => {
       return {
         title: '同义词匹配',
         subtitle: '预览显示成块状配对题，方便看清版式密度。',
-        items: mapItem((row, index) => ({
-          no: index + 1,
-          lines: [`${index + 1}. ${cleanWord(row.english)}          ${'abcde'[index] || 'a'}. ${previewRelation(row.english, 'synonym')}`],
-        })),
+        items: mapItem((row, index) => {
+          const left = `${index + 1}. ${cleanWord(row.english)}`.padEnd(22, ' ')
+          return {
+            no: index + 1,
+            lines: [`${left}${'abcde'[index] || 'a'}. ${previewRelation(row.english, 'synonym')}`],
+          }
+        }),
         answers: sampleRows.map((row, index) => `${index + 1}.${index + 1}-${'abcde'[index] || 'a'}`),
       }
     case '八_反义词匹配':
       return {
         title: '反义词匹配',
         subtitle: '右栏预览即时切成反义词版式。',
-        items: mapItem((row, index) => ({
-          no: index + 1,
-          lines: [`${index + 1}. ${cleanWord(row.english)}          ${'abcde'[index] || 'a'}. ${previewRelation(row.english, 'antonym')}`],
-        })),
+        items: mapItem((row, index) => {
+          const left = `${index + 1}. ${cleanWord(row.english)}`.padEnd(22, ' ')
+          return {
+            no: index + 1,
+            lines: [`${left}${'abcde'[index] || 'a'}. ${previewRelation(row.english, 'antonym')}`],
+          }
+        }),
         answers: sampleRows.map((row, index) => `${index + 1}.${index + 1}-${'abcde'[index] || 'a'}`),
       }
     case '九_判断正误':
@@ -256,7 +264,7 @@ const buildPreviewModel = (typeKey, rows) => {
         subtitle: '预览展示 T / F 判断句式。',
         items: mapItem((row, index) => ({
           no: index + 1,
-          lines: [`( ) ${cleanWord(row.english)} is connected with ${cleanMeaning(row.chinese)}.`],
+          lines: [`(   ) ${cleanWord(row.english)} is connected with ${cleanMeaning(row.chinese)}.`],
         })),
         answers: sampleRows.map((row, index) => `${index + 1}.${index % 2 === 0 ? 'T' : 'F'}`),
       }
@@ -303,10 +311,10 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
   const [queueBusy, setQueueBusy] = useState(false)
   const [downloadingJobId, setDownloadingJobId] = useState('')
   const [cancelingJobId, setCancelingJobId] = useState('')
+  const [deletingJobId, setDeletingJobId] = useState('')
   const [status, setStatus] = useState('输入访问密码后即可生成练习包。')
   const [jobs, setJobs] = useState([])
   const [selectedTypes, setSelectedTypes] = useState(DEFAULT_QUESTION_TYPES)
-  const [activePreviewType, setActivePreviewType] = useState(DEFAULT_QUESTION_TYPES[0])
 
   const usableRows = useMemo(
     () => rows.filter((row) => String(row?.english || '').trim()),
@@ -330,11 +338,6 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
 
   const latestJob = activeJobs[0] || jobs[0] || null
   const progressPercent = clampPercent(latestJob?.progress?.percent || 0)
-  const previewType = selectedTypeMeta.find((item) => item.key === activePreviewType) || selectedTypeMeta[0] || QUESTION_TYPE_OPTIONS[0]
-  const previewModel = useMemo(
-    () => buildPreviewModel(previewType?.key, usableRows),
-    [previewType, usableRows],
-  )
 
   const loadJobs = async (silent = false) => {
     if (!silent) setQueueBusy(true)
@@ -371,11 +374,6 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
     return () => window.clearInterval(timer)
   }, [authenticated, activeJobs.length])
 
-  useEffect(() => {
-    if (selectedTypes.includes(activePreviewType)) return
-    setActivePreviewType(selectedTypes[0] || QUESTION_TYPE_OPTIONS[0].key)
-  }, [activePreviewType, selectedTypes])
-
   const login = async (event) => {
     event.preventDefault()
     setLoginError('')
@@ -394,13 +392,9 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
 
   const toggleType = (key) => {
     setSelectedTypes((current) => {
-      const next = current.includes(key)
+      return current.includes(key)
         ? current.filter((item) => item !== key)
         : [...current, key]
-      if (next.length && (!current.includes(key) || activePreviewType === key)) {
-        setActivePreviewType(current.includes(key) ? next[0] : key)
-      }
-      return next
     })
   }
 
@@ -473,6 +467,22 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
     }
   }
 
+  const deleteJob = async (job) => {
+    if (!job?.id || ['processing', 'canceling'].includes(job.status)) return
+    setDeletingJobId(job.id)
+    try {
+      await apiJson(`/api/gen/jobs?id=${encodeURIComponent(job.id)}&intent=delete`, {
+        method: 'DELETE',
+      })
+      setJobs((current) => current.filter((item) => item.id !== job.id))
+      setStatus('队列记录及对应文件已删除。')
+    } catch (error) {
+      setStatus(error.message || '删除队列记录失败。')
+    } finally {
+      setDeletingJobId('')
+    }
+  }
+
   const progressLabel = latestJob?.progress?.message || (activeJobs.length ? '服务器正在处理队列…' : '当前没有进行中的队列任务。')
   const stageLabel = latestJob ? getStageLabel(latestJob) : '等待处理'
   const stageWordProgress = latestJob ? formatWordProgress(latestJob) : '—'
@@ -514,56 +524,38 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
 
   return (
     <section className="ttsWorkspace genWorkspace">
-      <aside className="ttsControls genControls">
-        <div className="panelBlock">
-          <div className="blockTitle">
-            <Sparkles size={17} />
-            <span>题型设置</span>
-          </div>
-          <div className="genMetaGrid genMetaCompact">
-            <div>
-              <small>当前文件</small>
-              <strong>{fileName}</strong>
-            </div>
-            <div>
-              <small>工作表</small>
-              <strong>{activeSheetName || '示例数据'}</strong>
-            </div>
-            <div>
-              <small>词条</small>
-              <strong>{usableRows.length}</strong>
-            </div>
-            <div>
-              <small>LLM</small>
-              <strong>{llmTypeCount}</strong>
-            </div>
+      <section className="ttsStage genStatusStage">
+        <div className="stageHeader genStageHeader genStatusHeader">
+          <div>
+            <span className="eyebrow">Server Queue</span>
+            <h2>练习任务</h2>
+            <p className="genStageSubtitle">左侧集中查看服务器队列、单词进度和当前处理状态。</p>
           </div>
         </div>
 
-        <div className="panelBlock">
-          <div className="blockTitle">
-            <FileText size={17} />
-            <span>选择题型</span>
+        <div className="statStrip genStatStrip">
+          <div>
+            <small>队列中</small>
+            <strong>{activeJobs.length}</strong>
           </div>
-          <div className="questionTypeGrid compact">
-            {QUESTION_TYPE_OPTIONS.map((item) => {
-              const active = selectedTypes.includes(item.key)
-              return (
-                <label className={`questionTypeCard compact${active ? ' active' : ''}`} key={item.key}>
-                  <input
-                    className="questionTypeInput"
-                    type="checkbox"
-                    checked={active}
-                    onChange={() => toggleType(item.key)}
-                  />
-                  <span className="questionTypeMark" aria-hidden="true" />
-                  <strong>{item.title}</strong>
-                  {item.needsLlm ? <em>LLM</em> : null}
-                  <span>{item.description}</span>
-                </label>
-              )
-            })}
+          <div>
+            <small>已完成</small>
+            <strong>{jobs.filter((job) => job.status === 'completed').length}</strong>
           </div>
+          <div>
+            <small>当前进度</small>
+            <strong>{progressPercent}%</strong>
+          </div>
+          <div>
+            <small>词条进度</small>
+            <strong>{stageWordProgress}</strong>
+          </div>
+        </div>
+
+        <div className="genQueueBanner">
+          <RefreshCw size={15} className={activeJobs.length ? 'spin' : ''} />
+          <span>{progressLabel}</span>
+          {latestJob ? <strong>{stageLabel} · {stageWordProgress}</strong> : null}
         </div>
 
         <div className="panelBlock genQueuePanel">
@@ -582,6 +574,8 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
               const jobPercent = clampPercent(job.progress?.percent || 0)
               const canCancel = ['queued', 'processing', 'canceling'].includes(job.status)
               const stopping = cancelingJobId === job.id || job.status === 'canceling'
+              const canDelete = !['processing', 'canceling'].includes(job.status)
+              const deleting = deletingJobId === job.id
               return (
                 <article className={`genQueueItem ${job.status}`} key={job.id}>
                   <div className="genQueueHead">
@@ -614,11 +608,22 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
                           {job.status === 'queued' ? '移除' : '停止'}
                         </button>
                       ) : null}
+                      {canDelete ? (
+                        <button
+                          className="genQueueDelete"
+                          type="button"
+                          onClick={() => deleteJob(job)}
+                          disabled={deleting}
+                        >
+                          {deleting ? <Loader2 className="spin" size={14} /> : <Trash2 size={14} />}
+                          删除
+                        </button>
+                      ) : null}
                       {job.status === 'completed' ? (
                         <button type="button" onClick={() => downloadJob(job)} disabled={downloadingJobId === job.id}>
-                        {downloadingJobId === job.id ? <Loader2 className="spin" size={14} /> : <ArrowDownToLine size={14} />}
-                        下载
-                      </button>
+                          {downloadingJobId === job.id ? <Loader2 className="spin" size={14} /> : <ArrowDownToLine size={14} />}
+                          下载
+                        </button>
                       ) : null}
                     </div>
                   </div>
@@ -631,100 +636,78 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
         </div>
 
         <p className="statusLine genStatusLine">{status}</p>
-      </aside>
-
-      <section className="previewStage genPreviewStage">
-        <div className="stageHeader genStageHeader">
-          <div>
-            <span className="eyebrow">实时预览</span>
-            <h2>{previewModel.title}</h2>
-            <p className="genStageSubtitle">{previewModel.subtitle}</p>
-          </div>
-          <div className="stageActions">
-            <button
-              className="exportButton genExportButton"
-              type="button"
-              onClick={generateArchive}
-              disabled={busy || !usableRows.length || !selectedTypes.length}
-            >
-              {busy ? <Loader2 className="spin" size={18} /> : <ArrowDownToLine size={18} />}
-              提交队列
-            </button>
-          </div>
-        </div>
-
-        <div className="statStrip genStatStrip">
-          <div>
-            <small>队列中</small>
-            <strong>{activeJobs.length}</strong>
-          </div>
-          <div>
-            <small>已完成</small>
-            <strong>{jobs.filter((job) => job.status === 'completed').length}</strong>
-          </div>
-          <div>
-            <small>当前进度</small>
-            <strong>{progressPercent}%</strong>
-          </div>
-          <div>
-            <small>词条进度</small>
-            <strong>{stageWordProgress}</strong>
-          </div>
-        </div>
-
-        <div className="genQueueBanner">
-          <RefreshCw size={15} className={activeJobs.length ? 'spin' : ''} />
-          <span>{progressLabel}</span>
-          {latestJob ? <strong>{stageLabel} · {stageWordProgress}</strong> : null}
-        </div>
-
-        <div className="genPreviewRail">
-          {selectedTypeMeta.map((item) => (
-            <button
-              key={item.key}
-              className={`genPreviewChip${activePreviewType === item.key ? ' active' : ''}`}
-              type="button"
-              onClick={() => setActivePreviewType(item.key)}
-            >
-              {item.title}
-            </button>
-          ))}
-        </div>
-
-        <div className="genPreviewCanvas">
-          <div className="genPreviewPaper">
-            <div className="genPreviewPaperHeader">
-              <span>{previewModel.title}</span>
-              <small>{fileName.replace(/\.[^.]+$/, '') || 'worksheet-preview'}.pdf</small>
-            </div>
-            <div className="genPreviewPaperBody">
-              {previewModel.items.map((item) => (
-                <article className="genPreviewQuestion" key={`${previewType.key}-${item.no}`}>
-                  <strong>{item.no}.</strong>
-                  <div>
-                    {item.lines.map((line) => (
-                      <p key={line}>{line}</p>
-                    ))}
-                  </div>
-                </article>
-              ))}
-            </div>
-            <div className="genPreviewPageNumber">1</div>
-          </div>
-
-          <aside className="genAnswerPanel">
-            <div className="genAnswerPanelHeader">
-              <strong>答案预览</strong>
-              <span>{previewType.title}</span>
-            </div>
-            <div className="genAnswerList">
-              {previewModel.answers.map((answer) => (
-                <p key={answer}>{answer}</p>
-              ))}
-            </div>
-          </aside>
-        </div>
       </section>
+
+      <aside className="ttsControls genControls genConfigStage">
+        <div className="panelBlock">
+          <div className="blockTitle">
+            <Sparkles size={17} />
+            <span>提交配置</span>
+          </div>
+          <p className="genConfigCopy">右侧只保留题型选择和提交入口，提交后任务会进入左侧服务器队列。</p>
+          <button
+            className="exportButton genExportButton"
+            type="button"
+            onClick={generateArchive}
+            disabled={busy || !usableRows.length || !selectedTypes.length}
+          >
+            {busy ? <Loader2 className="spin" size={18} /> : <Upload size={18} />}
+            提交队列
+          </button>
+          <div className="genMetaGrid genMetaCompact">
+            <div>
+              <small>当前文件</small>
+              <strong>{fileName}</strong>
+            </div>
+            <div>
+              <small>工作表</small>
+              <strong>{activeSheetName || '示例数据'}</strong>
+            </div>
+            <div>
+              <small>词条</small>
+              <strong>{usableRows.length}</strong>
+            </div>
+            <div>
+              <small>LLM</small>
+              <strong>{llmTypeCount}</strong>
+            </div>
+            <div>
+              <small>题型数</small>
+              <strong>{selectedTypes.length}</strong>
+            </div>
+            <div>
+              <small>任务状态</small>
+              <strong>{activeJobs.length ? '处理中' : '可提交'}</strong>
+            </div>
+          </div>
+        </div>
+
+        <div className="panelBlock">
+          <div className="blockTitle">
+            <FileText size={17} />
+            <span>选择题型</span>
+          </div>
+          <div className="questionTypeGrid compact">
+            {QUESTION_TYPE_OPTIONS.map((item) => {
+              const active = selectedTypes.includes(item.key)
+              return (
+                <label className={`questionTypeCard compact${active ? ' active' : ''}`} key={item.key}>
+                  <input
+                    className="questionTypeInput"
+                    type="checkbox"
+                    checked={active}
+                    onChange={() => toggleType(item.key)}
+                  />
+                  <span className="questionTypeMark" aria-hidden="true" />
+                  <strong>{item.title}</strong>
+                  {item.needsLlm ? <em>LLM</em> : null}
+                  <span>{item.description}</span>
+                </label>
+              )
+            })}
+          </div>
+        </div>
+      </aside>
     </section>
   )
 }

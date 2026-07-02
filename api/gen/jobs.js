@@ -1,5 +1,5 @@
 import { readJsonBody, rejectMethod, requireSession, sendJson } from '../../server/auth.js'
-import { cancelWorksheetJob, listWorksheetJobs, scheduleWorksheetJobQueue, submitWorksheetJob } from '../../server/genQueue.js'
+import { cancelWorksheetJob, deleteWorksheetJob, listWorksheetJobs, scheduleWorksheetJobQueue, submitWorksheetJob } from '../../server/genQueue.js'
 import { ALL_QUESTION_TYPE_KEYS } from '../../shared/worksheetTypes.js'
 
 export default async function handler(req, res) {
@@ -19,8 +19,13 @@ export default async function handler(req, res) {
       const url = new URL(req.url, `https://${req.headers.host || 'localhost'}`)
       const body = req.headers['content-length'] ? await readJsonBody(req).catch(() => ({})) : {}
       const jobId = String(url.searchParams.get('id') || body.id || '').trim()
+      const intent = String(url.searchParams.get('intent') || body.intent || '').trim().toLowerCase()
       if (!jobId) {
         return sendJson(res, 400, { ok: false, error: '缺少任务 id。' })
+      }
+      if (intent === 'delete') {
+        await deleteWorksheetJob(jobId)
+        return sendJson(res, 200, { ok: true })
       }
       const job = await cancelWorksheetJob(jobId)
       return sendJson(res, 200, { ok: true, job })

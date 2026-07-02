@@ -849,11 +849,28 @@ button:disabled {
 }
 
 .genWorkspace {
-  grid-template-columns: minmax(272px, 336px) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 372px);
 }
 
 .genControls {
   gap: 14px;
+}
+
+.genStatusStage {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.genConfigStage {
+  gap: 14px;
+}
+
+.genConfigCopy {
+  margin: 0;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .genMetaCompact {
@@ -978,6 +995,10 @@ button:disabled {
   line-height: 1.45;
 }
 
+.genPreviewQuestion p {
+  white-space: pre-wrap;
+}
+
 .genStatusLine {
   min-height: 42px;
   margin-top: 2px;
@@ -985,6 +1006,11 @@ button:disabled {
 
 .genQueuePanel {
   gap: 10px;
+}
+
+.genStatusStage .genQueuePanel {
+  flex: 1;
+  min-height: 0;
 }
 
 .genQueueRefresh {
@@ -1002,7 +1028,7 @@ button:disabled {
 .genQueueList {
   display: grid;
   gap: 8px;
-  max-height: 280px;
+  max-height: 520px;
   overflow: auto;
   padding-right: 2px;
 }
@@ -1143,7 +1169,16 @@ button:disabled {
   color: #334155 !important;
 }
 
+.genQueueDelete {
+  background: rgba(239, 68, 68, 0.08) !important;
+  color: #b91c1c !important;
+}
+
 .genQueueStop:disabled {
+  opacity: 0.72;
+}
+
+.genQueueDelete:disabled {
   opacity: 0.72;
 }
 
@@ -1166,6 +1201,10 @@ button:disabled {
   min-width: 144px;
   margin-top: 0;
   padding: 0 18px;
+}
+
+.genConfigStage .genExportButton {
+  width: 100%;
 }
 
 .genStatStrip {

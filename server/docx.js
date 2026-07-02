@@ -9,10 +9,11 @@ const xmlEscape = (value) => String(value ?? '')
 
 const toTwips = (points) => Math.round(Number(points || 0) * 20)
 
-const buildRunXml = ({ text = '', bold = false, size = 12 }) => {
+const buildRunXml = ({ text = '', bold = false, size = 12, font = '' }) => {
   const safeText = String(text ?? '').replace(/\t/g, '    ')
   const runProps = [
     bold ? '<w:b/>' : '',
+    font ? `<w:rFonts w:ascii="${xmlEscape(font)}" w:hAnsi="${xmlEscape(font)}" w:cs="${xmlEscape(font)}"/>` : '',
     `<w:sz w:val="${Math.round(size * 2)}"/>`,
     `<w:szCs w:val="${Math.round(size * 2)}"/>`,
   ].join('')
@@ -23,6 +24,7 @@ const buildParagraphXml = ({
   text = '',
   bold = false,
   size = 12,
+  font = '',
   align = 'left',
   spaceBefore = 0,
   spaceAfter = 0,
@@ -44,7 +46,7 @@ const buildParagraphXml = ({
     return `<w:p><w:pPr>${paragraphProps}</w:pPr></w:p>`
   }
 
-  return `<w:p><w:pPr>${paragraphProps}</w:pPr>${buildRunXml({ text, bold, size })}</w:p>`
+  return `<w:p><w:pPr>${paragraphProps}</w:pPr>${buildRunXml({ text, bold, size, font })}</w:p>`
 }
 
 const createStylesXml = () => `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
