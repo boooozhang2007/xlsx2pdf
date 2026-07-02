@@ -325,15 +325,6 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
     [rows],
   )
 
-  const selectedTypeMeta = useMemo(
-    () => QUESTION_TYPE_OPTIONS.filter((item) => selectedTypes.includes(item.key)),
-    [selectedTypes],
-  )
-
-  const llmTypeCount = useMemo(
-    () => selectedTypeMeta.filter((item) => item.needsLlm).length,
-    [selectedTypeMeta],
-  )
   const llmModelLabelById = useMemo(
     () => new Map(llmModels.map((item) => [item.id, item.label])),
     [llmModels],
@@ -714,10 +705,6 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
             <div>
               <small>词条</small>
               <strong>{usableRows.length}</strong>
-            </div>
-            <div>
-              <small>LLM</small>
-              <strong>{llmTypeCount}</strong>
             </div>
             <div>
               <small>模型</small>
