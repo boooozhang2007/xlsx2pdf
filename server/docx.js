@@ -60,6 +60,67 @@ const buildParagraphXml = ({
   return `<w:p><w:pPr>${paragraphProps}</w:pPr>${buildRunXml({ text, bold, size, font })}</w:p>`
 }
 
+const buildTableCellXml = (cell = {}) => {
+  const value = typeof cell === 'string' ? { text: cell } : (cell || {})
+  const width = Math.max(120, Math.round(Number(value.widthTwips) || 2400))
+  const paragraphXml = buildParagraphXml({
+    text: value.text || '',
+    bold: Boolean(value.bold),
+    size: value.size || 12,
+    font: value.font || '',
+    align: value.align || 'left',
+    spaceBefore: value.spaceBefore || 0,
+    spaceAfter: value.spaceAfter || 0,
+  })
+  return [
+    '<w:tc>',
+    `<w:tcPr><w:tcW w:w="${width}" w:type="dxa"/>`,
+    '<w:tcBorders>',
+    '<w:top w:val="nil"/><w:left w:val="nil"/><w:bottom w:val="nil"/><w:right w:val="nil"/>',
+    '</w:tcBorders>',
+    '</w:tcPr>',
+    paragraphXml,
+    '</w:tc>',
+  ].join('')
+}
+
+const buildTableXml = ({ rows = [], columnWidths = [] }) => {
+  const safeColumnWidths = (columnWidths.length ? columnWidths : [2800, 3600]).map((value) => Math.max(120, Math.round(Number(value) || 2400)))
+  const totalWidth = safeColumnWidths.reduce((sum, value) => sum + value, 0)
+  const gridXml = safeColumnWidths.map((width) => `<w:gridCol w:w="${width}"/>`).join('')
+  const rowsXml = rows.map((row) => {
+    const cells = Array.isArray(row) ? row : []
+    const cellXml = safeColumnWidths.map((width, index) => buildTableCellXml({
+      ...(typeof cells[index] === 'string' ? { text: cells[index] } : (cells[index] || {})),
+      widthTwips: width,
+    })).join('')
+    return `<w:tr>${cellXml}</w:tr>`
+  }).join('')
+
+  return [
+    '<w:tbl>',
+    '<w:tblPr>',
+    '<w:tblStyle w:val="TableGrid"/>',
+    `<w:tblW w:w="${totalWidth}" w:type="dxa"/>`,
+    '<w:tblBorders>',
+    '<w:top w:val="nil"/><w:left w:val="nil"/><w:bottom w:val="nil"/><w:right w:val="nil"/>',
+    '<w:insideH w:val="nil"/><w:insideV w:val="nil"/>',
+    '</w:tblBorders>',
+    '<w:tblCellMar>',
+    '<w:top w:w="24" w:type="dxa"/><w:left w:w="36" w:type="dxa"/><w:bottom w:w="24" w:type="dxa"/><w:right w:w="36" w:type="dxa"/>',
+    '</w:tblCellMar>',
+    '</w:tblPr>',
+    `<w:tblGrid>${gridXml}</w:tblGrid>`,
+    rowsXml,
+    '</w:tbl>',
+  ].join('')
+}
+
+const buildBlockXml = (block) => {
+  if (block?.kind === 'table') return buildTableXml(block)
+  return buildParagraphXml(block || {})
+}
+
 const createStylesXml = () => `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
   <w:docDefaults>
@@ -72,7 +133,7 @@ const createStylesXml = () => `<?xml version="1.0" encoding="UTF-8" standalone="
   </w:docDefaults>
 </w:styles>`
 
-const createDocumentXml = (paragraphs) => `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+const createDocumentXml = (blocks) => `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:document
   xmlns:wpc="http://schemas.microsoft.com/office/word/2010/wordprocessingCanvas"
   xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
@@ -91,7 +152,7 @@ const createDocumentXml = (paragraphs) => `<?xml version="1.0" encoding="UTF-8" 
   xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"
   mc:Ignorable="w14 wp14">
   <w:body>
-    ${paragraphs.map(buildParagraphXml).join('')}
+    ${blocks.map(buildBlockXml).join('')}
     <w:sectPr>
       <w:pgSz w:w="11906" w:h="16838"/>
       <w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/>

@@ -818,6 +818,12 @@ const paragraph = (text, options = {}) => ({
   pageBreakBefore: options.pageBreakBefore || false,
 })
 
+const table = (rows, options = {}) => ({
+  kind: 'table',
+  rows,
+  columnWidths: options.columnWidths || [],
+})
+
 const optionLine = (options) => `    ${options.map((value, index) => `${'ABCD'[index]}. ${value}`).join('  ')}`
 const answerLine = (answers) => answers.map(([num, value]) => `${num}.${value}`).join('    ')
 
@@ -989,17 +995,15 @@ const generateMatchBlocks = (questionParagraphs, answerParagraphs, group, groupI
     }
     if (!block.length) break
     const rightWords = shuffle(block.map((pair) => pair[1]), context.rng)
-    const leftLabels = block.map((pair, index) => `${index + 1}. ${pair[0].displayEnglish}`)
-    const longestLeftLabel = Math.max(...leftLabels.map((item) => item.length), 14)
-    const tabStop = Math.min(340, Math.max(190, longestLeftLabel * 7.25 + 18))
+    const tableRows = block.map((pair, index) => ([
+      { text: `${index + 1}. ${pair[0].displayEnglish}`, size: 12 },
+      { text: `${'abcde'[index] || 'a'}. ${rightWords[index]}`, size: 12 },
+    ]))
+    questionParagraphs.push(table(tableRows, { columnWidths: [2500, 4100] }))
     questionParagraphs.push(paragraph('', { spaceAfter: 0 }))
     block.forEach((pair, index) => {
       const letter = 'abcde'[rightWords.indexOf(pair[1])] || 'a'
       questionNumber += 1
-      questionParagraphs.push(paragraph(
-        `${leftLabels[index]}\t${'abcde'[index]}. ${rightWords[index]}`,
-        { font: 'Courier New', tabs: [tabStop] },
-      ))
       answers.push([questionNumber, `${index + 1}-${letter}`])
     })
   }

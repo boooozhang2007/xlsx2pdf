@@ -373,7 +373,7 @@ export const cancelWorksheetJob = async (jobId) => {
     progress: {
       ...(job.progress || createProgress(buildTotalSteps(job.questionTypes || []), job.wordCount || 0)),
       currentStep: '正在停止',
-      message: '正在停止任务…',
+      message: '正在停止任务，请等待最后一次调用完成…',
     },
   })
   return summarizeJob(cancelingJob)
