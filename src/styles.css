@@ -849,7 +849,7 @@ button:disabled {
 }
 
 .genWorkspace {
-  grid-template-columns: minmax(0, 1fr) minmax(300px, 372px);
+  grid-template-columns: minmax(312px, 360px) minmax(0, 1fr);
 }
 
 .genControls {
@@ -871,6 +871,153 @@ button:disabled {
   color: #64748b;
   font-size: 12px;
   line-height: 1.5;
+}
+
+.genStatusHero {
+  display: grid;
+  gap: 14px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 28px;
+  background:
+    radial-gradient(circle at 100% 0%, rgba(56, 189, 248, 0.12), transparent 10rem),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(248, 250, 252, 0.94));
+  padding: 18px 18px 16px;
+  box-shadow: 0 22px 54px rgba(15, 23, 42, 0.08);
+}
+
+.genStatusHeroHead {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.genStatusHeroHead h2 {
+  margin: 4px 0 0;
+  color: #0f172a;
+  font-size: 26px;
+  font-weight: 950;
+  letter-spacing: -0.04em;
+}
+
+.genStatusChip,
+.genQueueChip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: fit-content;
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.genStatusChip.idle,
+.genQueueChip.queued {
+  background: #e2e8f0;
+  color: #475569;
+}
+
+.genStatusChip.processing,
+.genStatusChip.canceling,
+.genQueueChip.processing,
+.genQueueChip.canceling {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.genStatusChip.completed,
+.genQueueChip.completed {
+  background: #dcfce7;
+  color: #15803d;
+}
+
+.genStatusChip.canceled,
+.genQueueChip.canceled {
+  background: #ffedd5;
+  color: #c2410c;
+}
+
+.genStatusChip.failed,
+.genQueueChip.failed {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
+.genStatusHeroText {
+  margin: 0;
+  color: #334155;
+  font-size: 14px;
+  line-height: 1.6;
+  font-weight: 700;
+}
+
+.genStatusHeroMeta {
+  display: grid;
+  gap: 3px;
+}
+
+.genStatusHeroMeta span {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 850;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.genStatusHeroMeta strong {
+  color: #0f172a;
+  font-size: 18px;
+  font-weight: 900;
+}
+
+.genStatusHeroMeta em {
+  color: #2563eb;
+  font-size: 13px;
+  font-style: normal;
+  font-weight: 900;
+}
+
+.genStatusHeroBar {
+  position: relative;
+  overflow: hidden;
+  height: 10px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.2);
+}
+
+.genStatusHeroBar span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #0ea5e9 0%, #2563eb 100%);
+}
+
+.genStatusSummary {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.genStatusSummary article {
+  display: grid;
+  gap: 5px;
+  border: 1px solid rgba(15, 23, 42, 0.07);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.86);
+  padding: 12px 13px;
+}
+
+.genStatusSummary small {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 850;
+}
+
+.genStatusSummary strong {
+  color: #0f172a;
+  font-size: 16px;
+  font-weight: 950;
 }
 
 .genMetaCompact {
@@ -1028,7 +1175,7 @@ button:disabled {
 .genQueueList {
   display: grid;
   gap: 8px;
-  max-height: 520px;
+  max-height: 360px;
   overflow: auto;
   padding-right: 2px;
 }
@@ -1083,6 +1230,18 @@ button:disabled {
   color: #0f172a;
   font-size: 13px;
   font-weight: 900;
+}
+
+.genQueueMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.genQueueMeta span:not(.genQueueChip) {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 800;
 }
 
 .genQueueHead span,
@@ -1182,6 +1341,12 @@ button:disabled {
   opacity: 0.72;
 }
 
+.genQueueFoot small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .genPreviewStage {
   display: grid;
   gap: 18px;
@@ -1189,6 +1354,14 @@ button:disabled {
 
 .genStageHeader {
   align-items: center;
+}
+
+.genStatusHeader {
+  margin-bottom: -2px;
+}
+
+.genStatusHeader h2 {
+  margin: 4px 0 0;
 }
 
 .genStageSubtitle {
@@ -1205,6 +1378,26 @@ button:disabled {
 
 .genConfigStage .genExportButton {
   width: 100%;
+}
+
+.genConfigStage .blockTitle {
+  justify-content: space-between;
+}
+
+.genConfigStage .panelBlock:first-child {
+  gap: 12px;
+}
+
+.genConfigStage .questionTypeGrid.compact {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.genConfigStage .questionTypeCard {
+  min-height: 108px;
+}
+
+.genConfigStage .genMetaCompact {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .genStatStrip {
@@ -3382,6 +3575,7 @@ button:disabled {
 
   .twoCols,
   .statStrip,
+  .genStatusSummary,
   .ttsStats,
   .genMetaGrid,
   .questionTypeGrid.compact,

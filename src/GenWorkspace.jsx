@@ -335,6 +335,10 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
     () => jobs.filter((job) => ['queued', 'processing', 'canceling'].includes(job.status)),
     [jobs],
   )
+  const completedCount = useMemo(
+    () => jobs.filter((job) => job.status === 'completed').length,
+    [jobs],
+  )
 
   const latestJob = activeJobs[0] || jobs[0] || null
   const progressPercent = clampPercent(latestJob?.progress?.percent || 0)
@@ -486,6 +490,13 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
   const progressLabel = latestJob?.progress?.message || (activeJobs.length ? '服务器正在处理队列…' : '当前没有进行中的队列任务。')
   const stageLabel = latestJob ? getStageLabel(latestJob) : '等待处理'
   const stageWordProgress = latestJob ? formatWordProgress(latestJob) : '—'
+  const latestMeta = STATUS_META[latestJob?.status] || STATUS_META.queued
+  const latestStatusLabel = latestJob ? latestMeta.label : '队列空闲'
+  const statusLead = activeJobs.length
+    ? '服务器正在处理'
+    : jobs.length
+      ? '最近任务已结束'
+      : '等待首个任务'
 
   if (!authChecked) {
     return (
@@ -525,37 +536,50 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
   return (
     <section className="ttsWorkspace genWorkspace">
       <section className="ttsStage genStatusStage">
+        <div className="genStatusHero">
+          <div className="genStatusHeroHead">
+            <div>
+              <span className="eyebrow">Queue Monitor</span>
+              <h2>任务监控</h2>
+            </div>
+            <span className={`genStatusChip ${latestJob?.status || 'idle'}`}>{latestStatusLabel}</span>
+          </div>
+          <p className="genStatusHeroText">{progressLabel}</p>
+          <div className="genStatusHeroMeta">
+            <span>{statusLead}</span>
+            <strong>{stageLabel}</strong>
+            <em>{stageWordProgress}</em>
+          </div>
+          <div className="genStatusHeroBar" aria-hidden="true">
+            <span style={{ width: `${progressPercent}%` }} />
+          </div>
+        </div>
+
+        <div className="genStatusSummary">
+          <article>
+            <small>队列中</small>
+            <strong>{activeJobs.length}</strong>
+          </article>
+          <article>
+            <small>已完成</small>
+            <strong>{completedCount}</strong>
+          </article>
+          <article>
+            <small>当前进度</small>
+            <strong>{progressPercent}%</strong>
+          </article>
+          <article>
+            <small>词条进度</small>
+            <strong>{stageWordProgress}</strong>
+          </article>
+        </div>
+
         <div className="stageHeader genStageHeader genStatusHeader">
           <div>
             <span className="eyebrow">Server Queue</span>
-            <h2>练习任务</h2>
-            <p className="genStageSubtitle">左侧集中查看服务器队列、单词进度和当前处理状态。</p>
+            <h2>服务器队列</h2>
+            <p className="genStageSubtitle">保留完整任务记录，但把重点信息压缩到上面的监控卡里。</p>
           </div>
-        </div>
-
-        <div className="statStrip genStatStrip">
-          <div>
-            <small>队列中</small>
-            <strong>{activeJobs.length}</strong>
-          </div>
-          <div>
-            <small>已完成</small>
-            <strong>{jobs.filter((job) => job.status === 'completed').length}</strong>
-          </div>
-          <div>
-            <small>当前进度</small>
-            <strong>{progressPercent}%</strong>
-          </div>
-          <div>
-            <small>词条进度</small>
-            <strong>{stageWordProgress}</strong>
-          </div>
-        </div>
-
-        <div className="genQueueBanner">
-          <RefreshCw size={15} className={activeJobs.length ? 'spin' : ''} />
-          <span>{progressLabel}</span>
-          {latestJob ? <strong>{stageLabel} · {stageWordProgress}</strong> : null}
         </div>
 
         <div className="panelBlock genQueuePanel">
@@ -581,9 +605,14 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
                   <div className="genQueueHead">
                     <div>
                       <strong>{job.fileName.replace(/\.[^.]+$/, '')}</strong>
-                      <span>{meta.label} · {job.questionTypes?.length || 0} 题型</span>
+                      <span>{formatTime(job.updatedAt || job.createdAt)}</span>
                     </div>
                     <Icon size={16} className={['processing', 'canceling'].includes(job.status) ? 'spin' : ''} />
+                  </div>
+                  <div className="genQueueMeta">
+                    <span className={`genQueueChip ${job.status}`}>{meta.label}</span>
+                    <span>{job.questionTypes?.length || 0} 题型</span>
+                    <span>{formatWordProgress(job)}</span>
                   </div>
                   <p>{job.progress?.message || job.error || '等待处理。'}</p>
                   <div className="genQueueMetrics">
@@ -595,7 +624,7 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
                     <span style={{ width: `${jobPercent}%` }} />
                   </div>
                   <div className="genQueueFoot">
-                    <small>{formatTime(job.updatedAt || job.createdAt)}</small>
+                    <small>{job.exportFileName || job.fileName.replace(/\.[^.]+$/, '')}</small>
                     <div className="genQueueActions">
                       {canCancel ? (
                         <button
