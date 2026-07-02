@@ -307,7 +307,7 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
       : '先生成或恢复音频后才能创建手机链接。'
 
   useEffect(() => {
-    apiJson('/api/auth/me')
+    apiJson('/api/auth?action=me')
       .then((data) => {
         setAuthenticated(Boolean(data.authenticated))
         if (data.authenticated) setStatus('已解锁单词朗读板块。')
@@ -576,7 +576,7 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
     event.preventDefault()
     setLoginError('')
     try {
-      await apiJson('/api/auth/login', {
+      await apiJson('/api/auth?action=login', {
         method: 'POST',
         body: JSON.stringify({ password }),
       })
@@ -589,7 +589,7 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
   }
 
   const logout = async () => {
-    await apiJson('/api/auth/logout', { method: 'POST', body: JSON.stringify({}) }).catch(() => {})
+    await apiJson('/api/auth?action=logout', { method: 'POST', body: JSON.stringify({}) }).catch(() => {})
     setAuthenticated(false)
     setAudioItems([])
     setShareUrl('')

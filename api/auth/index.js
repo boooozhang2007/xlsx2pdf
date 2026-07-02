@@ -10,8 +10,7 @@ import {
 
 const getAction = (req) => {
   const url = new URL(req.url, `https://${req.headers.host || 'localhost'}`)
-  const parts = url.pathname.replace(/\/+$/g, '').split('/').filter(Boolean)
-  return parts[parts.length - 1] || ''
+  return url.searchParams.get('action') || ''
 }
 
 const handleLogin = async (req, res) => {

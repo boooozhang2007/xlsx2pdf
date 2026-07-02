@@ -328,7 +328,7 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
   }
 
   useEffect(() => {
-    apiJson('/api/auth/me')
+    apiJson('/api/auth?action=me')
       .then((data) => {
         setAuthenticated(Boolean(data.authenticated))
         if (data.authenticated) setStatus('已解锁练习生成板块。')
@@ -359,7 +359,7 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
     event.preventDefault()
     setLoginError('')
     try {
-      await apiJson('/api/auth/login', {
+      await apiJson('/api/auth?action=login', {
         method: 'POST',
         body: JSON.stringify({ password }),
       })
