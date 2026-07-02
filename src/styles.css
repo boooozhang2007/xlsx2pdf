@@ -1190,6 +1190,7 @@ button:disabled {
 .genQueueItem {
   display: grid;
   gap: 8px;
+  min-width: 0;
   border: 1px solid rgba(15, 23, 42, 0.08);
   border-radius: 16px;
   background: rgba(248, 250, 252, 0.94);
@@ -1225,11 +1226,19 @@ button:disabled {
   gap: 10px;
 }
 
+.genQueueHead > div,
+.genQueueFoot small {
+  min-width: 0;
+}
+
 .genQueueHead strong {
   display: block;
   color: #0f172a;
   font-size: 13px;
   font-weight: 900;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .genQueueMeta {
@@ -1239,9 +1248,11 @@ button:disabled {
 }
 
 .genQueueMeta span:not(.genQueueChip) {
+  min-width: 0;
   color: #64748b;
   font-size: 11px;
   font-weight: 800;
+  overflow-wrap: anywhere;
 }
 
 .genQueueHead span,
@@ -1307,11 +1318,15 @@ button:disabled {
 .genQueueActions {
   display: inline-flex;
   align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 8px;
+  max-width: 100%;
 }
 
 .genQueueFoot button {
   display: inline-flex;
+  flex: 0 0 auto;
   align-items: center;
   gap: 6px;
   border: 0;
@@ -1321,6 +1336,7 @@ button:disabled {
   padding: 6px 10px;
   font-size: 11px;
   font-weight: 900;
+  white-space: nowrap;
 }
 
 .genQueueStop {
@@ -3587,6 +3603,31 @@ button:disabled {
 
   .sectionHeaderCompact {
     flex-direction: column;
+  }
+
+  .genStatusHeader h2 {
+    font-size: clamp(22px, 9vw, 32px);
+  }
+
+  .genQueueHead,
+  .genQueueFoot,
+  .genQueueMetrics {
+    grid-template-columns: 1fr;
+    align-items: flex-start;
+  }
+
+  .genQueueHead,
+  .genQueueFoot {
+    flex-direction: column;
+  }
+
+  .genQueueActions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .genQueueFoot button {
+    min-height: 38px;
   }
 
   .compactBatchList {
