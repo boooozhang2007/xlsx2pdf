@@ -315,6 +315,8 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
   const [status, setStatus] = useState('')
   const [jobs, setJobs] = useState([])
   const [selectedTypes, setSelectedTypes] = useState(DEFAULT_QUESTION_TYPES)
+  const [llmModels, setLlmModels] = useState([])
+  const [selectedLlmModel, setSelectedLlmModel] = useState('')
 
   const usableRows = useMemo(
     () => rows.filter((row) => String(row?.english || '').trim()),
@@ -329,6 +331,10 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
   const llmTypeCount = useMemo(
     () => selectedTypeMeta.filter((item) => item.needsLlm).length,
     [selectedTypeMeta],
+  )
+  const llmModelLabelById = useMemo(
+    () => new Map(llmModels.map((item) => [item.id, item.label])),
+    [llmModels],
   )
 
   const activeJobs = useMemo(
@@ -348,6 +354,13 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
     try {
       const data = await apiJson('/api/gen/jobs', { method: 'GET' })
       setJobs(Array.isArray(data.jobs) ? data.jobs : [])
+      const models = Array.isArray(data.llmModels) ? data.llmModels : []
+      setLlmModels(models)
+      setSelectedLlmModel((current) => {
+        if (current && models.some((item) => item.id === current)) return current
+        if (data.defaultLlmModel && models.some((item) => item.id === data.defaultLlmModel)) return data.defaultLlmModel
+        return models[0]?.id || ''
+      })
     } catch (error) {
       if (!silent) setStatus(error.message || '读取队列失败。')
     } finally {
@@ -421,6 +434,7 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
           fileName,
           rows: usableRows,
           questionTypes: selectedTypes,
+          llmModel: selectedLlmModel,
         }),
       })
       setJobs((current) => [data.job, ...current.filter((job) => job.id !== data.job.id)])
@@ -491,6 +505,7 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
   const stageWordProgress = latestJob ? formatWordProgress(latestJob) : '—'
   const latestMeta = STATUS_META[latestJob?.status] || STATUS_META.queued
   const latestStatusLabel = latestJob ? latestMeta.label : '队列空闲'
+  const activeLlmOption = llmModels.find((item) => item.id === selectedLlmModel) || llmModels[0] || null
   const statusLead = activeJobs.length
     ? '服务器正在处理'
     : jobs.length
@@ -609,6 +624,7 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
                   <div className="genQueueMeta">
                     <span className={`genQueueChip ${job.status}`}>{meta.label}</span>
                     <span>{job.questionTypes?.length || 0} 题型</span>
+                    {job.llmModel ? <span>{llmModelLabelById.get(job.llmModel) || job.llmModel}</span> : null}
                     <span>{formatWordProgress(job)}</span>
                   </div>
                   <p>{job.progress?.message || job.error || '等待处理。'}</p>
@@ -697,12 +713,12 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
               <strong>{llmTypeCount}</strong>
             </div>
             <div>
-              <small>题型数</small>
-              <strong>{selectedTypes.length}</strong>
+              <small>模型</small>
+              <strong>{activeLlmOption?.label || '未配置'}</strong>
             </div>
             <div>
-              <small>任务状态</small>
-              <strong>{activeJobs.length ? '处理中' : '可提交'}</strong>
+              <small>题型数</small>
+              <strong>{selectedTypes.length}</strong>
             </div>
           </div>
         </div>
@@ -712,6 +728,19 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
             <FileText size={17} />
             <span>选择题型</span>
           </div>
+          {llmModels.length ? (
+            <div className="field fullField">
+              <span>LLM 模型</span>
+              <select
+                value={selectedLlmModel}
+                onChange={(event) => setSelectedLlmModel(event.target.value)}
+              >
+                {llmModels.map((item) => (
+                  <option key={item.id} value={item.id}>{item.label}</option>
+                ))}
+              </select>
+            </div>
+          ) : null}
           <div className="questionTypeGrid compact">
             {QUESTION_TYPE_OPTIONS.map((item) => {
               const active = selectedTypes.includes(item.key)

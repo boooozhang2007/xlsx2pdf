@@ -309,11 +309,74 @@ const buildStrictJsonInstruction = (requiredFields, example) => [
   `Example output item: ${JSON.stringify(example)}.`,
 ].join(' ')
 
-const getLlmConfig = () => {
+const parseLlmModelOptions = () => {
+  const raw = String(process.env.VIVI_LLM_MODELS || '').trim()
+  const legacyDefault = String(process.env.VIVI_LLM_MODEL || '').trim()
+
+  if (!raw) {
+    const fallbackId = legacyDefault || getRequiredEnv('VIVI_LLM_MODEL')
+    return [{ id: fallbackId, label: fallbackId }]
+  }
+
+  let parsedItems = []
+  try {
+    const parsed = JSON.parse(raw)
+    if (Array.isArray(parsed)) {
+      parsedItems = parsed
+    } else if (parsed && Array.isArray(parsed.models)) {
+      parsedItems = parsed.models
+    }
+  } catch {
+    parsedItems = raw.split(/[\n,]+/g)
+  }
+
+  const options = parsedItems
+    .map((item) => {
+      if (typeof item === 'string') {
+        const id = item.trim()
+        return id ? { id, label: id } : null
+      }
+      if (!item || typeof item !== 'object') return null
+      const id = String(item.id || item.model || item.value || '').trim()
+      if (!id) return null
+      const label = String(item.label || item.name || id).trim() || id
+      return { id, label }
+    })
+    .filter(Boolean)
+
+  if (!options.length) {
+    const fallbackId = legacyDefault || getRequiredEnv('VIVI_LLM_MODEL')
+    return [{ id: fallbackId, label: fallbackId }]
+  }
+
+  const deduped = []
+  const seen = new Set()
+  for (const option of options) {
+    if (seen.has(option.id)) continue
+    seen.add(option.id)
+    deduped.push(option)
+  }
+  return deduped
+}
+
+export const getAvailableLlmModels = () => parseLlmModelOptions()
+
+export const getDefaultLlmModel = () => {
+  const options = parseLlmModelOptions()
+  const preferred = String(process.env.VIVI_LLM_MODEL || '').trim()
+  if (preferred && options.some((item) => item.id === preferred)) return preferred
+  return options[0]?.id || ''
+}
+
+const getLlmConfig = (options = {}) => {
   const apiKey = getRequiredEnv('VIVI_LLM_API_KEY')
   let baseUrl = getRequiredEnv('VIVI_LLM_BASE_URL').replace(/\/+$/, '')
   if (!baseUrl.startsWith('http')) baseUrl = `https://${baseUrl}`
-  const model = getRequiredEnv('VIVI_LLM_MODEL')
+  const models = parseLlmModelOptions()
+  const requestedModel = String(options.model || '').trim()
+  const model = requestedModel && models.some((item) => item.id === requestedModel)
+    ? requestedModel
+    : getDefaultLlmModel()
   const batchSize = Number.parseInt(process.env.VIVI_LLM_BATCH_SIZE || '20', 10) || 20
   const concurrency = Math.max(1, Number.parseInt(process.env.VIVI_LLM_CONCURRENCY || '5', 10) || 5)
   return {
@@ -353,8 +416,8 @@ const extractLlmMessageContent = (data) => {
   return ''
 }
 
-const fetchLlmArray = async (payload, kind) => {
-  const { apiKey, url } = getLlmConfig()
+const fetchLlmArray = async (payload, kind, llmOptions = {}) => {
+  const { apiKey, url } = getLlmConfig(llmOptions)
   let lastError = null
   for (let attempt = 0; attempt < 5; attempt += 1) {
     try {
@@ -383,8 +446,8 @@ const fetchLlmArray = async (payload, kind) => {
   throw lastError || new Error(`${kind} 请求失败`)
 }
 
-const callLlmForLexical = async (entries) => {
-  const { model } = getLlmConfig()
+const callLlmForLexical = async (entries, llmOptions = {}) => {
+  const { model } = getLlmConfig(llmOptions)
   const system = [
     'You create vocabulary metadata for Chinese middle-school students.',
     buildStrictJsonInstruction(
@@ -417,11 +480,11 @@ const callLlmForLexical = async (entries) => {
     temperature: 0,
     max_tokens: Math.max(2048, Math.min(32000, 180 * entries.length)),
   }
-  return fetchLlmArray(payload, 'LLM 词汇')
+  return fetchLlmArray(payload, 'LLM 词汇', llmOptions)
 }
 
-const callLlmForMaterials = async (entries, requireSynonym) => {
-  const { model } = getLlmConfig()
+const callLlmForMaterials = async (entries, requireSynonym, llmOptions = {}) => {
+  const { model } = getLlmConfig(llmOptions)
   let requestedFields = 'cloze_full_sentence, tf_true, tf_false'
   let rules = [
     'Rules for cloze_full_sentence: it is for a multiple-choice item whose option is the vocabulary headword, so it must contain the exact input word string once, with no inflection, plural, tense change, or added suffix.',
@@ -489,7 +552,7 @@ const callLlmForMaterials = async (entries, requireSynonym) => {
     temperature: 0,
     max_tokens: Math.max(2048, Math.min(32000, 260 * entries.length)),
   }
-  return fetchLlmArray(payload, 'LLM 题面')
+  return fetchLlmArray(payload, 'LLM 题面', llmOptions)
 }
 
 const sanitizeLexical = (raw, entry) => {
@@ -709,7 +772,7 @@ const ensureLexicalData = async (entries, context) => {
     batchSize,
     concurrency,
     kind: 'LLM 词汇',
-    callLlm: callLlmForLexical,
+    callLlm: (batch) => callLlmForLexical(batch, { model: context.llmModel }),
     sanitizeEntry: sanitizeLexical,
     onResolved: async (entry, value) => {
       const isNew = !resolvedKeys.has(entry.key)
@@ -747,7 +810,7 @@ const ensureMaterials = async (entries, context, requireSynonym) => {
     batchSize,
     concurrency,
     kind: requireSynonym ? 'LLM 同义替换题面' : 'LLM 基础题面',
-    callLlm: (batch) => callLlmForMaterials(batch, requireSynonym),
+    callLlm: (batch) => callLlmForMaterials(batch, requireSynonym, { model: context.llmModel }),
     sanitizeEntry: (raw, entry) => sanitizeMaterial(raw, entry, lexicalCache.get(entry.key), requireSynonym),
     onResolved: async (entry, value) => {
       const isNew = !resolvedKeys.has(entry.key)
@@ -1359,10 +1422,11 @@ const createCanceledError = () => {
   return error
 }
 
-const createGenerationContext = (words, exportName, selectedKeys, fileName, reportProgress, checkForCancellation) => ({
+const createGenerationContext = (words, exportName, selectedKeys, fileName, reportProgress, checkForCancellation, llmModel) => ({
   exportName,
   selectedKeys,
   wordCount: words.length,
+  llmModel: String(llmModel || '').trim(),
   rng: createSeededRng(`${fileName}|${exportName}|${words.map((word) => word.key).join('|')}`),
   lexicalCache: new Map(),
   basicMaterialCache: new Map(),
@@ -1378,6 +1442,7 @@ export const generateWorksheetArchive = async ({
   rowLimit = MAX_EXPORT_ROWS,
   onProgress,
   onShouldCancel,
+  llmModel,
 }) => {
   const checkForCancellation = async () => {
     if (typeof onShouldCancel === 'function' && await onShouldCancel()) throw createCanceledError()
@@ -1394,7 +1459,7 @@ export const generateWorksheetArchive = async ({
   if (!selectedKeys.length) throw new Error('请至少选择一个题型')
 
   const exportName = sanitizeExportName(`${String(fileName || '词组练习').replace(/\.[^.]+$/, '')} 练习包`)
-  const context = createGenerationContext(words, exportName, selectedKeys, fileName, report, checkForCancellation)
+  const context = createGenerationContext(words, exportName, selectedKeys, fileName, report, checkForCancellation, llmModel || getDefaultLlmModel())
   const groups = chunkGroups(words)
   const needsLexical = selectedKeys.some((key) => LLM_REQUIRED_KEYS.has(key))
 

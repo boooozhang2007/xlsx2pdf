@@ -1,5 +1,6 @@
 import { readJsonBody, rejectMethod, requireSession, sendJson } from '../../server/auth.js'
 import { cancelWorksheetJob, deleteWorksheetJob, listWorksheetJobs, scheduleWorksheetJobQueue, submitWorksheetJob } from '../../server/genQueue.js'
+import { getAvailableLlmModels, getDefaultLlmModel } from '../../server/genEngine.js'
 import { ALL_QUESTION_TYPE_KEYS } from '../../shared/worksheetTypes.js'
 
 export default async function handler(req, res) {
@@ -12,7 +13,12 @@ export default async function handler(req, res) {
       if (jobs.some((job) => ['queued', 'processing'].includes(job.status))) {
         scheduleWorksheetJobQueue()
       }
-      return sendJson(res, 200, { ok: true, jobs })
+      return sendJson(res, 200, {
+        ok: true,
+        jobs,
+        llmModels: getAvailableLlmModels(),
+        defaultLlmModel: getDefaultLlmModel(),
+      })
     }
 
     if (req.method === 'DELETE') {
@@ -45,6 +51,7 @@ export default async function handler(req, res) {
       rows,
       fileName: body.fileName || body.title || '词组练习.xlsx',
       questionTypes,
+      llmModel: body.llmModel || getDefaultLlmModel(),
     })
     scheduleWorksheetJobQueue()
     return sendJson(res, 200, { ok: true, job })

@@ -32,7 +32,7 @@
 - 支持一次性勾选全部 11 个题型并导出 ZIP
 - 生成请求会先提交到服务端队列，刷新页面后仍可继续查看任务状态与下载结果
 - 队列状态与 ZIP 成品依赖现有 R2 配置持久化
-- 依赖 LLM 的题型会读取服务端环境变量中的 `VIVI_LLM_API_KEY`、`VIVI_LLM_BASE_URL`、`VIVI_LLM_MODEL`
+- 依赖 LLM 的题型会读取服务端环境变量中的 `VIVI_LLM_API_KEY`、`VIVI_LLM_BASE_URL`，并支持在后端预设多个 `VIVI_LLM_MODELS` 供前端切换
 
 ## 本地运行
 
@@ -64,7 +64,8 @@ AZURE_SPEECH_KEY=Azure Speech 资源密钥
 AZURE_SPEECH_REGION=Azure Speech 区域，例如 eastus
 VIVI_LLM_API_KEY=练习生成所用 LLM API key
 VIVI_LLM_BASE_URL=练习生成所用 LLM base URL，例如 https://your-provider.example
-VIVI_LLM_MODEL=练习生成所用模型名
+VIVI_LLM_MODEL=默认模型名（兼容旧配置，也可作为多模型默认值）
+VIVI_LLM_MODELS=可选，多个模型选项；支持 JSON，例如 [{"id":"gpt-4.1-mini","label":"GPT 4.1 Mini"},{"id":"gpt-4.1","label":"GPT 4.1"}]
 VIVI_LLM_BATCH_SIZE=可选，默认 20
 VIVI_LLM_CONCURRENCY=可选，默认 5
 R2_ENDPOINT=https://<accountid>.r2.cloudflarestorage.com
