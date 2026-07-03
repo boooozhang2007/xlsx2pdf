@@ -1,7 +1,6 @@
 import { readJsonBody, rejectMethod, requireSession, sendJson } from '../../server/auth.js'
 import { cancelWorksheetJob, deleteWorksheetJob, listWorksheetJobs, scheduleWorksheetJobQueue, submitWorksheetJob } from '../../server/genQueue.js'
 import { getAvailableLlmModels, getDefaultLlmModel } from '../../server/genEngine.js'
-import { isLlmCacheEnabled } from '../../server/llmCache.js'
 import { ALL_QUESTION_TYPE_KEYS } from '../../shared/worksheetTypes.js'
 
 export default async function handler(req, res) {
@@ -19,7 +18,6 @@ export default async function handler(req, res) {
         jobs,
         llmModels: getAvailableLlmModels(),
         defaultLlmModel: getDefaultLlmModel(),
-        llmCacheAvailable: isLlmCacheEnabled(),
       })
     }
 
@@ -54,7 +52,6 @@ export default async function handler(req, res) {
       fileName: body.fileName || body.title || '词组练习.xlsx',
       questionTypes,
       llmModel: body.llmModel || getDefaultLlmModel(),
-      reuseLlmCache: body.reuseLlmCache !== false,
     })
     scheduleWorksheetJobQueue()
     return sendJson(res, 200, { ok: true, job })

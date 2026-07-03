@@ -6,7 +6,6 @@ import { PDFDocument, rgb } from 'pdf-lib'
 import fontkit from '@pdf-lib/fontkit'
 import { createZipBuffer } from './zip.js'
 import { createDocxBuffer } from './docx.js'
-import { createLlmCacheKey, readLlmCacheJsonValues, writeLlmCacheJsonValues } from './llmCache.js'
 import { ALL_QUESTION_TYPE_KEYS, QUESTION_TYPE_OPTIONS } from '../shared/worksheetTypes.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -48,11 +47,6 @@ const TRANSLATION_MARGINS = { left: 90, right: 90, top: 72, bottom: 72 }
 const QUESTION_TYPE_MAP = new Map(QUESTION_TYPE_OPTIONS.map((item) => [item.key, item]))
 const LEXICAL_QUESTION_KEYS = new Set(['一_释义匹配', '三_同义替换', '六_同义反义辨析', '七_同义词匹配', '八_反义词匹配'])
 const BASIC_MATERIAL_QUESTION_KEYS = new Set(['二_选择题', '九_判断正误'])
-const CACHE_SCOPE_NAMES = {
-  lexical: 'lexical-v2',
-  basicMaterial: 'basic-material-v2',
-  synonymMaterial: 'synonym-material-v2',
-}
 
 let cjkFontBytesPromise = null
 
@@ -749,86 +743,6 @@ const createLlmResolutionError = (kind, unresolved) => {
   return error
 }
 
-const buildBaseCacheFingerprint = (entry) => JSON.stringify({
-  word: entry.displayEnglish,
-  meaning: entry.plainChinese,
-})
-
-const buildCacheFingerprint = (cacheKind, entry) => {
-  if (cacheKind === 'synonymMaterial') {
-    return JSON.stringify({
-      word: entry.displayEnglish,
-      meaning: entry.plainChinese,
-      requiredSynonym: normalizeRelationTerm(entry.requiredSynonym || ''),
-    })
-  }
-  return buildBaseCacheFingerprint(entry)
-}
-
-const toCacheValue = (cacheKind, value) => {
-  if (cacheKind === 'lexical') {
-    return {
-      definition_en: value.definitionEn,
-      synonym: value.synonym,
-      antonym: value.antonym,
-    }
-  }
-  if (cacheKind === 'synonymMaterial') {
-    return {
-      synonym: value.synonym,
-      synonym_original: value.synonymOriginal,
-      synonym_rewrite_blank: value.synonymRewriteBlank,
-    }
-  }
-  return {
-    cloze_sentence: value.clozeSentence,
-    tf_true: value.tfTrue,
-    tf_false: value.tfFalse,
-  }
-}
-
-const loadPersistentCacheEntries = async ({
-  entries,
-  context,
-  cacheKind,
-  sanitizeEntry,
-  onResolved,
-}) => {
-  const uniqueEntries = dedupeEntriesByKey(entries)
-  const keyedEntries = uniqueEntries.map((entry) => ({
-    entry,
-    cacheKey: createLlmCacheKey({
-      scope: CACHE_SCOPE_NAMES[cacheKind] || cacheKind,
-      model: context.llmModel,
-      fingerprint: buildCacheFingerprint(cacheKind, entry),
-    }),
-  }))
-  const cacheKeyByEntry = new Map(keyedEntries.map((item) => [item.entry.key, item.cacheKey]))
-  const cachedValues = await readLlmCacheJsonValues(keyedEntries.map((item) => item.cacheKey))
-  const missingEntries = []
-  let cacheHitCount = 0
-
-  for (const item of keyedEntries) {
-    const cachedValue = cachedValues.get(item.cacheKey)
-    if (!cachedValue || typeof cachedValue !== 'object') {
-      missingEntries.push(item.entry)
-      continue
-    }
-    try {
-      const didResolve = await onResolved(item.entry, sanitizeEntry(cachedValue, item.entry))
-      if (didResolve !== false) cacheHitCount += 1
-    } catch {
-      missingEntries.push(item.entry)
-    }
-  }
-
-  return {
-    cacheHitCount,
-    cacheKeyByEntry,
-    missingEntries,
-  }
-}
-
 const resolveResponseItems = async (entries, responseItems, sanitizeEntry, onResolved) => {
   const byId = new Map()
   responseItems.forEach((item) => {
@@ -980,69 +894,29 @@ const ensureLexicalData = async (entries, context) => {
   })
   const resolvedKeys = new Set()
   const stageLabel = '预热 LLM 词汇关系'
-  const pendingCacheWrites = new Map()
-  const loadedCache = context.reuseLlmCache
-    ? await loadPersistentCacheEntries({
-        entries: uncachedEntries,
-        context,
-        cacheKind: 'lexical',
-        sanitizeEntry: sanitizeLexical,
-        onResolved: async (entry, value) => {
-          const isNew = !resolvedKeys.has(entry.key)
-          if (isNew) resolvedKeys.add(entry.key)
-          context.lexicalCache.set(entry.key, value)
-          return isNew
-        },
-      })
-    : {
-        cacheHitCount: 0,
-        cacheKeyByEntry: new Map(uncachedEntries.map((entry) => [entry.key, ''])),
-        missingEntries: uncachedEntries,
-      }
-  if (loadedCache.cacheHitCount) {
-    await context.reportProgress({
-      message: `[${context.exportName}] ${stageLabel} ${loadedCache.cacheHitCount}/${uncachedEntries.length}`,
+  await resolveLlmEntries({
+    entries: uncachedEntries,
+    batchSize,
+    concurrency,
+    kind: 'LLM 词汇',
+    callLlm: (batch) => callLlmForLexical(batch, { model: context.llmModel }),
+    sanitizeEntry: sanitizeLexical,
+    onResolved: async (entry, value) => {
+      const isNew = !resolvedKeys.has(entry.key)
+      if (isNew) resolvedKeys.add(entry.key)
+      context.lexicalCache.set(entry.key, value)
+      return isNew
+    },
+    onProgress: async (resolvedCount) => context.reportProgress({
+      message: `[${context.exportName}] ${stageLabel} ${resolvedCount}/${uncachedEntries.length}`,
       currentStep: stageLabel,
       stageLabel,
-      stageWordCompleted: loadedCache.cacheHitCount,
+      stageWordCompleted: resolvedCount,
       stageWordTotal: uncachedEntries.length,
       totalWords: context.wordCount,
-    })
-  }
-  if (!loadedCache.missingEntries.length) return context.lexicalCache
-  try {
-    await resolveLlmEntries({
-      entries: loadedCache.missingEntries,
-      batchSize,
-      concurrency,
-      kind: 'LLM 词汇',
-      callLlm: (batch) => callLlmForLexical(batch, { model: context.llmModel }),
-      sanitizeEntry: sanitizeLexical,
-      onResolved: async (entry, value) => {
-        const isNew = !resolvedKeys.has(entry.key)
-        if (isNew) resolvedKeys.add(entry.key)
-        context.lexicalCache.set(entry.key, value)
-        pendingCacheWrites.set(entry.key, {
-          key: loadedCache.cacheKeyByEntry.get(entry.key),
-          value: toCacheValue('lexical', value),
-        })
-        return isNew
-      },
-      onProgress: async (resolvedCount) => context.reportProgress({
-        message: `[${context.exportName}] ${stageLabel} ${loadedCache.cacheHitCount + resolvedCount}/${uncachedEntries.length}`,
-        currentStep: stageLabel,
-        stageLabel,
-        stageWordCompleted: loadedCache.cacheHitCount + resolvedCount,
-        stageWordTotal: uncachedEntries.length,
-        totalWords: context.wordCount,
-      }),
-      onTick: context.checkForCancellation,
-    })
-  } finally {
-    if (context.reuseLlmCache && pendingCacheWrites.size) {
-      await writeLlmCacheJsonValues(Array.from(pendingCacheWrites.values()))
-    }
-  }
+    }),
+    onTick: context.checkForCancellation,
+  })
   return context.lexicalCache
 }
 
@@ -1061,70 +935,29 @@ const ensureMaterials = async (entries, context, requireSynonym) => {
   })
   const resolvedKeys = new Set()
   const stageLabel = requireSynonym ? '预热 LLM 同义替换题面材料' : '预热 LLM 基础题面材料'
-  const pendingCacheWrites = new Map()
-  const cacheKind = requireSynonym ? 'synonymMaterial' : 'basicMaterial'
-  const loadedCache = context.reuseLlmCache
-    ? await loadPersistentCacheEntries({
-        entries: uncachedEntries,
-        context,
-        cacheKind,
-        sanitizeEntry: (raw, entry) => sanitizeMaterial(raw, entry, lexicalCache.get(entry.key), requireSynonym),
-        onResolved: async (entry, value) => {
-          const isNew = !resolvedKeys.has(entry.key)
-          if (isNew) resolvedKeys.add(entry.key)
-          cache.set(entry.key, value)
-          return isNew
-        },
-      })
-    : {
-        cacheHitCount: 0,
-        cacheKeyByEntry: new Map(uncachedEntries.map((entry) => [entry.key, ''])),
-        missingEntries: uncachedEntries,
-      }
-  if (loadedCache.cacheHitCount) {
-    await context.reportProgress({
-      message: `[${context.exportName}] ${stageLabel} ${loadedCache.cacheHitCount}/${uncachedEntries.length}`,
+  await resolveLlmEntries({
+    entries: uncachedEntries,
+    batchSize,
+    concurrency,
+    kind: requireSynonym ? 'LLM 同义替换题面' : 'LLM 基础题面',
+    callLlm: (batch) => callLlmForMaterials(batch, requireSynonym, { model: context.llmModel }),
+    sanitizeEntry: (raw, entry) => sanitizeMaterial(raw, entry, lexicalCache.get(entry.key), requireSynonym),
+    onResolved: async (entry, value) => {
+      const isNew = !resolvedKeys.has(entry.key)
+      if (isNew) resolvedKeys.add(entry.key)
+      cache.set(entry.key, value)
+      return isNew
+    },
+    onProgress: async (resolvedCount) => context.reportProgress({
+      message: `[${context.exportName}] ${stageLabel} ${resolvedCount}/${uncachedEntries.length}`,
       currentStep: stageLabel,
       stageLabel,
-      stageWordCompleted: loadedCache.cacheHitCount,
+      stageWordCompleted: resolvedCount,
       stageWordTotal: uncachedEntries.length,
       totalWords: context.wordCount,
-    })
-  }
-  if (!loadedCache.missingEntries.length) return cache
-  try {
-    await resolveLlmEntries({
-      entries: loadedCache.missingEntries,
-      batchSize,
-      concurrency,
-      kind: requireSynonym ? 'LLM 同义替换题面' : 'LLM 基础题面',
-      callLlm: (batch) => callLlmForMaterials(batch, requireSynonym, { model: context.llmModel }),
-      sanitizeEntry: (raw, entry) => sanitizeMaterial(raw, entry, lexicalCache.get(entry.key), requireSynonym),
-      onResolved: async (entry, value) => {
-        const isNew = !resolvedKeys.has(entry.key)
-        if (isNew) resolvedKeys.add(entry.key)
-        cache.set(entry.key, value)
-        pendingCacheWrites.set(entry.key, {
-          key: loadedCache.cacheKeyByEntry.get(entry.key),
-          value: toCacheValue(cacheKind, value),
-        })
-        return isNew
-      },
-      onProgress: async (resolvedCount) => context.reportProgress({
-        message: `[${context.exportName}] ${stageLabel} ${loadedCache.cacheHitCount + resolvedCount}/${uncachedEntries.length}`,
-        currentStep: stageLabel,
-        stageLabel,
-        stageWordCompleted: loadedCache.cacheHitCount + resolvedCount,
-        stageWordTotal: uncachedEntries.length,
-        totalWords: context.wordCount,
-      }),
-      onTick: context.checkForCancellation,
-    })
-  } finally {
-    if (context.reuseLlmCache && pendingCacheWrites.size) {
-      await writeLlmCacheJsonValues(Array.from(pendingCacheWrites.values()))
-    }
-  }
+    }),
+    onTick: context.checkForCancellation,
+  })
   return cache
 }
 
@@ -1747,7 +1580,6 @@ const createGenerationContext = (
   llmModel,
   llmBatchSize,
   llmConcurrency,
-  reuseLlmCache,
 ) => ({
   exportName,
   selectedKeys,
@@ -1755,7 +1587,6 @@ const createGenerationContext = (
   llmModel: String(llmModel || '').trim(),
   llmBatchSize: Math.max(1, Number.parseInt(llmBatchSize, 10) || getLlmJobRuntime(llmModel).batchSize),
   llmConcurrency: Math.max(1, Number.parseInt(llmConcurrency, 10) || getLlmJobRuntime(llmModel).concurrency),
-  reuseLlmCache: Boolean(reuseLlmCache),
   rng: createSeededRng(`${fileName}|${exportName}|${words.map((word) => word.key).join('|')}`),
   lexicalCache: new Map(),
   basicMaterialCache: new Map(),
@@ -1774,7 +1605,6 @@ export const generateWorksheetArchive = async ({
   llmModel,
   llmBatchSize,
   llmConcurrency,
-  reuseLlmCache = true,
 }) => {
   const checkForCancellation = async () => {
     if (typeof onShouldCancel === 'function' && await onShouldCancel()) throw createCanceledError()
@@ -1801,7 +1631,6 @@ export const generateWorksheetArchive = async ({
     llmModel || getDefaultLlmModel(),
     llmBatchSize,
     llmConcurrency,
-    reuseLlmCache,
   )
   const groups = chunkGroups(words)
   const needsLexical = selectedKeys.some((key) => LEXICAL_QUESTION_KEYS.has(key))

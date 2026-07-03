@@ -44,7 +44,6 @@ const summarizeJob = (job) => ({
   llmConcurrency: job.llmConcurrency || 0,
   llmRateLimitRetries: job.llmRateLimitRetries || 0,
   nextAttemptAt: job.nextAttemptAt || 0,
-  reuseLlmCache: job.reuseLlmCache !== false,
   progress: job.progress || null,
   error: job.error || '',
   artifactReady: Boolean(job.artifactKey),
@@ -343,7 +342,6 @@ const processSingleJob = async (job) => {
       llmModel: payload.llmModel || latestJob.llmModel || getDefaultLlmModel(),
       llmBatchSize: payload.llmBatchSize || latestJob.llmBatchSize,
       llmConcurrency: payload.llmConcurrency || latestJob.llmConcurrency,
-      reuseLlmCache: payload.reuseLlmCache !== false && latestJob.reuseLlmCache !== false,
       onProgress: async (event) => {
         await persistProgress(progressFromEvent(liveJob, event))
       },
@@ -465,7 +463,6 @@ const processSingleJob = async (job) => {
           llmBatchSize: queuedRetryJob.llmBatchSize,
           llmConcurrency: queuedRetryJob.llmConcurrency,
           llmFallbackModels: queuedRetryJob.llmFallbackModels || [],
-          reuseLlmCache: queuedRetryJob.reuseLlmCache !== false,
         },
       })
       return
@@ -508,7 +505,7 @@ export const scheduleWorksheetJobQueue = () => {
   waitUntil(kickWorksheetJobQueue())
 }
 
-export const submitWorksheetJob = async ({ rows, fileName, questionTypes, llmModel, reuseLlmCache = true }) => {
+export const submitWorksheetJob = async ({ rows, fileName, questionTypes, llmModel }) => {
   const id = crypto.randomUUID()
   const submittedAt = now()
   const totalSteps = buildTotalSteps(questionTypes)
@@ -523,7 +520,6 @@ export const submitWorksheetJob = async ({ rows, fileName, questionTypes, llmMod
     llmConcurrency: llmRuntime.concurrency,
     llmRateLimitRetries: 0,
     nextAttemptAt: 0,
-    reuseLlmCache: reuseLlmCache !== false,
     createdAt: submittedAt,
     submittedAt,
     updatedAt: submittedAt,
@@ -547,7 +543,6 @@ export const submitWorksheetJob = async ({ rows, fileName, questionTypes, llmMod
         llmFallbackModels: job.llmFallbackModels,
         llmBatchSize: job.llmBatchSize,
         llmConcurrency: job.llmConcurrency,
-        reuseLlmCache: job.reuseLlmCache,
       },
     }),
     writeJsonObject({
