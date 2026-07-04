@@ -18,12 +18,6 @@ export const QUESTION_TYPE_OPTIONS = [
     needsLlm: true,
   },
   {
-    key: '四_乱序拼写',
-    title: '乱序拼写',
-    description: '把字母打乱后重组回正确单词。',
-    needsLlm: false,
-  },
-  {
     key: '五_缺字母填空',
     title: '缺字母填空',
     description: '保留部分字母，让学生补完整个单词。',

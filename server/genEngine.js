@@ -1097,27 +1097,6 @@ const generateSynonymReplacement = (questionParagraphs, answerParagraphs, group,
   writeAnswerBlock(answerParagraphs, `第${groupIndex + 1}组 三 同义替换 答案`, answers, 10, groupIndex > 0)
 }
 
-const generateScramble = (questionParagraphs, answerParagraphs, group, groupIndex, context) => {
-  const pool = group.filter((entry) => {
-    const core = spellingCore(entry.english)
-    return core.length >= 4 && core.length <= 10
-  })
-  const chosen = sample(pool, Math.min(10, pool.length), context.rng)
-  questionParagraphs.push(paragraph('四. Word Scramble 单词乱序拼写题', { bold: true, size: 12, spaceBefore: 6, spaceAfter: 4 }))
-  questionParagraphs.push(paragraph('Rearrange the letters to form correct words. 重新排列字母，拼写出正确单词。', { spaceAfter: 6 }))
-  const answers = []
-  chosen.forEach((entry, index) => {
-    const core = spellingCore(entry.english)
-    let letters = core.split('')
-    for (let attempt = 0; attempt < 10; attempt += 1) {
-      letters = shuffle(letters, context.rng)
-      if (letters.join('') !== core) break
-    }
-    questionParagraphs.push(paragraph(`${index + 1}. ${letters.join(' ')} → ____________  (${entry.plainChinese})`))
-    answers.push([index + 1, entry.displayEnglish])
-  })
-  writeAnswerBlock(answerParagraphs, `第${groupIndex + 1}组 四 乱序拼写 答案`, answers, 5, groupIndex > 0)
-}
 
 const generateMissingLetters = (questionParagraphs, answerParagraphs, group, groupIndex, context) => {
   const pool = group.filter((entry) => {
@@ -1125,7 +1104,7 @@ const generateMissingLetters = (questionParagraphs, answerParagraphs, group, gro
     return core.length >= 5 && core.length <= 12
   })
   const chosen = sample(pool, Math.min(10, pool.length), context.rng)
-  questionParagraphs.push(paragraph('五. Missing Letters 缺字母填空', { bold: true, size: 12, spaceBefore: 6, spaceAfter: 4 }))
+  questionParagraphs.push(paragraph('四. Missing Letters 缺字母填空', { bold: true, size: 12, spaceBefore: 6, spaceAfter: 4 }))
   questionParagraphs.push(paragraph('Fill in the missing letters and write the full word. 补全所缺字母，并写出完整单词。', { spaceAfter: 6 }))
   const answers = []
   chosen.forEach((entry, index) => {
@@ -1137,11 +1116,11 @@ const generateMissingLetters = (questionParagraphs, answerParagraphs, group, gro
     questionParagraphs.push(paragraph(`${index + 1}. ${chars.join(' ')}  (${entry.plainChinese})`))
     answers.push([index + 1, entry.displayEnglish])
   })
-  writeAnswerBlock(answerParagraphs, `第${groupIndex + 1}组 五 缺字母填空 答案`, answers, 5, groupIndex > 0)
+  writeAnswerBlock(answerParagraphs, `第${groupIndex + 1}组 四 缺字母填空 答案`, answers, 5, groupIndex > 0)
 }
 
 const generateSynAntJudge = (questionParagraphs, answerParagraphs, group, groupIndex, context) => {
-  questionParagraphs.push(paragraph('六. Synonym & Antonym 同义反义词辨析', { bold: true, size: 12, spaceBefore: 6, spaceAfter: 4 }))
+  questionParagraphs.push(paragraph('五. Synonym & Antonym 同义反义词辨析', { bold: true, size: 12, spaceBefore: 6, spaceAfter: 4 }))
   questionParagraphs.push(paragraph('Write S (synonym 同义) or A (antonym 反义) for each pair. 每组单词括号内填写S或A。', { spaceAfter: 6 }))
   const synPairs = []
   const antPairs = []
@@ -1162,7 +1141,7 @@ const generateSynAntJudge = (questionParagraphs, answerParagraphs, group, groupI
     questionParagraphs.push(paragraph(`${index + 1}. ${pair[0]} & ${pair[1]} (    )`))
     answers.push([index + 1, pair[2]])
   })
-  writeAnswerBlock(answerParagraphs, `第${groupIndex + 1}组 六 同义反义辨析 答案`, answers, 10, groupIndex > 0)
+  writeAnswerBlock(answerParagraphs, `第${groupIndex + 1}组 五 同义反义辨析 答案`, answers, 10, groupIndex > 0)
 }
 
 const generateMatchBlocks = (questionParagraphs, answerParagraphs, group, groupIndex, context, relationKey, sectionTitle, answerTitle) => {
@@ -1223,7 +1202,7 @@ const generateMatchBlocks = (questionParagraphs, answerParagraphs, group, groupI
 
 const generateTrueFalse = (questionParagraphs, answerParagraphs, group, groupIndex, context) => {
   const chosen = context.choicePlan.get(`九_判断正误:${groupIndex}`) || sample(group, Math.min(10, group.length), context.rng)
-  questionParagraphs.push(paragraph('九. True or False 判断正误', { bold: true, size: 12, spaceBefore: 6, spaceAfter: 4 }))
+  questionParagraphs.push(paragraph('八. True or False 判断正误', { bold: true, size: 12, spaceBefore: 6, spaceAfter: 4 }))
   questionParagraphs.push(paragraph('Write T (true) or F (false) for each statement. 判断下列句子的正误，正确填T，错误填F。', { spaceAfter: 6 }))
   const answers = []
   chosen.forEach((entry, index) => {
@@ -1234,7 +1213,7 @@ const generateTrueFalse = (questionParagraphs, answerParagraphs, group, groupInd
     questionParagraphs.push(paragraph(`${index + 1}. (    ) ${isTrue ? tfTrue : tfFalse}`))
     answers.push([index + 1, isTrue ? 'T' : 'F'])
   })
-  writeAnswerBlock(answerParagraphs, `第${groupIndex + 1}组 九 判断正误 答案`, answers, 10, groupIndex > 0)
+  writeAnswerBlock(answerParagraphs, `第${groupIndex + 1}组 八 判断正误 答案`, answers, 10, groupIndex > 0)
 }
 
 const createDocxParagraphs = (title) => [paragraph(title, { size: 16, bold: true, align: 'center', spaceAfter: 8 })]
@@ -1482,11 +1461,10 @@ const createNonTranslationFiles = async (questionKey, groups, context) => {
     if (questionKey === '一_释义匹配') generateMatching(questionParagraphs, answerParagraphs, group, groupIndex, context)
     if (questionKey === '二_选择题') generateMultipleChoice(questionParagraphs, answerParagraphs, group, groupIndex, context)
     if (questionKey === '三_同义替换') generateSynonymReplacement(questionParagraphs, answerParagraphs, group, groupIndex, context)
-    if (questionKey === '四_乱序拼写') generateScramble(questionParagraphs, answerParagraphs, group, groupIndex, context)
     if (questionKey === '五_缺字母填空') generateMissingLetters(questionParagraphs, answerParagraphs, group, groupIndex, context)
     if (questionKey === '六_同义反义辨析') generateSynAntJudge(questionParagraphs, answerParagraphs, group, groupIndex, context)
-    if (questionKey === '七_同义词匹配') generateMatchBlocks(questionParagraphs, answerParagraphs, group, groupIndex, context, 'synonym', '七. Synonym Matching 同义词匹配', '七 同义词匹配')
-    if (questionKey === '八_反义词匹配') generateMatchBlocks(questionParagraphs, answerParagraphs, group, groupIndex, context, 'antonym', '八. Antonym Matching 反义词匹配', '八 反义词匹配')
+    if (questionKey === '七_同义词匹配') generateMatchBlocks(questionParagraphs, answerParagraphs, group, groupIndex, context, 'synonym', '六. Synonym Matching 同义词匹配', '六 同义词匹配')
+    if (questionKey === '八_反义词匹配') generateMatchBlocks(questionParagraphs, answerParagraphs, group, groupIndex, context, 'antonym', '七. Antonym Matching 反义词匹配', '七 反义词匹配')
     if (questionKey === '九_判断正误') generateTrueFalse(questionParagraphs, answerParagraphs, group, groupIndex, context)
     processedWords += group.length
     await context.reportProgress({

@@ -191,20 +191,6 @@ const buildPreviewModel = (typeKey, rows) => {
         }),
         answers: sampleRows.map((row, index) => `${index + 1}.A ${previewRelation(row.english, 'synonym')}`),
       }
-    case '四_乱序拼写':
-      return {
-        title: '乱序拼写',
-        subtitle: '按练习页样式即时展示打乱后的字母。',
-        items: mapItem((row, index) => {
-          const core = spellingCore(row.english) || cleanWord(row.english).replace(/\s+/g, '')
-          const scrambled = core.length > 2 ? `${core.slice(1)} ${core[0]}` : core
-          return {
-            no: index + 1,
-            lines: [`${scrambled.split('').join(' ')}   ->   ____________`, `(${cleanMeaning(row.chinese)})`],
-          }
-        }),
-        answers: sampleRows.map((row, index) => `${index + 1}.${cleanWord(row.english)}`),
-      }
     case '五_缺字母填空':
       return {
         title: '缺字母填空',
