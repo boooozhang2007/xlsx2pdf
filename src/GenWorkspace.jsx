@@ -707,6 +707,10 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
               <small>题型数</small>
               <strong>{selectedTypes.length}</strong>
             </div>
+            <div>
+              <small>需 LLM</small>
+              <strong>{QUESTION_TYPE_OPTIONS.filter((t) => t.needsLlm && selectedTypes.includes(t.key)).length}</strong>
+            </div>
           </div>
         </div>
 
