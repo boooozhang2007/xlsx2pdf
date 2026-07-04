@@ -472,6 +472,7 @@ export const getLlmJobRuntime = (selectedModel = '', overrides = {}) => {
 const getLlmRetryPolicy = () => ({
   requestRetries: Math.max(1, Number.parseInt(process.env.VIVI_LLM_REQUEST_RETRIES || '3', 10) || 3),
   singleItemRetries: Math.max(1, Number.parseInt(process.env.VIVI_LLM_SINGLE_ITEM_RETRIES || '4', 10) || 4),
+  requestTimeoutMs: Math.max(5000, Number.parseInt(process.env.VIVI_LLM_REQUEST_TIMEOUT_MS || '60000', 10) || 60000),
 })
 
 const createLlmError = (message, options = {}) => Object.assign(new Error(message), options)
@@ -515,9 +516,11 @@ const extractLlmMessageContent = (data) => {
 
 const fetchLlmArray = async (payload, kind, llmOptions = {}) => {
   const { apiKey, url } = getLlmConfig(llmOptions)
-  const { requestRetries } = getLlmRetryPolicy()
+  const { requestRetries, requestTimeoutMs } = getLlmRetryPolicy()
   let lastError = null
   for (let attempt = 0; attempt < requestRetries; attempt += 1) {
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), requestTimeoutMs)
     try {
       const response = await fetch(url, {
         method: 'POST',
@@ -526,7 +529,9 @@ const fetchLlmArray = async (payload, kind, llmOptions = {}) => {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify(payload),
+        signal: controller.signal,
       })
+      clearTimeout(timeoutId)
       if (!response.ok) {
         const retryAfterMs = parseRetryAfterMs(response.headers.get('retry-after'))
         const isRateLimited = response.status === 429
@@ -553,8 +558,11 @@ const fetchLlmArray = async (payload, kind, llmOptions = {}) => {
         })
       }
     } catch (error) {
-      lastError = error
-      if (attempt >= requestRetries - 1 || !error?.retryable) break
+      clearTimeout(timeoutId)
+      lastError = error?.name === 'AbortError'
+        ? createLlmError(`${kind} 请求超时（>${requestTimeoutMs / 1000}s）`, { retryable: true })
+        : error
+      if (attempt >= requestRetries - 1 || !lastError?.retryable || lastError?.code === 'LLM_RATE_LIMITED') break
       await sleep(500 * (attempt + 1))
     }
   }
@@ -1666,9 +1674,34 @@ export const generateWorksheetArchive = async ({
     })
   }
 
+  // Give each parallel stage its own progress-reporting context so their
+  // word counts don't overwrite each other.  Both write to a shared counter
+  // and report a single combined stageWordTotal.
+  const parallelWarmupTotal = (needsLexical ? words.length : 0) + (hasBasicWork ? uniqueBasicEntries.length : 0)
+  let lexWarmupResolved = 0
+  let basicWarmupResolved = 0
+  const parallelWarmupLabel = needsLexical && hasBasicWork ? '预热 LLM 词汇与基础材料' : needsLexical ? '预热 LLM 词汇关系' : '预热 LLM 基础题面材料'
+  const makeMergedWarmupContext = (getOwn, setOwn) => ({
+    ...context,
+    reportProgress: async (payload) => {
+      if (payload.stageWordCompleted != null) setOwn(payload.stageWordCompleted)
+      const combined = lexWarmupResolved + basicWarmupResolved
+      return context.reportProgress({
+        ...payload,
+        stageLabel: parallelWarmupLabel,
+        currentStep: parallelWarmupLabel,
+        stageWordCompleted: combined,
+        stageWordTotal: parallelWarmupTotal,
+        message: `[${exportName}] ${parallelWarmupLabel} ${combined}/${parallelWarmupTotal}`,
+      })
+    },
+  })
+  const lexicalContext = makeMergedWarmupContext(() => lexWarmupResolved, (v) => { lexWarmupResolved = v })
+  const basicContext = makeMergedWarmupContext(() => basicWarmupResolved, (v) => { basicWarmupResolved = v })
+
   await Promise.all([
-    needsLexical ? ensureLexicalData(words, context) : Promise.resolve(),
-    hasBasicWork ? ensureMaterials(uniqueBasicEntries, context, false) : Promise.resolve(),
+    needsLexical ? ensureLexicalData(words, lexicalContext) : Promise.resolve(),
+    hasBasicWork ? ensureMaterials(uniqueBasicEntries, basicContext, false) : Promise.resolve(),
   ])
 
   // Emit step completions sequentially to keep stepDelta counts correct.

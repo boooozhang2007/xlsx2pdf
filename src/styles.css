@@ -859,7 +859,223 @@ button:disabled {
 .genStatusStage {
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 16px;
+  min-width: 0;
+}
+
+/* ── Live job card ─────────────────────────────────────── */
+
+.genLiveCard {
+  display: grid;
+  gap: 14px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 28px;
+  background:
+    radial-gradient(circle at 100% 0%, rgba(56, 189, 248, 0.10), transparent 10rem),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(248, 250, 252, 0.96));
+  padding: 20px 22px 18px;
+  box-shadow: 0 18px 48px rgba(15, 23, 42, 0.07);
+}
+
+.genLiveTop {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.genLivePercent {
+  color: #2563eb;
+  font-size: 22px;
+  font-weight: 950;
+  letter-spacing: -0.04em;
+  line-height: 1;
+}
+
+.genLiveStage {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.genLiveIcon {
+  flex-shrink: 0;
+  color: #2563eb;
+}
+
+.genLiveIcon.done {
+  color: #16a34a;
+}
+
+.genLiveIcon.idle {
+  color: #94a3b8;
+}
+
+.genLiveStageName {
+  color: #0f172a;
+  font-size: 16px;
+  font-weight: 900;
+  line-height: 1.2;
+}
+
+.genLiveWords {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+}
+
+.genLiveWordNum {
+  color: #0f172a;
+  font-size: 36px;
+  font-weight: 950;
+  letter-spacing: -0.05em;
+  line-height: 1;
+}
+
+.genLiveWordSep {
+  color: #94a3b8;
+  font-size: 24px;
+  font-weight: 400;
+  line-height: 1;
+}
+
+.genLiveWordTotal {
+  color: #64748b;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 1;
+}
+
+.genLiveWordLabel {
+  margin-left: 6px;
+  color: #94a3b8;
+  font-size: 13px;
+  font-weight: 700;
+  align-self: flex-end;
+  padding-bottom: 2px;
+}
+
+.genLiveMessage {
+  margin: 0;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.5;
+  font-weight: 600;
+}
+
+/* ── Compact stats row ─────────────────────────────────── */
+
+.genStatsRow {
+  display: flex;
+  gap: 10px;
+}
+
+.genStatItem {
+  flex: 1;
+  display: grid;
+  gap: 4px;
+  border: 1px solid rgba(15, 23, 42, 0.07);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.86);
+  padding: 10px 14px;
+}
+
+.genStatItem span {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 850;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.genStatItem strong {
+  color: #0f172a;
+  font-size: 20px;
+  font-weight: 950;
+  letter-spacing: -0.04em;
+  line-height: 1;
+}
+
+/* ── Queue item (redesigned) ───────────────────────────── */
+
+.genQueueHeadLeft {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+}
+
+.genQueueHeadLeft strong {
+  display: block;
+  color: #0f172a;
+  font-size: 13px;
+  font-weight: 900;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+
+.genQueueTime {
+  color: #94a3b8;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.genQueueStageRow {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.genQueueStageIcon {
+  flex-shrink: 0;
+  color: #64748b;
+}
+
+.genQueueStageName {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #334155;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.genQueueWordCount {
+  color: #2563eb;
+  font-size: 11px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.genQueuePct {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.genQueueError {
+  margin: 0;
+  color: #b91c1c;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.genQueueFootName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
   min-width: 0;
 }
 
