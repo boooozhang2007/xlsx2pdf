@@ -24,6 +24,7 @@ const jobPrefix = (jobId) => `${JOB_PREFIX}/${jobId}`
 const jobStateKey = (jobId) => `${jobPrefix(jobId)}/job.json`
 const jobPayloadKey = (jobId) => `${jobPrefix(jobId)}/payload.json`
 const jobArtifactKey = (jobId) => `${jobPrefix(jobId)}/artifact.zip`
+const jobCacheKey = (jobId) => `${jobPrefix(jobId)}/cache.json`
 
 const summarizeJob = (job) => ({
   id: job.id,
@@ -338,6 +339,7 @@ const processSingleJob = async (job) => {
 
   try {
     await ensureNotCanceled(true)
+    const initialCache = await getObjectJson({ key: jobCacheKey(job.id) }).catch(() => null)
     const result = await generateWorksheetArchive({
       rows: payload.rows || [],
       fileName: payload.fileName || '词组练习.xlsx',
@@ -349,6 +351,10 @@ const processSingleJob = async (job) => {
         await persistProgress(progressFromEvent(liveJob, event))
       },
       onShouldCancel: shouldCancel,
+      initialCache,
+      onCacheCheckpoint: async (cache) => {
+        await writeJsonObject({ key: jobCacheKey(job.id), value: cache })
+      },
     })
 
     await ensureNotCanceled(true)
@@ -379,6 +385,8 @@ const processSingleJob = async (job) => {
         stageWordCompleted: latestJob.wordCount || result.wordCount || 0,
       },
     })
+    // Job finished — checkpoint is no longer needed.
+    await deleteObject({ key: jobCacheKey(job.id) }).catch(() => {})
   } catch (error) {
     if (error?.code === 'JOB_CANCELED') {
       const latestJob = await readLatestJobState(job.id)
@@ -394,6 +402,7 @@ const processSingleJob = async (job) => {
           message: '任务已取消。',
         },
       })
+      await deleteObject({ key: jobCacheKey(job.id) }).catch(() => {})
       return
     }
     if (error?.code === 'LLM_RATE_LIMITED') {
@@ -411,6 +420,7 @@ const processSingleJob = async (job) => {
             message: '任务已取消。',
           },
         })
+        await deleteObject({ key: jobCacheKey(job.id) }).catch(() => {})
         return
       }
       const retryBaseJob = {
@@ -431,6 +441,7 @@ const processSingleJob = async (job) => {
             message: `LLM 请求连续触发限流，已达到最大自动重试次数（${MAX_RATE_LIMIT_REQUEUES}）。`,
           },
         })
+        await deleteObject({ key: jobCacheKey(job.id) }).catch(() => {})
         return
       }
 
@@ -481,6 +492,7 @@ const processSingleJob = async (job) => {
         message: error.message || '生成失败。',
       },
     })
+    await deleteObject({ key: jobCacheKey(job.id) }).catch(() => {})
   }
 }
 

@@ -916,14 +916,17 @@ const ensureLexicalData = async (entries, context) => {
       context.lexicalCache.set(entry.key, value)
       return isNew
     },
-    onProgress: async (resolvedCount) => context.reportProgress({
-      message: `[${context.exportName}] ${stageLabel} ${resolvedCount}/${uncachedEntries.length}`,
-      currentStep: stageLabel,
-      stageLabel,
-      stageWordCompleted: resolvedCount,
-      stageWordTotal: uncachedEntries.length,
-      totalWords: context.wordCount,
-    }),
+    onProgress: async (resolvedCount) => {
+      await context.reportProgress({
+        message: `[${context.exportName}] ${stageLabel} ${resolvedCount}/${uncachedEntries.length}`,
+        currentStep: stageLabel,
+        stageLabel,
+        stageWordCompleted: resolvedCount,
+        stageWordTotal: uncachedEntries.length,
+        totalWords: context.wordCount,
+      })
+      if (context.onCacheCheckpoint && resolvedCount % 50 === 0) await context.onCacheCheckpoint()
+    },
     onTick: context.checkForCancellation,
   })
   return context.lexicalCache
@@ -957,14 +960,17 @@ const ensureMaterials = async (entries, context, requireSynonym) => {
       cache.set(entry.key, value)
       return isNew
     },
-    onProgress: async (resolvedCount) => context.reportProgress({
-      message: `[${context.exportName}] ${stageLabel} ${resolvedCount}/${uncachedEntries.length}`,
-      currentStep: stageLabel,
-      stageLabel,
-      stageWordCompleted: resolvedCount,
-      stageWordTotal: uncachedEntries.length,
-      totalWords: context.wordCount,
-    }),
+    onProgress: async (resolvedCount) => {
+      await context.reportProgress({
+        message: `[${context.exportName}] ${stageLabel} ${resolvedCount}/${uncachedEntries.length}`,
+        currentStep: stageLabel,
+        stageLabel,
+        stageWordCompleted: resolvedCount,
+        stageWordTotal: uncachedEntries.length,
+        totalWords: context.wordCount,
+      })
+      if (context.onCacheCheckpoint && resolvedCount % 50 === 0) await context.onCacheCheckpoint()
+    },
     onTick: context.checkForCancellation,
   })
   return cache
@@ -1593,6 +1599,8 @@ export const generateWorksheetArchive = async ({
   llmModel,
   llmBatchSize,
   llmConcurrency,
+  initialCache = null,
+  onCacheCheckpoint = null,
 }) => {
   const checkForCancellation = async () => {
     if (typeof onShouldCancel === 'function' && await onShouldCancel()) throw createCanceledError()
@@ -1620,6 +1628,27 @@ export const generateWorksheetArchive = async ({
     llmBatchSize,
     llmConcurrency,
   )
+
+  // Restore any caches saved by a previous attempt of this job.
+  if (initialCache?.lexical && typeof initialCache.lexical === 'object') {
+    for (const [k, v] of Object.entries(initialCache.lexical)) context.lexicalCache.set(k, v)
+  }
+  if (initialCache?.basic && typeof initialCache.basic === 'object') {
+    for (const [k, v] of Object.entries(initialCache.basic)) context.basicMaterialCache.set(k, v)
+  }
+  if (initialCache?.synonym && typeof initialCache.synonym === 'object') {
+    for (const [k, v] of Object.entries(initialCache.synonym)) context.synonymMaterialCache.set(k, v)
+  }
+
+  // Called after each batch of LLM results resolves — persists progress so a
+  // re-queued retry can pick up where this attempt left off.
+  context.onCacheCheckpoint = typeof onCacheCheckpoint === 'function'
+    ? () => onCacheCheckpoint({
+        lexical: Object.fromEntries(context.lexicalCache),
+        basic: Object.fromEntries(context.basicMaterialCache),
+        synonym: Object.fromEntries(context.synonymMaterialCache),
+      }).catch(() => {})
+    : null
   const groups = chunkGroups(words)
   const needsLexical = selectedKeys.some((key) => LEXICAL_QUESTION_KEYS.has(key))
   const needsBasicMaterials = selectedKeys.some((key) => BASIC_MATERIAL_QUESTION_KEYS.has(key))
