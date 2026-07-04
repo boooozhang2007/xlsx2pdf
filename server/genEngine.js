@@ -871,6 +871,7 @@ const resolveLlmEntries = async ({
     for (const result of singleResults) {
       if (result?.error) {
         if (result.error.code === 'LLM_GENERATION_INCOMPLETE') throw result.error
+        if (result.error.code === 'LLM_RATE_LIMITED') throw result.error
         unresolvedSingles.push({ entry: result.entry, error: result.error })
         continue
       }
@@ -1153,7 +1154,8 @@ const generateSynAntJudge = (questionParagraphs, answerParagraphs, group, groupI
   let pairs = [...sample(antPairs, Math.min(12, antPairs.length), context.rng), ...sample(synPairs, Math.min(18, synPairs.length), context.rng)]
   const rest = [...antPairs, ...synPairs].filter((pair) => !pairs.includes(pair))
   while (pairs.length < 30 && rest.length) pairs.push(rest.shift())
-  while (pairs.length && pairs.length < 30) pairs.push(pairs[pairs.length % Math.max(1, pairs.length)])
+  const origPairsLen = pairs.length
+  while (origPairsLen && pairs.length < 30) pairs.push(pairs[pairs.length % origPairsLen])
   pairs = shuffle(pairs.slice(0, 30), context.rng)
   const answers = []
   pairs.forEach((pair, index) => {
@@ -1662,6 +1664,9 @@ export const generateWorksheetArchive = async ({
     uniqueBasicEntries = Array.from(new Map(basicEntries.map((entry) => [entry.key, entry])).values())
   }
 
+  // Lexical data and basic materials are independent — run them in parallel.
+  // Synonym materials must wait for lexical (buildSynonymChoicePlan reads lexicalCache).
+  const hasBasicWork = needsBasicMaterials && uniqueBasicEntries.length > 0
   if (needsLexical) {
     await report({
       message: `[${exportName}] 预热 LLM 词汇关系`,
@@ -1671,7 +1676,25 @@ export const generateWorksheetArchive = async ({
       stageWordTotal: words.length,
       stageWordCompleted: 0,
     })
-    await ensureLexicalData(words, context)
+  }
+  if (hasBasicWork) {
+    await report({
+      message: `[${exportName}] 预热 LLM 基础题面材料`,
+      currentStep: '预热 LLM 基础题面材料',
+      stageLabel: '预热 LLM 基础题面材料',
+      totalWords: words.length,
+      stageWordTotal: uniqueBasicEntries.length,
+      stageWordCompleted: 0,
+    })
+  }
+
+  await Promise.all([
+    needsLexical ? ensureLexicalData(words, context) : Promise.resolve(),
+    hasBasicWork ? ensureMaterials(uniqueBasicEntries, context, false) : Promise.resolve(),
+  ])
+
+  // Emit step completions sequentially to keep stepDelta counts correct.
+  if (needsLexical) {
     await report({
       message: `[${exportName}] 词汇关系已完成`,
       currentStep: '预热 LLM 词汇关系',
@@ -1682,17 +1705,7 @@ export const generateWorksheetArchive = async ({
       stepDelta: 1,
     })
   }
-
-  if (needsBasicMaterials && uniqueBasicEntries.length) {
-    await report({
-      message: `[${exportName}] 预热 LLM 基础题面材料`,
-      currentStep: '预热 LLM 基础题面材料',
-      stageLabel: '预热 LLM 基础题面材料',
-      totalWords: words.length,
-      stageWordTotal: uniqueBasicEntries.length,
-      stageWordCompleted: 0,
-    })
-    await ensureMaterials(uniqueBasicEntries, context, false)
+  if (hasBasicWork) {
     await report({
       message: `[${exportName}] 基础题面材料已完成`,
       currentStep: '预热 LLM 基础题面材料',

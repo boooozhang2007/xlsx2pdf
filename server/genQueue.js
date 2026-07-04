@@ -70,7 +70,10 @@ const createProgress = (totalSteps, totalWords = 0) => ({
 })
 
 const buildTotalSteps = (questionTypes) => {
-  const needsLexical = questionTypes.some((key) => ['一_释义匹配', '二_选择题', '三_同义替换', '六_同义反义辨析', '七_同义词匹配', '八_反义词匹配', '九_判断正误'].includes(key))
+  // Must match the conditions in generateWorksheetArchive (genEngine.js):
+  // LEXICAL_QUESTION_KEYS = ['一_释义匹配','三_同义替换','六_同义反义辨析','七_同义词匹配','八_反义词匹配']
+  // BASIC_MATERIAL_QUESTION_KEYS = ['二_选择题','九_判断正误']
+  const needsLexical = questionTypes.some((key) => ['一_释义匹配', '三_同义替换', '六_同义反义辨析', '七_同义词匹配', '八_反义词匹配'].includes(key))
   const needsBasicMaterials = questionTypes.some((key) => ['二_选择题', '九_判断正误'].includes(key))
   const needsSynonymMaterials = questionTypes.includes('三_同义替换')
   return questionTypes.length + (needsLexical ? 1 : 0) + (needsBasicMaterials ? 1 : 0) + (needsSynonymMaterials ? 1 : 0)
