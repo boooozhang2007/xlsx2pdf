@@ -571,6 +571,9 @@ const fetchLlmArray = async (payload, kind, llmOptions = {}) => {
 
 const callLlmForLexical = async (entries, llmOptions = {}) => {
   const { model } = getLlmConfig(llmOptions)
+  const singleItemStrict = entries.length === 1
+    ? ' Single-item strict mode: make sure definition_en does not contain the target word and synonym/antonym are each a single base-form word or short phrase.'
+    : ''
   const system = [
     'You create vocabulary metadata for Chinese middle-school students.',
     buildStrictJsonInstruction(
@@ -582,6 +585,7 @@ const callLlmForLexical = async (entries, llmOptions = {}) => {
     'Rules for synonym and antonym: use very common classroom-friendly English words or short phrases, base form only, same part of speech when possible.',
     'If there is no safe, common choice, return an empty string.',
     'Avoid rare, slang, archaic, or highly technical words.',
+    singleItemStrict,
   ].join(' ')
   const payload = {
     model,
@@ -608,12 +612,14 @@ const callLlmForLexical = async (entries, llmOptions = {}) => {
 
 const callLlmForMaterials = async (entries, requireSynonym, llmOptions = {}) => {
   const { model } = getLlmConfig(llmOptions)
+  const isSingle = entries.length === 1
   let requestedFields = 'cloze_full_sentence, tf_true, tf_false'
   let rules = [
     'Rules for cloze_full_sentence: it is for a multiple-choice item whose option is the vocabulary headword, so it must contain the exact input word string once, with no inflection, plural, tense change, or added suffix.',
     'Write the sentence so that exact form is grammatical; for verbs, use patterns like can/will/to + word when needed.',
     'Do not use blanks in cloze_full_sentence.',
     'tf_true and tf_false must be complete standalone English sentences using the input word; tf_true must be clearly true, tf_false clearly false.',
+    ...(isSingle ? ['Single-item strict mode: make sure cloze_full_sentence contains the exact word field once and only once.'] : []),
   ]
   if (requireSynonym) {
     requestedFields = 'synonym, synonym_original, synonym_rewrite_full'
@@ -623,6 +629,7 @@ const callLlmForMaterials = async (entries, requireSynonym, llmOptions = {}) => 
       'If an input item provides required_synonym, you must use that exact text as synonym and also place that exact text in synonym_rewrite_full once.',
       'synonym_original must be a complete sentence using the input word naturally.',
       'synonym_rewrite_full must be a very similar complete sentence containing synonym exactly once; do not use blanks in it.',
+      ...(isSingle ? ['Single-item strict mode: choose the final synonym text first; if grammar needs an inflected form put that form in synonym; then copy that exact text unchanged into synonym_rewrite_full once and only once.'] : []),
     ]
   }
   const system = [
@@ -676,6 +683,67 @@ const callLlmForMaterials = async (entries, requireSynonym, llmOptions = {}) => 
     max_tokens: Math.max(2048, Math.min(32000, 260 * entries.length)),
   }
   return fetchLlmArray(payload, 'LLM 题面', llmOptions)
+}
+
+const callLlmForSynonymRepair = async (entry, lastRaw, llmOptions = {}) => {
+  const synonym = String(lastRaw?.synonym || '').trim()
+  const originalSentence = String(lastRaw?.synonym_original || '').trim()
+  if (!synonym || !originalSentence) return null
+  const { model } = getLlmConfig(llmOptions)
+  const payload = {
+    model,
+    messages: [
+      {
+        role: 'system',
+        content: [
+          'You repair one English synonym replacement item.',
+          'Return valid JSON only as a single object with keys: synonym_original, synonym_rewrite_full.',
+          'Keep the two sentences very similar in meaning and structure.',
+          'synonym_rewrite_full must contain the exact given synonym string once and only once.',
+          'Do not use blanks.',
+        ].join(' '),
+      },
+      {
+        role: 'user',
+        content: JSON.stringify({
+          word: entry.displayEnglish,
+          meaning: entry.plainChinese,
+          synonym,
+          synonym_original: originalSentence,
+        }),
+      },
+    ],
+    temperature: 0,
+    max_tokens: 512,
+  }
+  try {
+    const { apiKey, url } = getLlmConfig(llmOptions)
+    const { requestTimeoutMs } = getLlmRetryPolicy()
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), requestTimeoutMs)
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    })
+    clearTimeout(timeoutId)
+    if (!response.ok) return null
+    const data = JSON.parse(await response.text())
+    const content = extractLlmMessageContent(data)
+    const repaired = JSON.parse(stripCodeFence(content))
+    if (!repaired || typeof repaired !== 'object') return null
+    // Merge repair fields into lastRaw so sanitizeMaterial can re-validate
+    return {
+      ...lastRaw,
+      id: entry.key,
+      synonym,
+      synonym_original: String(repaired.synonym_original || originalSentence).trim(),
+      synonym_rewrite_full: String(repaired.synonym_rewrite_full || '').trim(),
+    }
+  } catch {
+    return null
+  }
 }
 
 const sanitizeLexical = (raw, entry) => {
@@ -782,13 +850,16 @@ const resolveSingleEntryStrict = async ({
   sanitizeEntry,
   onResolved,
   onTick,
+  repairLlm,
 }) => {
   const { singleItemRetries } = getLlmRetryPolicy()
   let lastError = null
+  let lastRaw = null
   for (let attempt = 0; attempt < singleItemRetries; attempt += 1) {
     try {
       await onTick?.()
       const responseItems = await callLlm([entry])
+      lastRaw = Array.isArray(responseItems) ? (responseItems[0] ?? null) : null
       const { unresolved, resolvedCount } = await resolveResponseItems([entry], responseItems, sanitizeEntry, onResolved)
       if (!unresolved.length) return { resolvedCount }
       lastError = unresolved[0]?.error || new Error('返回内容缺字段或格式不合法')
@@ -796,6 +867,19 @@ const resolveSingleEntryStrict = async ({
       lastError = error
     }
     if (attempt < singleItemRetries - 1) await sleep(250 * (attempt + 1))
+  }
+  // Repair fallback: when synonym sentence generation consistently fails, ask LLM
+  // to fix only the sentence structure while keeping the chosen synonym intact.
+  if (typeof repairLlm === 'function' && lastRaw) {
+    try {
+      const repairedRaw = await repairLlm(entry, lastRaw)
+      if (repairedRaw) {
+        const { unresolved, resolvedCount } = await resolveResponseItems(
+          [entry], [repairedRaw], sanitizeEntry, onResolved,
+        )
+        if (!unresolved.length) return { resolvedCount }
+      }
+    } catch { /* repair is best-effort; fall through to error */ }
   }
   if (lastError?.code === 'LLM_RATE_LIMITED') {
     lastError.failedEntry = entry.displayEnglish || entry.english || entry.key || ''
@@ -814,6 +898,7 @@ const resolveLlmEntries = async ({
   onResolved,
   onProgress,
   onTick,
+  repairLlm,
 }) => {
   const uniqueEntries = dedupeEntriesByKey(entries)
   const totalEntries = uniqueEntries.length
@@ -865,6 +950,7 @@ const resolveLlmEntries = async ({
               sanitizeEntry,
               onResolved,
               onTick,
+              repairLlm,
             }),
           }
         } catch (error) {
@@ -972,6 +1058,9 @@ const ensureMaterials = async (entries, context, requireSynonym) => {
       if (context.onCacheCheckpoint && resolvedCount % 50 === 0) await context.onCacheCheckpoint()
     },
     onTick: context.checkForCancellation,
+    repairLlm: requireSynonym
+      ? (entry, lastRaw) => callLlmForSynonymRepair(entry, lastRaw, { model: context.llmModel })
+      : null,
   })
   return cache
 }
