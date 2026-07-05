@@ -1401,7 +1401,7 @@ const generateTestPaperMatchingSection = (paragraphs, group, context, answersOut
     const distractors = uniqueDistractors(group, entry, 3, (item) => item.cleanEnglish, context.rng)
     const options = shuffle([...distractors.map((item) => item.displayEnglish), entry.displayEnglish], context.rng).slice(0, 4)
     const definition = requireGeneratedValue(context.lexicalCache.get(entry.key)?.definitionEn, '释义匹配存在缺失的 definition_en。')
-    paragraphs.push(paragraph(`( ) ${index + 1}. ${definition}`, { size: 11, spaceAfter: 1 }))
+    paragraphs.push(paragraph(`(    ) ${index + 1}. ${definition}`, { size: 11, spaceAfter: 1 }))
     paragraphs.push(paragraph(testPaperOptionLine(options), { size: 11, spaceAfter: 2 }))
     answers.push(`${index + 1}.${'ABCD'[options.indexOf(entry.displayEnglish)] || 'A'}`)
   })
@@ -1488,7 +1488,7 @@ const generateTestPaperSynAntSection = (paragraphs, group, context, answersOut) 
   paragraphs.push(paragraph('Write S (synonym) or A (antonym) in each bracket.', { size: 11, spaceAfter: 4 }))
   const answers = []
   pairs.forEach((pair, index) => {
-    paragraphs.push(paragraph(`( ) ${index + 1}. ${pair[0]} & ${pair[1]}`, { size: 11, spaceAfter: 2 }))
+    paragraphs.push(paragraph(`(    ) ${index + 1}. ${pair[0]} & ${pair[1]}`, { size: 11, spaceAfter: 2 }))
     answers.push(`${index + 1}.${pair[2]}`)
   })
   answersOut.push({ title: '五、同义反义词', lines: [answers.join('  ')] })
@@ -1528,7 +1528,7 @@ const generateTestPaperTrueFalseSection = (paragraphs, groupIndex, context, answ
     const isTrue = context.rng() >= 0.5
     const tfTrue = requireGeneratedValue(material?.tfTrue, '判断正误缺少 LLM 正确句。')
     const tfFalse = requireGeneratedValue(material?.tfFalse, '判断正误缺少 LLM 错误句。')
-    paragraphs.push(paragraph(`( ) ${index + 1}. ${isTrue ? tfTrue : tfFalse}`, { size: 11, spaceAfter: 2 }))
+    paragraphs.push(paragraph(`(    ) ${index + 1}. ${isTrue ? tfTrue : tfFalse}`, { size: 11, spaceAfter: 2 }))
     answers.push(`${index + 1}.${isTrue ? 'T' : 'F'}`)
   })
   answersOut.push({ title: '八、判断正误', lines: [answers.join('  ')] })
