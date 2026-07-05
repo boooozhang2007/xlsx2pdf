@@ -15,6 +15,7 @@ const MAX_RATE_LIMIT_DELAY_MS = Math.max(MIN_RATE_LIMIT_DELAY_MS, Number.parseIn
 const MAX_RATE_LIMIT_REQUEUES = Math.max(1, Number.parseInt(process.env.VIVI_LLM_RATE_LIMIT_MAX_REQUEUES || '8', 10) || 8)
 const CANCELABLE_STATUSES = new Set(['queued', 'processing', 'canceling'])
 const TERMINAL_STATUSES = new Set(['completed', 'failed', 'canceled'])
+const TEST_PAPER_GROUP_SIZE = 100
 
 let queueLoopPromise = null
 
@@ -70,14 +71,12 @@ const createProgress = (totalSteps, totalWords = 0) => ({
   currentQuestionType: '',
 })
 
-const buildTotalSteps = (questionTypes) => {
-  // Must match the conditions in generateWorksheetArchive (genEngine.js):
-  // LEXICAL_QUESTION_KEYS = ['一_释义匹配','三_同义替换','六_同义反义辨析','七_同义词匹配','八_反义词匹配']
-  // BASIC_MATERIAL_QUESTION_KEYS = ['二_选择题','九_判断正误']
+const buildTotalSteps = (questionTypes, wordCount = 0) => {
   const needsLexical = questionTypes.some((key) => ['一_释义匹配', '三_同义替换', '六_同义反义辨析', '七_同义词匹配', '八_反义词匹配'].includes(key))
   const needsBasicMaterials = questionTypes.some((key) => ['二_选择题', '九_判断正误'].includes(key))
   const needsSynonymMaterials = questionTypes.includes('三_同义替换')
-  return questionTypes.length + (needsLexical ? 1 : 0) + (needsBasicMaterials ? 1 : 0) + (needsSynonymMaterials ? 1 : 0)
+  const paperCount = Math.max(1, Math.ceil((Number(wordCount) || 0) / TEST_PAPER_GROUP_SIZE))
+  return paperCount + (needsLexical ? 1 : 0) + (needsBasicMaterials ? 1 : 0) + (needsSynonymMaterials ? 1 : 0)
 }
 
 const clampPercent = (value) => Math.max(0, Math.min(100, Number(value) || 0))
@@ -87,7 +86,7 @@ const percentFromSteps = (progress) => (progress.totalSteps
 
 const progressFromMessage = (job, message) => {
   const progress = {
-    ...(job.progress || createProgress(buildTotalSteps(job.questionTypes || []), job.wordCount || 0)),
+    ...(job.progress || createProgress(buildTotalSteps(job.questionTypes || [], job.wordCount || 0), job.wordCount || 0)),
     message,
     currentStep: message,
   }
@@ -123,7 +122,7 @@ const progressFromMessage = (job, message) => {
 const progressFromEvent = (job, event) => {
   if (!event || typeof event === 'string') return progressFromMessage(job, String(event || ''))
   const progress = {
-    ...(job.progress || createProgress(buildTotalSteps(job.questionTypes || []), job.wordCount || 0)),
+    ...(job.progress || createProgress(buildTotalSteps(job.questionTypes || [], job.wordCount || 0), job.wordCount || 0)),
   }
 
   if (typeof event.message === 'string') progress.message = event.message
@@ -233,7 +232,7 @@ const settleStaleCanceledJobs = async (jobs) => Promise.all((jobs || []).map(asy
     canceledAt: job.canceledAt || now(),
     error: '',
     progress: {
-      ...(job.progress || createProgress(buildTotalSteps(job.questionTypes || []), job.wordCount || 0)),
+      ...(job.progress || createProgress(buildTotalSteps(job.questionTypes || [], job.wordCount || 0), job.wordCount || 0)),
       currentStep: '已取消',
       message: '任务已取消。',
     },
@@ -375,8 +374,8 @@ const processSingleJob = async (job) => {
       downloadSize: result.buffer.length,
       nextAttemptAt: 0,
       progress: {
-        ...(liveJob.progress || createProgress(buildTotalSteps(latestJob.questionTypes || []), latestJob.wordCount || 0)),
-        completedSteps: buildTotalSteps(latestJob.questionTypes || []),
+        ...(liveJob.progress || createProgress(buildTotalSteps(latestJob.questionTypes || [], latestJob.wordCount || 0), latestJob.wordCount || 0)),
+        completedSteps: buildTotalSteps(latestJob.questionTypes || [], latestJob.wordCount || 0),
         currentStep: '打包完成',
         message: '已完成',
         percent: 100,
@@ -397,7 +396,7 @@ const processSingleJob = async (job) => {
         nextAttemptAt: 0,
         error: '',
         progress: {
-          ...((latestJob && latestJob.progress) || liveJob.progress || createProgress(buildTotalSteps((latestJob && latestJob.questionTypes) || job.questionTypes || []), (latestJob && latestJob.wordCount) || job.wordCount || 0)),
+          ...((latestJob && latestJob.progress) || liveJob.progress || createProgress(buildTotalSteps((latestJob && latestJob.questionTypes) || job.questionTypes || [], (latestJob && latestJob.wordCount) || job.wordCount || 0), (latestJob && latestJob.wordCount) || job.wordCount || 0)),
           currentStep: '已取消',
           message: '任务已取消。',
         },
@@ -415,7 +414,7 @@ const processSingleJob = async (job) => {
           nextAttemptAt: 0,
           error: '',
           progress: {
-            ...(latestJobForRetry.progress || createProgress(buildTotalSteps(latestJobForRetry.questionTypes || []), latestJobForRetry.wordCount || 0)),
+            ...(latestJobForRetry.progress || createProgress(buildTotalSteps(latestJobForRetry.questionTypes || [], latestJobForRetry.wordCount || 0), latestJobForRetry.wordCount || 0)),
             currentStep: '已取消',
             message: '任务已取消。',
           },
@@ -436,7 +435,7 @@ const processSingleJob = async (job) => {
           failedAt: now(),
           error: `LLM 请求连续触发限流，已达到最大自动重试次数（${MAX_RATE_LIMIT_REQUEUES}）。`,
           progress: {
-            ...(retryBaseJob.progress || createProgress(buildTotalSteps(retryBaseJob.questionTypes || []), retryBaseJob.wordCount || 0)),
+            ...(retryBaseJob.progress || createProgress(buildTotalSteps(retryBaseJob.questionTypes || [], retryBaseJob.wordCount || 0), retryBaseJob.wordCount || 0)),
             currentStep: '限流重试失败',
             message: `LLM 请求连续触发限流，已达到最大自动重试次数（${MAX_RATE_LIMIT_REQUEUES}）。`,
           },
@@ -460,7 +459,7 @@ const processSingleJob = async (job) => {
         llmRateLimitRetries: retryCount + 1,
         nextAttemptAt,
         progress: {
-          ...(retryBaseJob.progress || createProgress(buildTotalSteps(retryBaseJob.questionTypes || []), retryBaseJob.wordCount || 0)),
+          ...(retryBaseJob.progress || createProgress(buildTotalSteps(retryBaseJob.questionTypes || [], retryBaseJob.wordCount || 0), retryBaseJob.wordCount || 0)),
           currentStep: '等待限流恢复',
           stageLabel: '等待限流恢复',
           message: waitingMessage,
@@ -488,7 +487,7 @@ const processSingleJob = async (job) => {
       nextAttemptAt: 0,
       error: error.message || '生成失败。',
       progress: {
-        ...(liveJob.progress || createProgress(buildTotalSteps(latestJob.questionTypes || []), latestJob.wordCount || 0)),
+        ...(liveJob.progress || createProgress(buildTotalSteps(latestJob.questionTypes || [], latestJob.wordCount || 0), latestJob.wordCount || 0)),
         message: error.message || '生成失败。',
       },
     })
@@ -523,7 +522,7 @@ export const scheduleWorksheetJobQueue = () => {
 export const submitWorksheetJob = async ({ rows, fileName, questionTypes, llmModel }) => {
   const id = crypto.randomUUID()
   const submittedAt = now()
-  const totalSteps = buildTotalSteps(questionTypes)
+  const totalSteps = buildTotalSteps(questionTypes, Array.isArray(rows) ? rows.length : 0)
   const llmRuntime = getLlmJobRuntime(String(llmModel || getDefaultLlmModel()).trim())
   const job = {
     id,
@@ -594,7 +593,7 @@ export const cancelWorksheetJob = async (jobId) => {
       nextAttemptAt: 0,
       error: '',
       progress: {
-        ...(job.progress || createProgress(buildTotalSteps(job.questionTypes || []), job.wordCount || 0)),
+        ...(job.progress || createProgress(buildTotalSteps(job.questionTypes || [], job.wordCount || 0), job.wordCount || 0)),
         currentStep: '已取消',
         message: '任务已取消。',
       },
@@ -608,7 +607,7 @@ export const cancelWorksheetJob = async (jobId) => {
     nextAttemptAt: 0,
     error: '',
     progress: {
-      ...(job.progress || createProgress(buildTotalSteps(job.questionTypes || []), job.wordCount || 0)),
+      ...(job.progress || createProgress(buildTotalSteps(job.questionTypes || [], job.wordCount || 0), job.wordCount || 0)),
       currentStep: '正在停止',
       message: '正在停止任务，请等待最后一次调用完成…',
     },

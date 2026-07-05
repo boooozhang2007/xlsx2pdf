@@ -1,7 +1,7 @@
 import { readJsonBody, rejectMethod, requireSession, sendJson } from '../../server/auth.js'
 import { cancelWorksheetJob, deleteWorksheetJob, listWorksheetJobs, scheduleWorksheetJobQueue, submitWorksheetJob } from '../../server/genQueue.js'
 import { getAvailableLlmModels, getDefaultLlmModel } from '../../server/genEngine.js'
-import { ALL_QUESTION_TYPE_KEYS } from '../../shared/worksheetTypes.js'
+import { FIXED_TEST_PAPER_QUESTION_KEYS } from '../../shared/worksheetTypes.js'
 
 export default async function handler(req, res) {
   if (!['GET', 'POST', 'DELETE'].includes(req.method || '')) return rejectMethod(res, 'GET, POST, DELETE')
@@ -43,9 +43,7 @@ export default async function handler(req, res) {
       return sendJson(res, 400, { ok: false, error: 'rows 必须是数组。' })
     }
 
-    const questionTypes = Array.isArray(body.questionTypes) && body.questionTypes.length
-      ? body.questionTypes
-      : ALL_QUESTION_TYPE_KEYS
+    const questionTypes = FIXED_TEST_PAPER_QUESTION_KEYS
 
     const job = await submitWorksheetJob({
       rows,

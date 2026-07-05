@@ -62,3 +62,25 @@ export const QUESTION_TYPE_OPTIONS = [
 ]
 
 export const ALL_QUESTION_TYPE_KEYS = QUESTION_TYPE_OPTIONS.map((item) => item.key)
+
+export const FIXED_TEST_PAPER_QUESTION_KEYS = [
+  '一_释义匹配',
+  '二_选择题',
+  '三_同义替换',
+  '五_缺字母填空',
+  '六_同义反义辨析',
+  '七_同义词匹配',
+  '八_反义词匹配',
+  '九_判断正误',
+]
+
+export const FIXED_TEST_PAPER_SECTIONS = [
+  { order: 1, key: '一_释义匹配', title: '释义匹配', countLabel: '10题', needsLlm: true },
+  { order: 2, key: '二_选择题', title: '单项选择', countLabel: '10题', needsLlm: true },
+  { order: 3, key: '三_同义替换', title: '同义替换', countLabel: '10题', needsLlm: true },
+  { order: 4, key: '五_缺字母填空', title: '缺字母填空', countLabel: '10题', needsLlm: false },
+  { order: 5, key: '六_同义反义辨析', title: '同义反义辨析', countLabel: '10题', needsLlm: true },
+  { order: 6, key: '七_同义词匹配', title: '同义词匹配', countLabel: '1组5词', needsLlm: true },
+  { order: 7, key: '八_反义词匹配', title: '反义词匹配', countLabel: '1组5词', needsLlm: true },
+  { order: 8, key: '九_判断正误', title: '判断正误', countLabel: '10题', needsLlm: true },
+]

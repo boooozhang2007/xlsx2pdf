@@ -15,9 +15,9 @@ import {
 } from 'lucide-react'
 import { apiJson, fetchDownloadRequest } from './api'
 import { downloadNamedBlob } from './ttsUtils'
-import { ALL_QUESTION_TYPE_KEYS, QUESTION_TYPE_OPTIONS } from '../shared/worksheetTypes'
+import { FIXED_TEST_PAPER_QUESTION_KEYS, FIXED_TEST_PAPER_SECTIONS } from '../shared/worksheetTypes'
 
-const DEFAULT_QUESTION_TYPES = ALL_QUESTION_TYPE_KEYS
+const DEFAULT_QUESTION_TYPES = FIXED_TEST_PAPER_QUESTION_KEYS
 
 const PREVIEW_RELATIONS = {
   cheat: { synonym: 'deceive', antonym: 'be honest' },
@@ -63,10 +63,10 @@ const formatTime = (value) => {
 }
 
 const fallbackArchiveName = (fileName) => {
-  const base = String(fileName || '词组练习')
+  const base = String(fileName || '词汇测试卷')
     .replace(/\.[^.]+$/, '')
-    .trim() || '词组练习'
-  return `${base} 练习包.zip`
+    .trim() || '词汇测试卷'
+  return `${base} 测试卷包.zip`
 }
 
 const clampPercent = (value) => Math.max(0, Math.min(100, Number(value) || 0))
@@ -300,13 +300,16 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
   const [deletingJobId, setDeletingJobId] = useState('')
   const [status, setStatus] = useState('')
   const [jobs, setJobs] = useState([])
-  const [selectedTypes, setSelectedTypes] = useState(DEFAULT_QUESTION_TYPES)
   const [llmModels, setLlmModels] = useState([])
   const [selectedLlmModel, setSelectedLlmModel] = useState('')
 
   const usableRows = useMemo(
     () => rows.filter((row) => String(row?.english || '').trim()),
     [rows],
+  )
+  const paperCount = useMemo(
+    () => Math.max(1, Math.ceil(usableRows.length / 100)),
+    [usableRows.length],
   )
 
   const llmModelLabelById = useMemo(
@@ -383,26 +386,14 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
     }
   }
 
-  const toggleType = (key) => {
-    setSelectedTypes((current) => {
-      return current.includes(key)
-        ? current.filter((item) => item !== key)
-        : [...current, key]
-    })
-  }
-
   const generateArchive = async () => {
     if (!usableRows.length) {
       setStatus('当前词表没有可生成的英文词条。请先上传或调整读表设置。')
       return
     }
-    if (!selectedTypes.length) {
-      setStatus('请至少勾选一个题型。')
-      return
-    }
 
     setBusy(true)
-    setStatus(`正在提交 ${selectedTypes.length} 个题型到服务器队列…`)
+    setStatus(`正在提交固定测试卷结构到服务器队列…预计生成 ${paperCount} 份。`)
 
     try {
       const data = await apiJson('/api/gen/jobs', {
@@ -410,7 +401,7 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
         body: JSON.stringify({
           fileName,
           rows: usableRows,
-          questionTypes: selectedTypes,
+          questionTypes: DEFAULT_QUESTION_TYPES,
           llmModel: selectedLlmModel,
         }),
       })
@@ -433,7 +424,7 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
         { method: 'GET' },
       )
       downloadNamedBlob(blob, downloadedName || job.exportFileName || fallbackArchiveName(job.fileName))
-      setStatus('练习包已开始下载。')
+      setStatus('测试卷包已开始下载。')
       loadJobs(true)
     } catch (error) {
       setStatus(error.message || '下载任务失败。')
@@ -483,11 +474,6 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
   const latestMeta = STATUS_META[latestJob?.status] || STATUS_META.queued
   const latestStatusLabel = latestJob ? latestMeta.label : '队列空闲'
   const activeLlmOption = llmModels.find((item) => item.id === selectedLlmModel) || llmModels[0] || null
-  const statusLead = activeJobs.length
-    ? '服务器正在处理'
-    : jobs.length
-      ? '最近任务已结束'
-      : '等待首个任务'
 
   if (!authChecked) {
     return (
@@ -681,7 +667,7 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
             className="exportButton genExportButton"
             type="button"
             onClick={generateArchive}
-            disabled={busy || !usableRows.length || !selectedTypes.length}
+            disabled={busy || !usableRows.length}
           >
             {busy ? <Loader2 className="spin" size={18} /> : <Upload size={18} />}
             提交队列
@@ -704,12 +690,12 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
               <strong>{activeLlmOption?.label || '未配置'}</strong>
             </div>
             <div>
-              <small>题型数</small>
-              <strong>{selectedTypes.length}</strong>
+              <small>测试卷</small>
+              <strong>{paperCount} 份</strong>
             </div>
             <div>
               <small>需 LLM</small>
-              <strong>{QUESTION_TYPE_OPTIONS.filter((t) => t.needsLlm && selectedTypes.includes(t.key)).length}</strong>
+              <strong>{FIXED_TEST_PAPER_SECTIONS.filter((item) => item.needsLlm).length}</strong>
             </div>
           </div>
         </div>
@@ -717,7 +703,7 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
         <div className="panelBlock">
           <div className="blockTitle">
             <FileText size={17} />
-            <span>选择题型</span>
+            <span>固定结构</span>
           </div>
           {llmModels.length ? (
             <div className="field fullField">
@@ -733,24 +719,17 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
             </div>
           ) : null}
           <div className="questionTypeGrid compact">
-            {QUESTION_TYPE_OPTIONS.map((item) => {
-              const active = selectedTypes.includes(item.key)
+            {FIXED_TEST_PAPER_SECTIONS.map((item) => {
               return (
-                <label className={`questionTypeCard compact${active ? ' active' : ''}`} key={item.key}>
-                  <input
-                    className="questionTypeInput"
-                    type="checkbox"
-                    checked={active}
-                    onChange={() => toggleType(item.key)}
-                  />
-                  <span className="questionTypeMark" aria-hidden="true" />
+                <div className="questionTypeCard compact active fixed" key={item.key}>
                   <strong>{item.title}</strong>
                   {item.needsLlm ? <em>LLM</em> : null}
-                  <span>{item.description}</span>
-                </label>
+                  <span>第 {item.order} 题 · {item.countLabel}</span>
+                </div>
               )
             })}
           </div>
+          <p className="genQueueEmpty">按模板固定生成 8 个题段，删除原模板第 4 题后续排；每 100 个单词输出 1 份 docx 测试卷，答案附在文末。</p>
         </div>
       </aside>
     </section>
