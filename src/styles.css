@@ -216,6 +216,17 @@ button:disabled {
   color: #fff;
 }
 
+.exportStack {
+  display: grid;
+  gap: 10px;
+}
+
+.secondaryExportButton {
+  background: linear-gradient(135deg, #f8fafc, #dbeafe);
+  color: #0f172a;
+  box-shadow: 0 16px 36px rgba(37, 99, 235, 0.12);
+}
+
 .paperMock {
   position: relative;
   min-height: 520px;
@@ -446,6 +457,35 @@ button:disabled {
   grid-column: 1 / -1;
 }
 
+.fieldCheckbox {
+  gap: 10px;
+}
+
+.checkboxShell {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 43px;
+  padding: 0 12px;
+  border: 1px solid rgba(15, 23, 42, 0.11);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.82);
+}
+
+.checkboxShell input {
+  width: 18px;
+  height: 18px;
+  min-height: auto;
+  margin: 0;
+  accent-color: #2563eb;
+}
+
+.checkboxShell small {
+  color: #475569;
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .toggleLine {
   display: flex;
   align-items: center;
@@ -476,6 +516,13 @@ button:disabled {
   margin: 0 3px 2px;
   color: #64748b;
   font-size: 13px;
+  line-height: 1.5;
+}
+
+.panelNote {
+  margin: 0 0 12px;
+  color: #64748b;
+  font-size: 12px;
   line-height: 1.5;
 }
 

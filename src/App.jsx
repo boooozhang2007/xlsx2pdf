@@ -23,9 +23,12 @@ import {
   paginateRows,
 } from './utils'
 import { createPdfFromRows, downloadBlob } from './pdf'
+import { downloadNamedBlob } from './ttsUtils'
 import MobileListenPage from './MobileListenPage'
 import TtsWorkspace from './TtsWorkspace'
 import GenWorkspace from './GenWorkspace'
+import { createTemplateXlsxBlob, getTemplateWorkbookDownloadName } from './templateExport'
+import { createTemplatePdfFromRows, downloadTemplatePdfBlob } from './templatePdf'
 import './styles.css'
 
 window.XLSX = XLSX
@@ -77,7 +80,7 @@ function App() {
   const [config, setConfig] = useState(DEFAULT_CONFIG)
   const [status, setStatus] = useState('已内置 example.xlsx，可直接预览或重新上传文件。')
   const [isLoading, setIsLoading] = useState(false)
-  const [isExporting, setIsExporting] = useState(false)
+  const [exportingFormat, setExportingFormat] = useState('')
   const [previewMode, setPreviewMode] = useState('page')
   const [previewPage, setPreviewPage] = useState(1)
   const [activeTool, setActiveTool] = useState(() => getToolFromPath(window.location.pathname))
@@ -200,9 +203,9 @@ function App() {
     event.target.value = ''
   }
 
-  const handleExport = async () => {
-    setIsExporting(true)
-    setStatus('正在用访问者电脑资源生成 PDF…')
+  const handleExportStandardPdf = async () => {
+    setExportingFormat('standard-pdf')
+    setStatus(`正在生成标准 PDF${config.showPracticeGrid ? '（四线三格）' : '（空白格）'}…`)
     try {
       const pdfBlob = await createPdfFromRows(rows, config, fileName)
       downloadBlob(pdfBlob, fileName)
@@ -211,7 +214,37 @@ function App() {
       console.error(error)
       setStatus(`导出失败：${error?.message || '请重试'}`)
     } finally {
-      setIsExporting(false)
+      setExportingFormat('')
+    }
+  }
+
+  const handleExportTemplatePdf = async () => {
+    setExportingFormat('template-pdf')
+    setStatus('正在生成模板版 PDF…')
+    try {
+      const pdfBlob = await createTemplatePdfFromRows(rows, fileName)
+      downloadTemplatePdfBlob(pdfBlob, fileName)
+      setStatus('模板版 PDF 已导出。')
+    } catch (error) {
+      console.error(error)
+      setStatus(`导出失败：${error?.message || '请重试'}`)
+    } finally {
+      setExportingFormat('')
+    }
+  }
+
+  const handleExportTemplateXlsx = async () => {
+    setExportingFormat('template-xlsx')
+    setStatus('正在生成模板版 XLSX…')
+    try {
+      const xlsxBlob = await createTemplateXlsxBlob(rows, fileName)
+      downloadNamedBlob(xlsxBlob, getTemplateWorkbookDownloadName(fileName))
+      setStatus(`已导出 ${getTemplateWorkbookDownloadName(fileName)}。`)
+    } catch (error) {
+      console.error(error)
+      setStatus(`导出失败：${error?.message || '请重试'}`)
+    } finally {
+      setExportingFormat('')
     }
   }
 
@@ -221,9 +254,9 @@ function App() {
   const emptyPreviewSlots = Math.max(0, rowsPerPage - currentPreviewRows.length)
   const heroMeta = {
     pdf: {
-      pill: '自动从 example.xlsx 输出 example.pdf',
+      pill: '保留标准 PDF，并新增模板版导出',
       title: '把英汉词表变成可打印 PDF。',
-      description: '上传 XLSX，指定英语与汉语从哪一行、哪一列开始，实时查看排版，并用访问者电脑完成 PDF 生成。',
+      description: '标准版沿用你原来的 PDF 版式；同时新增人教版模板 PDF 和模板 XLSX 导出。',
       mockTitle: '英汉词表',
       mockSubTitle: `${stats.file.replace(/\.[^.]+$/, '')}.pdf`,
       mockRight: (row) => row.chinese || '—',
@@ -337,262 +370,294 @@ function App() {
       ) : activeTool === 'gen' ? (
         <GenWorkspace rows={rows} fileName={fileName} activeSheetName={activeSheetName} />
       ) : (
-      <section className="workspace">
-        <aside className="controlRail">
-          <div
-            className="dropZone"
-            onDragOver={(event) => event.preventDefault()}
-            onDrop={handleDrop}
-            onClick={() => fileInputRef.current?.click()}
-            role="button"
-            tabIndex={0}
-          >
-            <UploadCloud size={26} />
-            <strong>上传或拖入 XLSX</strong>
-            <span>{fileName}</span>
-          </div>
-
-          <div className="panelBlock">
-            <div className="blockTitle">
-              <SlidersHorizontal size={17} />
-              <span>读取设置</span>
+        <section className="workspace">
+          <aside className="controlRail">
+            <div
+              className="dropZone"
+              onDragOver={(event) => event.preventDefault()}
+              onDrop={handleDrop}
+              onClick={() => fileInputRef.current?.click()}
+              role="button"
+              tabIndex={0}
+            >
+              <UploadCloud size={26} />
+              <strong>上传或拖入 XLSX</strong>
+              <span>{fileName}</span>
             </div>
 
-            <label className="field fullField">
-              <span>
-                <FileSpreadsheet size={15} />
-                工作表
-              </span>
-              <select
-                value={activeSheetName}
-                onChange={(event) => updateConfig({ sheetName: event.target.value })}
-                disabled={!sheetNames.length}
-              >
-                {sheetNames.length ? (
-                  sheetNames.map((name) => (
-                    <option value={name} key={name}>
-                      {name}
-                    </option>
-                  ))
-                ) : (
-                  <option>示例数据</option>
-                )}
-              </select>
-            </label>
+            <div className="panelBlock">
+              <div className="blockTitle">
+                <SlidersHorizontal size={17} />
+                <span>读取设置</span>
+              </div>
 
-            <div className="twoCols">
-              <InputField
-                label="英语起始行"
-                value={config.englishRow}
-                onChange={(value) => updateConfig({ englishRow: value })}
-                icon={Rows3}
-              />
-              <InputField
-                label="英语起始列"
-                value={config.englishCol}
-                onChange={(value) => updateConfig({ englishCol: value })}
-                suffix={columnToLetter(config.englishCol)}
-                icon={Columns3}
-              />
-              <InputField
-                label="汉语起始行"
-                value={config.chineseRow}
-                onChange={(value) => updateConfig({ chineseRow: value })}
-                icon={Rows3}
-              />
-              <InputField
-                label="汉语起始列"
-                value={config.chineseCol}
-                onChange={(value) => updateConfig({ chineseCol: value })}
-                suffix={columnToLetter(config.chineseCol)}
-                icon={Columns3}
-              />
-            </div>
-          </div>
-
-          <div className="panelBlock">
-            <div className="blockTitle">
-              <FileText size={17} />
-              <span>PDF 设置</span>
-            </div>
-            <InputField
-              label="每页行数"
-              value={config.rowsPerPage}
-              min={1}
-              max={MAX_ROWS_PER_PAGE}
-              onChange={(value) => updateConfig({ rowsPerPage: value })}
-              suffix="行/页"
-              icon={Rows3}
-            />
-            <InputField
-              label="最多读取行数"
-              value={config.maxRows}
-              min={1}
-              max={10000}
-              onChange={(value) => updateConfig({ maxRows: value })}
-              suffix="行"
-            />
-          </div>
-
-          <button className="exportButton" onClick={handleExport} disabled={isExporting || !rows.length}>
-            {isExporting ? <Loader2 className="spin" size={19} /> : <ArrowDownToLine size={19} />}
-            导出 {fileName.replace(/\.[^.]+$/, '') || 'example'}.pdf
-          </button>
-
-          <p className="statusLine">{status}</p>
-        </aside>
-
-        <section className="previewStage">
-          <div className="stageHeader">
-            <div>
-              <span className="eyebrow">实时预览</span>
-              <h2>{rows.length ? `${rows.length} 条词条` : '等待数据'}</h2>
-            </div>
-            <div className="modeSwitch" role="tablist" aria-label="preview mode">
-              <button
-                className={previewMode === 'page' ? 'active' : ''}
-                onClick={() => setPreviewMode('page')}
-                type="button"
-              >
-                页面
-              </button>
-              <button
-                className={previewMode === 'table' ? 'active' : ''}
-                onClick={() => setPreviewMode('table')}
-                type="button"
-              >
-                数据
-              </button>
-            </div>
-          </div>
-
-          <div className="statStrip">
-            <div>
-              <small>文件</small>
-              <strong>{stats.file}</strong>
-            </div>
-            <div>
-              <small>工作表</small>
-              <strong>{stats.sheet}</strong>
-            </div>
-            <div>
-              <small>英语</small>
-              <strong>{stats.englishCell}</strong>
-            </div>
-            <div>
-              <small>汉语</small>
-              <strong>{stats.chineseCell}</strong>
-            </div>
-            <div>
-              <small>每页</small>
-              <strong>{stats.rowsPerPage} 行</strong>
-            </div>
-            <div>
-              <small>页数</small>
-              <strong>{stats.pages} 页</strong>
-            </div>
-          </div>
-
-          {previewMode === 'page' ? (
-            <div className="pdfCanvas">
-              <div className="pageControls">
-                <button
-                  type="button"
-                  onClick={() => setPreviewPage((page) => Math.max(1, page - 1))}
-                  disabled={safePreviewPage <= 1}
-                >
-                  上一页
-                </button>
+              <label className="field fullField">
                 <span>
-                  第 {safePreviewPage} / {previewPages.length} 页
+                  <FileSpreadsheet size={15} />
+                  工作表
                 </span>
-                <button
-                  type="button"
-                  onClick={() => setPreviewPage((page) => Math.min(previewPages.length, page + 1))}
-                  disabled={safePreviewPage >= previewPages.length}
+                <select
+                  value={activeSheetName}
+                  onChange={(event) => updateConfig({ sheetName: event.target.value })}
+                  disabled={!sheetNames.length}
                 >
-                  下一页
+                  {sheetNames.length ? (
+                    sheetNames.map((name) => (
+                      <option value={name} key={name}>
+                        {name}
+                      </option>
+                    ))
+                  ) : (
+                    <option>示例数据</option>
+                  )}
+                </select>
+              </label>
+
+              <div className="twoCols">
+                <InputField
+                  label="英语起始行"
+                  value={config.englishRow}
+                  onChange={(value) => updateConfig({ englishRow: value })}
+                  icon={Rows3}
+                />
+                <InputField
+                  label="英语起始列"
+                  value={config.englishCol}
+                  onChange={(value) => updateConfig({ englishCol: value })}
+                  suffix={columnToLetter(config.englishCol)}
+                  icon={Columns3}
+                />
+                <InputField
+                  label="汉语起始行"
+                  value={config.chineseRow}
+                  onChange={(value) => updateConfig({ chineseRow: value })}
+                  icon={Rows3}
+                />
+                <InputField
+                  label="汉语起始列"
+                  value={config.chineseCol}
+                  onChange={(value) => updateConfig({ chineseCol: value })}
+                  suffix={columnToLetter(config.chineseCol)}
+                  icon={Columns3}
+                />
+              </div>
+            </div>
+
+            <div className="panelBlock">
+              <div className="blockTitle">
+                <FileText size={17} />
+                <span>标准 PDF 设置</span>
+              </div>
+              <InputField
+                label="每页行数"
+                value={config.rowsPerPage}
+                min={1}
+                max={MAX_ROWS_PER_PAGE}
+                onChange={(value) => updateConfig({ rowsPerPage: value })}
+                suffix="行/页"
+                icon={Rows3}
+              />
+              <InputField
+                label="最多读取行数"
+                value={config.maxRows}
+                min={1}
+                max={10000}
+                onChange={(value) => updateConfig({ maxRows: value })}
+                suffix="行"
+              />
+              <label className="field fullField fieldCheckbox">
+                <span>
+                  <FileText size={15} />
+                  练习格子
+                </span>
+                <div className="checkboxShell">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(config.showPracticeGrid)}
+                    onChange={(event) => updateConfig({ showPracticeGrid: event.target.checked })}
+                  />
+                  <small>{config.showPracticeGrid ? '四线三格' : '空白格子'}</small>
+                </div>
+              </label>
+            </div>
+
+            <button className="exportButton" onClick={handleExportStandardPdf} disabled={Boolean(exportingFormat) || !rows.length}>
+              {exportingFormat === 'standard-pdf' ? <Loader2 className="spin" size={19} /> : <ArrowDownToLine size={19} />}
+              导出标准 PDF
+            </button>
+
+            <div className="panelBlock">
+              <div className="blockTitle">
+                <FileSpreadsheet size={17} />
+                <span>模板版导出</span>
+              </div>
+              <p className="panelNote">按你给的人教版模板导出，和模板分页、页眉页脚保持一致。</p>
+              <div className="exportStack">
+                <button className="exportButton secondaryExportButton" onClick={handleExportTemplatePdf} disabled={Boolean(exportingFormat) || !rows.length}>
+                  {exportingFormat === 'template-pdf' ? <Loader2 className="spin" size={19} /> : <FileText size={19} />}
+                  导出模板 PDF
+                </button>
+                <button className="exportButton secondaryExportButton" onClick={handleExportTemplateXlsx} disabled={Boolean(exportingFormat) || !rows.length}>
+                  {exportingFormat === 'template-xlsx' ? <Loader2 className="spin" size={19} /> : <FileSpreadsheet size={19} />}
+                  导出模板 XLSX
                 </button>
               </div>
+            </div>
 
-              <div className="templatePage">
-                <div
-                  className="templateTable"
-                  style={{
-                    '--row-scale': previewRowScale,
-                    '--grid-ratio': previewGridRatio,
-                    gridTemplateRows: `7.4fr repeat(${rowsPerPage}, ${previewRowUnit}fr)`,
-                  }}
+            <p className="statusLine">{status}</p>
+          </aside>
+
+          <section className="previewStage">
+            <div className="stageHeader">
+              <div>
+                <span className="eyebrow">实时预览</span>
+                <h2>{rows.length ? `${rows.length} 条词条` : '等待数据'}</h2>
+              </div>
+              <div className="modeSwitch" role="tablist" aria-label="preview mode">
+                <button
+                  className={previewMode === 'page' ? 'active' : ''}
+                  onClick={() => setPreviewMode('page')}
+                  type="button"
                 >
-                  <div className="templateHeader templateCell">序号</div>
-                  <div className="templateHeader templateCell">英文</div>
-                  <div className="templateHeader templateCell">默写汉语</div>
-                  <div className="templateHeader templateCell">中文</div>
-                  <div className="templateHeader templateCell">默写英文</div>
-
-                  {currentPreviewRows.map((row) => (
-                    <React.Fragment key={`${row.index}-${row.sourceRow || row.index}`}>
-                      <div className="templateCell indexCell">
-                        <span className="templateCellFit">{row.index}</span>
-                      </div>
-                      <div className="templateCell englishCell">
-                        <span className="templateCellFit">{row.english || '—'}</span>
-                      </div>
-                      <div className="templateCell writeChineseCell" />
-                      <div className="templateCell chineseCell" title={row.chinese || ''}>
-                        <span className="templateCellFit">{row.chinese || '—'}</span>
-                      </div>
-                      <div className="templateCell writeEnglishCell">
-                        <img src="/fourline.png" alt="" />
-                      </div>
-                    </React.Fragment>
-                  ))}
-
-                  {Array.from({ length: emptyPreviewSlots }).map((_, index) => (
-                    <React.Fragment key={`empty-${index}`}>
-                      <div className="templateCell indexCell" />
-                      <div className="templateCell englishCell" />
-                      <div className="templateCell writeChineseCell" />
-                      <div className="templateCell chineseCell" />
-                      <div className="templateCell writeEnglishCell">
-                        <img src="/fourline.png" alt="" />
-                      </div>
-                    </React.Fragment>
-                  ))}
-                </div>
-                <div className="templatePageNumber">{safePreviewPage}</div>
+                  页面
+                </button>
+                <button
+                  className={previewMode === 'table' ? 'active' : ''}
+                  onClick={() => setPreviewMode('table')}
+                  type="button"
+                >
+                  数据
+                </button>
               </div>
             </div>
-          ) : (
-            <div className="dataTableWrap">
-              <table className="dataTable">
-                <thead>
-                  <tr>
-                    <th>#</th>
-                    <th>源行</th>
-                    <th>英语单元格</th>
-                    <th>英语</th>
-                    <th>汉语单元格</th>
-                    <th>汉语</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map((row) => (
-                    <tr key={`${row.index}-${row.englishCell}-${row.chineseCell}`}>
-                      <td>{row.index}</td>
-                      <td>{row.sourceRow || row.index}</td>
-                      <td>{row.englishCell || '—'}</td>
-                      <td>{row.english || '—'}</td>
-                      <td>{row.chineseCell || '—'}</td>
-                      <td>{row.chinese || '—'}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+
+            <div className="statStrip">
+              <div>
+                <small>文件</small>
+                <strong>{stats.file}</strong>
+              </div>
+              <div>
+                <small>工作表</small>
+                <strong>{stats.sheet}</strong>
+              </div>
+              <div>
+                <small>英语</small>
+                <strong>{stats.englishCell}</strong>
+              </div>
+              <div>
+                <small>汉语</small>
+                <strong>{stats.chineseCell}</strong>
+              </div>
+              <div>
+                <small>每页</small>
+                <strong>{stats.rowsPerPage} 行</strong>
+              </div>
+              <div>
+                <small>页数</small>
+                <strong>{stats.pages} 页</strong>
+              </div>
             </div>
-          )}
+
+            {previewMode === 'page' ? (
+              <div className="pdfCanvas">
+                <div className="pageControls">
+                  <button
+                    type="button"
+                    onClick={() => setPreviewPage((page) => Math.max(1, page - 1))}
+                    disabled={safePreviewPage <= 1}
+                  >
+                    上一页
+                  </button>
+                  <span>
+                    第 {safePreviewPage} / {previewPages.length} 页
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setPreviewPage((page) => Math.min(previewPages.length, page + 1))}
+                    disabled={safePreviewPage >= previewPages.length}
+                  >
+                    下一页
+                  </button>
+                </div>
+
+                <div className="templatePage">
+                  <div
+                    className="templateTable"
+                    style={{
+                      '--row-scale': previewRowScale,
+                      '--grid-ratio': previewGridRatio,
+                      gridTemplateRows: `7.4fr repeat(${rowsPerPage}, ${previewRowUnit}fr)`,
+                    }}
+                  >
+                    <div className="templateHeader templateCell">序号</div>
+                    <div className="templateHeader templateCell">英文</div>
+                    <div className="templateHeader templateCell">默写汉语</div>
+                    <div className="templateHeader templateCell">中文</div>
+                    <div className="templateHeader templateCell">默写英文</div>
+
+                    {currentPreviewRows.map((row) => (
+                      <React.Fragment key={`${row.index}-${row.sourceRow || row.index}`}>
+                        <div className="templateCell indexCell">
+                          <span className="templateCellFit">{row.index}</span>
+                        </div>
+                        <div className="templateCell englishCell">
+                          <span className="templateCellFit">{row.english || '—'}</span>
+                        </div>
+                        <div className="templateCell writeChineseCell" />
+                        <div className="templateCell chineseCell" title={row.chinese || ''}>
+                          <span className="templateCellFit">{row.chinese || '—'}</span>
+                        </div>
+                        <div className="templateCell writeEnglishCell">
+                          {config.showPracticeGrid ? <img src="/fourline.png" alt="" /> : null}
+                        </div>
+                      </React.Fragment>
+                    ))}
+
+                    {Array.from({ length: emptyPreviewSlots }).map((_, index) => (
+                      <React.Fragment key={`empty-${index}`}>
+                        <div className="templateCell indexCell" />
+                        <div className="templateCell englishCell" />
+                        <div className="templateCell writeChineseCell" />
+                        <div className="templateCell chineseCell" />
+                        <div className="templateCell writeEnglishCell">
+                          {config.showPracticeGrid ? <img src="/fourline.png" alt="" /> : null}
+                        </div>
+                      </React.Fragment>
+                    ))}
+                  </div>
+                  <div className="templatePageNumber">{safePreviewPage}</div>
+                </div>
+              </div>
+            ) : (
+              <div className="dataTableWrap">
+                <table className="dataTable">
+                  <thead>
+                    <tr>
+                      <th>#</th>
+                      <th>源行</th>
+                      <th>英语单元格</th>
+                      <th>英语</th>
+                      <th>汉语单元格</th>
+                      <th>汉语</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.map((row) => (
+                      <tr key={`${row.index}-${row.englishCell}-${row.chineseCell}`}>
+                        <td>{row.index}</td>
+                        <td>{row.sourceRow || row.index}</td>
+                        <td>{row.englishCell || '—'}</td>
+                        <td>{row.english || '—'}</td>
+                        <td>{row.chineseCell || '—'}</td>
+                        <td>{row.chinese || '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
         </section>
-      </section>
       )}
     </main>
   )

@@ -1,6 +1,6 @@
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib'
 import fontkit from '@pdf-lib/fontkit'
-import { DEFAULT_CONFIG, MAX_ROWS_PER_PAGE, clampInt, paginateRows } from './utils'
+import { DEFAULT_CONFIG, MAX_ROWS_PER_PAGE, clampInt, paginateRows } from './utils.js'
 
 const MM_TO_PT = 72 / 25.4
 const mm = (value) => value * MM_TO_PT
@@ -53,8 +53,6 @@ const tokenize = (text) => {
   const rawText = String(text ?? '')
   if (!rawText) return []
 
-  // CJK text wraps by individual Han characters while latin/number/symbol runs
-  // stay together; English phrases prefer breaking at spaces.
   if (/[\u4e00-\u9fff]/.test(rawText)) {
     const rawTokens = rawText.match(/[A-Za-z0-9./&()-]+|[\u4e00-\u9fff]|[^A-Za-z0-9\u4e00-\u9fff]/g) || []
     const tokens = []
@@ -172,6 +170,7 @@ const drawTemplatePage = (page, {
   cjkFont,
   enFont,
   gridImage,
+  showPracticeGrid,
 }) => {
   const tableX = TEMPLATE.left
   const tableTop = PAGE_HEIGHT - TEMPLATE.topMargin
@@ -225,10 +224,12 @@ const drawTemplatePage = (page, {
     })
   })
 
-  for (let rowIndex = 0; rowIndex < rowsPerPage; rowIndex += 1) {
-    const yTop = yHeader - rowIndex * rowHeight
-    const y = yTop - rowHeight
-    drawFourlineGrid(page, gridImage, xs[4], y, TEMPLATE.columns[4], rowHeight)
+  if (showPracticeGrid) {
+    for (let rowIndex = 0; rowIndex < rowsPerPage; rowIndex += 1) {
+      const yTop = yHeader - rowIndex * rowHeight
+      const y = yTop - rowHeight
+      drawFourlineGrid(page, gridImage, xs[4], y, TEMPLATE.columns[4], rowHeight)
+    }
   }
 
   rows.forEach((row, rowIndex) => {
@@ -276,6 +277,7 @@ export const createPdfFromRows = async (rows, config, inputFileName = 'example.x
   const cjkFont = await pdfDoc.embedFont(cjkBytes, { subset: true })
   const enFont = await pdfDoc.embedFont(StandardFonts.Helvetica)
   const gridImage = await pdfDoc.embedPng(gridBytes)
+  const showPracticeGrid = config?.showPracticeGrid !== false
 
   const rowsPerPage = normalizeRowsPerPage(config.rowsPerPage)
   const pages = paginateRows(rows, rowsPerPage)
@@ -288,6 +290,7 @@ export const createPdfFromRows = async (rows, config, inputFileName = 'example.x
       cjkFont,
       enFont,
       gridImage,
+      showPracticeGrid,
     })
   })
 

@@ -10,6 +10,7 @@ export const DEFAULT_CONFIG = {
   rowsPerPage: 30,
   title: '英汉词表',
   showIndex: true,
+  showPracticeGrid: true,
 }
 
 // 四线三格必须始终按 6mm 高度绘制（1-2 线 1.5mm、2-3 线 3mm、3-4 线 1.5mm）。
@@ -103,4 +104,3 @@ export const extractPairsFromSheet = (worksheet, config) => {
 
   return rows
 }
-
