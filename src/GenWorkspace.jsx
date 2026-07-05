@@ -15,9 +15,10 @@ import {
 } from 'lucide-react'
 import { apiJson, fetchDownloadRequest } from './api'
 import { downloadNamedBlob } from './ttsUtils'
-import { FIXED_TEST_PAPER_QUESTION_KEYS, FIXED_TEST_PAPER_SECTIONS } from '../shared/worksheetTypes'
+import { ALL_QUESTION_TYPE_KEYS, FIXED_TEST_PAPER_QUESTION_KEYS, FIXED_TEST_PAPER_SECTIONS, QUESTION_TYPE_OPTIONS } from '../shared/worksheetTypes'
+import { GENERATION_MODE_FIXED_TEST_PAPER, GENERATION_MODE_LEGACY_ZIP, GENERATION_MODE_OPTIONS } from '../shared/generationModes'
 
-const DEFAULT_QUESTION_TYPES = FIXED_TEST_PAPER_QUESTION_KEYS
+const DEFAULT_QUESTION_TYPES = ALL_QUESTION_TYPE_KEYS
 
 const PREVIEW_RELATIONS = {
   cheat: { synonym: 'deceive', antonym: 'be honest' },
@@ -38,6 +39,11 @@ const STATUS_META = {
   completed: { label: '已完成', icon: CheckCircle2 },
   canceled: { label: '已取消', icon: XCircle },
   failed: { label: '失败', icon: XCircle },
+}
+
+const MODE_LABEL = {
+  [GENERATION_MODE_FIXED_TEST_PAPER]: '模板测试卷',
+  [GENERATION_MODE_LEGACY_ZIP]: '当前格式 ZIP',
 }
 
 const formatBytes = (value) => {
@@ -300,6 +306,8 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
   const [deletingJobId, setDeletingJobId] = useState('')
   const [status, setStatus] = useState('')
   const [jobs, setJobs] = useState([])
+  const [selectedGenerationMode, setSelectedGenerationMode] = useState(GENERATION_MODE_FIXED_TEST_PAPER)
+  const [selectedTypes, setSelectedTypes] = useState(DEFAULT_QUESTION_TYPES)
   const [llmModels, setLlmModels] = useState([])
   const [selectedLlmModel, setSelectedLlmModel] = useState('')
 
@@ -386,14 +394,30 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
     }
   }
 
+  const toggleType = (key) => {
+    setSelectedTypes((current) => (
+      current.includes(key)
+        ? current.filter((item) => item !== key)
+        : [...current, key]
+    ))
+  }
+
   const generateArchive = async () => {
     if (!usableRows.length) {
       setStatus('当前词表没有可生成的英文词条。请先上传或调整读表设置。')
       return
     }
+    if (selectedGenerationMode === GENERATION_MODE_LEGACY_ZIP && !selectedTypes.length) {
+      setStatus('当前格式 ZIP 至少需要勾选一个题型。')
+      return
+    }
 
     setBusy(true)
-    setStatus(`正在提交固定测试卷结构到服务器队列…预计生成 ${paperCount} 份。`)
+    setStatus(
+      selectedGenerationMode === GENERATION_MODE_FIXED_TEST_PAPER
+        ? `正在提交模板测试卷到服务器队列…预计生成 ${paperCount} 份。`
+        : `正在提交当前格式 ZIP 到服务器队列…共 ${selectedTypes.length} 个题型。`,
+    )
 
     try {
       const data = await apiJson('/api/gen/jobs', {
@@ -401,7 +425,8 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
         body: JSON.stringify({
           fileName,
           rows: usableRows,
-          questionTypes: DEFAULT_QUESTION_TYPES,
+          generationMode: selectedGenerationMode,
+          questionTypes: selectedGenerationMode === GENERATION_MODE_FIXED_TEST_PAPER ? FIXED_TEST_PAPER_QUESTION_KEYS : selectedTypes,
           llmModel: selectedLlmModel,
         }),
       })
@@ -474,6 +499,8 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
   const latestMeta = STATUS_META[latestJob?.status] || STATUS_META.queued
   const latestStatusLabel = latestJob ? latestMeta.label : '队列空闲'
   const activeLlmOption = llmModels.find((item) => item.id === selectedLlmModel) || llmModels[0] || null
+  const activeModeMeta = GENERATION_MODE_OPTIONS.find((item) => item.key === selectedGenerationMode) || GENERATION_MODE_OPTIONS[0]
+  const activeLegacyLlmCount = QUESTION_TYPE_OPTIONS.filter((item) => item.needsLlm && selectedTypes.includes(item.key)).length
 
   if (!authChecked) {
     return (
@@ -597,6 +624,7 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
                     <div className="genQueueHeadLeft">
                       <strong>{job.fileName.replace(/\.[^.]+$/, '')}</strong>
                       <span className={`genQueueChip ${job.status}`}>{meta.label}</span>
+                      <span className="genQueueChip">{MODE_LABEL[job.generationMode] || MODE_LABEL[GENERATION_MODE_FIXED_TEST_PAPER]}</span>
                     </div>
                     <span className="genQueueTime">{formatTime(job.updatedAt || job.createdAt)}</span>
                   </div>
@@ -670,7 +698,7 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
             disabled={busy || !usableRows.length}
           >
             {busy ? <Loader2 className="spin" size={18} /> : <Upload size={18} />}
-            提交队列
+            {selectedGenerationMode === GENERATION_MODE_FIXED_TEST_PAPER ? '提交测试卷队列' : '提交 ZIP 队列'}
           </button>
           <div className="genMetaGrid genMetaCompact">
             <div>
@@ -690,12 +718,12 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
               <strong>{activeLlmOption?.label || '未配置'}</strong>
             </div>
             <div>
-              <small>测试卷</small>
-              <strong>{paperCount} 份</strong>
+              <small>模式</small>
+              <strong>{activeModeMeta?.title || '模板测试卷'}</strong>
             </div>
             <div>
               <small>需 LLM</small>
-              <strong>{FIXED_TEST_PAPER_SECTIONS.filter((item) => item.needsLlm).length}</strong>
+              <strong>{selectedGenerationMode === GENERATION_MODE_FIXED_TEST_PAPER ? FIXED_TEST_PAPER_SECTIONS.filter((item) => item.needsLlm).length : activeLegacyLlmCount}</strong>
             </div>
           </div>
         </div>
@@ -703,7 +731,7 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
         <div className="panelBlock">
           <div className="blockTitle">
             <FileText size={17} />
-            <span>固定结构</span>
+            <span>生成模式</span>
           </div>
           {llmModels.length ? (
             <div className="field fullField">
@@ -719,17 +747,62 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
             </div>
           ) : null}
           <div className="questionTypeGrid compact">
-            {FIXED_TEST_PAPER_SECTIONS.map((item) => {
+            {GENERATION_MODE_OPTIONS.map((item) => {
+              const active = selectedGenerationMode === item.key
               return (
-                <div className="questionTypeCard compact active fixed" key={item.key}>
+                <label className={`questionTypeCard compact${active ? ' active' : ''}`} key={item.key}>
+                  <input
+                    className="questionTypeInput"
+                    type="radio"
+                    name="generationMode"
+                    checked={active}
+                    onChange={() => setSelectedGenerationMode(item.key)}
+                  />
+                  <span className="questionTypeMark" aria-hidden="true" />
                   <strong>{item.title}</strong>
-                  {item.needsLlm ? <em>LLM</em> : null}
-                  <span>第 {item.order} 题 · {item.countLabel}</span>
-                </div>
+                  <span>{item.description}</span>
+                </label>
               )
             })}
           </div>
-          <p className="genQueueEmpty">按模板固定生成 8 个题段，删除原模板第 4 题后续排；每 100 个单词输出 1 份 docx 测试卷，答案附在文末。</p>
+
+          {selectedGenerationMode === GENERATION_MODE_FIXED_TEST_PAPER ? (
+            <>
+              <div className="questionTypeGrid compact">
+                {FIXED_TEST_PAPER_SECTIONS.map((item) => (
+                  <div className="questionTypeCard compact active fixed" key={item.key}>
+                    <strong>{item.title}</strong>
+                    {item.needsLlm ? <em>LLM</em> : null}
+                    <span>第 {item.order} 题 · {item.countLabel}</span>
+                  </div>
+                ))}
+              </div>
+              <p className="genQueueEmpty">按模板固定生成 8 个题段，删除原模板第 4 题后续排；每 100 个单词输出 1 份 docx 测试卷，答案附在文末。当前预计生成 {paperCount} 份。</p>
+            </>
+          ) : (
+            <>
+              <div className="questionTypeGrid compact">
+                {QUESTION_TYPE_OPTIONS.map((item) => {
+                  const active = selectedTypes.includes(item.key)
+                  return (
+                    <label className={`questionTypeCard compact${active ? ' active' : ''}`} key={item.key}>
+                      <input
+                        className="questionTypeInput"
+                        type="checkbox"
+                        checked={active}
+                        onChange={() => toggleType(item.key)}
+                      />
+                      <span className="questionTypeMark" aria-hidden="true" />
+                      <strong>{item.title}</strong>
+                      {item.needsLlm ? <em>LLM</em> : null}
+                      <span>{item.description}</span>
+                    </label>
+                  )
+                })}
+              </div>
+              <p className="genQueueEmpty">会按原来的多题型结构重新打包成 ZIP。当前已勾选 {selectedTypes.length} 个题型。</p>
+            </>
+          )}
         </div>
       </aside>
     </section>

@@ -2,6 +2,7 @@ import crypto from 'node:crypto'
 import { waitUntil } from '@vercel/functions'
 import { generateWorksheetArchive, getDefaultLlmModel, getLlmJobRuntime } from './genEngine.js'
 import { deleteObject, getObjectBuffer, getObjectJson, listObjects, putObject } from './r2.js'
+import { GENERATION_MODE_FIXED_TEST_PAPER, GENERATION_MODE_LEGACY_ZIP } from '../shared/generationModes.js'
 
 const JOB_PREFIX = 'worksheet-jobs'
 const STALE_PROCESSING_MS = 1000 * 60 * 8
@@ -26,6 +27,7 @@ const jobStateKey = (jobId) => `${jobPrefix(jobId)}/job.json`
 const jobPayloadKey = (jobId) => `${jobPrefix(jobId)}/payload.json`
 const jobArtifactKey = (jobId) => `${jobPrefix(jobId)}/artifact.zip`
 const jobCacheKey = (jobId) => `${jobPrefix(jobId)}/cache.json`
+const normalizeGenerationMode = (mode) => (mode === GENERATION_MODE_LEGACY_ZIP ? GENERATION_MODE_LEGACY_ZIP : GENERATION_MODE_FIXED_TEST_PAPER)
 
 const summarizeJob = (job) => ({
   id: job.id,
@@ -41,6 +43,7 @@ const summarizeJob = (job) => ({
   canceledAt: job.canceledAt || 0,
   wordCount: job.wordCount || 0,
   questionTypes: job.questionTypes || [],
+  generationMode: normalizeGenerationMode(job.generationMode),
   llmModel: job.llmModel || '',
   llmBatchSize: job.llmBatchSize || 0,
   llmConcurrency: job.llmConcurrency || 0,
@@ -71,11 +74,13 @@ const createProgress = (totalSteps, totalWords = 0) => ({
   currentQuestionType: '',
 })
 
-const buildTotalSteps = (questionTypes, wordCount = 0) => {
+const buildTotalSteps = (questionTypes, wordCount = 0, generationMode = GENERATION_MODE_FIXED_TEST_PAPER) => {
   const needsLexical = questionTypes.some((key) => ['一_释义匹配', '三_同义替换', '六_同义反义辨析', '七_同义词匹配', '八_反义词匹配'].includes(key))
   const needsBasicMaterials = questionTypes.some((key) => ['二_选择题', '九_判断正误'].includes(key))
   const needsSynonymMaterials = questionTypes.includes('三_同义替换')
-  const paperCount = Math.max(1, Math.ceil((Number(wordCount) || 0) / TEST_PAPER_GROUP_SIZE))
+  const paperCount = normalizeGenerationMode(generationMode) === GENERATION_MODE_FIXED_TEST_PAPER
+    ? Math.max(1, Math.ceil((Number(wordCount) || 0) / TEST_PAPER_GROUP_SIZE))
+    : questionTypes.length
   return paperCount + (needsLexical ? 1 : 0) + (needsBasicMaterials ? 1 : 0) + (needsSynonymMaterials ? 1 : 0)
 }
 
@@ -86,7 +91,7 @@ const percentFromSteps = (progress) => (progress.totalSteps
 
 const progressFromMessage = (job, message) => {
   const progress = {
-    ...(job.progress || createProgress(buildTotalSteps(job.questionTypes || [], job.wordCount || 0), job.wordCount || 0)),
+    ...(job.progress || createProgress(buildTotalSteps(job.questionTypes || [], job.wordCount || 0, job.generationMode), job.wordCount || 0)),
     message,
     currentStep: message,
   }
@@ -122,7 +127,7 @@ const progressFromMessage = (job, message) => {
 const progressFromEvent = (job, event) => {
   if (!event || typeof event === 'string') return progressFromMessage(job, String(event || ''))
   const progress = {
-    ...(job.progress || createProgress(buildTotalSteps(job.questionTypes || [], job.wordCount || 0), job.wordCount || 0)),
+    ...(job.progress || createProgress(buildTotalSteps(job.questionTypes || [], job.wordCount || 0, job.generationMode), job.wordCount || 0)),
   }
 
   if (typeof event.message === 'string') progress.message = event.message
@@ -232,7 +237,7 @@ const settleStaleCanceledJobs = async (jobs) => Promise.all((jobs || []).map(asy
     canceledAt: job.canceledAt || now(),
     error: '',
     progress: {
-      ...(job.progress || createProgress(buildTotalSteps(job.questionTypes || [], job.wordCount || 0), job.wordCount || 0)),
+      ...(job.progress || createProgress(buildTotalSteps(job.questionTypes || [], job.wordCount || 0, job.generationMode), job.wordCount || 0)),
       currentStep: '已取消',
       message: '任务已取消。',
     },
@@ -343,6 +348,7 @@ const processSingleJob = async (job) => {
       rows: payload.rows || [],
       fileName: payload.fileName || '词组练习.xlsx',
       questionTypes: payload.questionTypes || latestJob.questionTypes,
+      generationMode: payload.generationMode || latestJob.generationMode || GENERATION_MODE_FIXED_TEST_PAPER,
       llmModel: payload.llmModel || latestJob.llmModel || getDefaultLlmModel(),
       llmBatchSize: payload.llmBatchSize || latestJob.llmBatchSize,
       llmConcurrency: payload.llmConcurrency || latestJob.llmConcurrency,
@@ -374,8 +380,8 @@ const processSingleJob = async (job) => {
       downloadSize: result.buffer.length,
       nextAttemptAt: 0,
       progress: {
-        ...(liveJob.progress || createProgress(buildTotalSteps(latestJob.questionTypes || [], latestJob.wordCount || 0), latestJob.wordCount || 0)),
-        completedSteps: buildTotalSteps(latestJob.questionTypes || [], latestJob.wordCount || 0),
+        ...(liveJob.progress || createProgress(buildTotalSteps(latestJob.questionTypes || [], latestJob.wordCount || 0, latestJob.generationMode), latestJob.wordCount || 0)),
+        completedSteps: buildTotalSteps(latestJob.questionTypes || [], latestJob.wordCount || 0, latestJob.generationMode),
         currentStep: '打包完成',
         message: '已完成',
         percent: 100,
@@ -396,7 +402,7 @@ const processSingleJob = async (job) => {
         nextAttemptAt: 0,
         error: '',
         progress: {
-          ...((latestJob && latestJob.progress) || liveJob.progress || createProgress(buildTotalSteps((latestJob && latestJob.questionTypes) || job.questionTypes || [], (latestJob && latestJob.wordCount) || job.wordCount || 0), (latestJob && latestJob.wordCount) || job.wordCount || 0)),
+          ...((latestJob && latestJob.progress) || liveJob.progress || createProgress(buildTotalSteps((latestJob && latestJob.questionTypes) || job.questionTypes || [], (latestJob && latestJob.wordCount) || job.wordCount || 0, (latestJob && latestJob.generationMode) || job.generationMode), (latestJob && latestJob.wordCount) || job.wordCount || 0)),
           currentStep: '已取消',
           message: '任务已取消。',
         },
@@ -414,7 +420,7 @@ const processSingleJob = async (job) => {
           nextAttemptAt: 0,
           error: '',
           progress: {
-            ...(latestJobForRetry.progress || createProgress(buildTotalSteps(latestJobForRetry.questionTypes || [], latestJobForRetry.wordCount || 0), latestJobForRetry.wordCount || 0)),
+            ...(latestJobForRetry.progress || createProgress(buildTotalSteps(latestJobForRetry.questionTypes || [], latestJobForRetry.wordCount || 0, latestJobForRetry.generationMode), latestJobForRetry.wordCount || 0)),
             currentStep: '已取消',
             message: '任务已取消。',
           },
@@ -435,7 +441,7 @@ const processSingleJob = async (job) => {
           failedAt: now(),
           error: `LLM 请求连续触发限流，已达到最大自动重试次数（${MAX_RATE_LIMIT_REQUEUES}）。`,
           progress: {
-            ...(retryBaseJob.progress || createProgress(buildTotalSteps(retryBaseJob.questionTypes || [], retryBaseJob.wordCount || 0), retryBaseJob.wordCount || 0)),
+            ...(retryBaseJob.progress || createProgress(buildTotalSteps(retryBaseJob.questionTypes || [], retryBaseJob.wordCount || 0, retryBaseJob.generationMode), retryBaseJob.wordCount || 0)),
             currentStep: '限流重试失败',
             message: `LLM 请求连续触发限流，已达到最大自动重试次数（${MAX_RATE_LIMIT_REQUEUES}）。`,
           },
@@ -459,7 +465,7 @@ const processSingleJob = async (job) => {
         llmRateLimitRetries: retryCount + 1,
         nextAttemptAt,
         progress: {
-          ...(retryBaseJob.progress || createProgress(buildTotalSteps(retryBaseJob.questionTypes || [], retryBaseJob.wordCount || 0), retryBaseJob.wordCount || 0)),
+          ...(retryBaseJob.progress || createProgress(buildTotalSteps(retryBaseJob.questionTypes || [], retryBaseJob.wordCount || 0, retryBaseJob.generationMode), retryBaseJob.wordCount || 0)),
           currentStep: '等待限流恢复',
           stageLabel: '等待限流恢复',
           message: waitingMessage,
@@ -472,6 +478,7 @@ const processSingleJob = async (job) => {
           rows: payload?.rows || [],
           fileName: payload?.fileName || queuedRetryJob.fileName,
           questionTypes: payload?.questionTypes || queuedRetryJob.questionTypes,
+          generationMode: payload?.generationMode || queuedRetryJob.generationMode || GENERATION_MODE_FIXED_TEST_PAPER,
           llmModel: queuedRetryJob.llmModel,
           llmBatchSize: queuedRetryJob.llmBatchSize,
           llmConcurrency: queuedRetryJob.llmConcurrency,
@@ -487,7 +494,7 @@ const processSingleJob = async (job) => {
       nextAttemptAt: 0,
       error: error.message || '生成失败。',
       progress: {
-        ...(liveJob.progress || createProgress(buildTotalSteps(latestJob.questionTypes || [], latestJob.wordCount || 0), latestJob.wordCount || 0)),
+        ...(liveJob.progress || createProgress(buildTotalSteps(latestJob.questionTypes || [], latestJob.wordCount || 0, latestJob.generationMode), latestJob.wordCount || 0)),
         message: error.message || '生成失败。',
       },
     })
@@ -519,15 +526,17 @@ export const scheduleWorksheetJobQueue = () => {
   waitUntil(kickWorksheetJobQueue())
 }
 
-export const submitWorksheetJob = async ({ rows, fileName, questionTypes, llmModel }) => {
+export const submitWorksheetJob = async ({ rows, fileName, questionTypes, generationMode, llmModel }) => {
   const id = crypto.randomUUID()
   const submittedAt = now()
-  const totalSteps = buildTotalSteps(questionTypes, Array.isArray(rows) ? rows.length : 0)
+  const normalizedMode = normalizeGenerationMode(generationMode)
+  const totalSteps = buildTotalSteps(questionTypes, Array.isArray(rows) ? rows.length : 0, normalizedMode)
   const llmRuntime = getLlmJobRuntime(String(llmModel || getDefaultLlmModel()).trim())
   const job = {
     id,
     fileName: String(fileName || '词组练习.xlsx'),
     questionTypes,
+    generationMode: normalizedMode,
     llmModel: llmRuntime.model,
     llmFallbackModels: llmRuntime.fallbackModels,
     llmBatchSize: llmRuntime.batchSize,
@@ -553,6 +562,7 @@ export const submitWorksheetJob = async ({ rows, fileName, questionTypes, llmMod
         rows,
         fileName: job.fileName,
         questionTypes,
+        generationMode: job.generationMode,
         llmModel: job.llmModel,
         llmFallbackModels: job.llmFallbackModels,
         llmBatchSize: job.llmBatchSize,
@@ -593,7 +603,7 @@ export const cancelWorksheetJob = async (jobId) => {
       nextAttemptAt: 0,
       error: '',
       progress: {
-        ...(job.progress || createProgress(buildTotalSteps(job.questionTypes || [], job.wordCount || 0), job.wordCount || 0)),
+        ...(job.progress || createProgress(buildTotalSteps(job.questionTypes || [], job.wordCount || 0, job.generationMode), job.wordCount || 0)),
         currentStep: '已取消',
         message: '任务已取消。',
       },
@@ -607,7 +617,7 @@ export const cancelWorksheetJob = async (jobId) => {
     nextAttemptAt: 0,
     error: '',
     progress: {
-      ...(job.progress || createProgress(buildTotalSteps(job.questionTypes || [], job.wordCount || 0), job.wordCount || 0)),
+      ...(job.progress || createProgress(buildTotalSteps(job.questionTypes || [], job.wordCount || 0, job.generationMode), job.wordCount || 0)),
       currentStep: '正在停止',
       message: '正在停止任务，请等待最后一次调用完成…',
     },

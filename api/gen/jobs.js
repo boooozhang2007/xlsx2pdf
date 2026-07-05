@@ -1,7 +1,8 @@
 import { readJsonBody, rejectMethod, requireSession, sendJson } from '../../server/auth.js'
 import { cancelWorksheetJob, deleteWorksheetJob, listWorksheetJobs, scheduleWorksheetJobQueue, submitWorksheetJob } from '../../server/genQueue.js'
 import { getAvailableLlmModels, getDefaultLlmModel } from '../../server/genEngine.js'
-import { FIXED_TEST_PAPER_QUESTION_KEYS } from '../../shared/worksheetTypes.js'
+import { ALL_QUESTION_TYPE_KEYS, FIXED_TEST_PAPER_QUESTION_KEYS } from '../../shared/worksheetTypes.js'
+import { GENERATION_MODE_FIXED_TEST_PAPER, GENERATION_MODE_LEGACY_ZIP } from '../../shared/generationModes.js'
 
 export default async function handler(req, res) {
   if (!['GET', 'POST', 'DELETE'].includes(req.method || '')) return rejectMethod(res, 'GET, POST, DELETE')
@@ -43,12 +44,18 @@ export default async function handler(req, res) {
       return sendJson(res, 400, { ok: false, error: 'rows 必须是数组。' })
     }
 
-    const questionTypes = FIXED_TEST_PAPER_QUESTION_KEYS
+    const generationMode = body.generationMode === GENERATION_MODE_LEGACY_ZIP
+      ? GENERATION_MODE_LEGACY_ZIP
+      : GENERATION_MODE_FIXED_TEST_PAPER
+    const questionTypes = generationMode === GENERATION_MODE_FIXED_TEST_PAPER
+      ? FIXED_TEST_PAPER_QUESTION_KEYS
+      : (Array.isArray(body.questionTypes) && body.questionTypes.length ? body.questionTypes : ALL_QUESTION_TYPE_KEYS)
 
     const job = await submitWorksheetJob({
       rows,
       fileName: body.fileName || body.title || '词组练习.xlsx',
       questionTypes,
+      generationMode,
       llmModel: body.llmModel || getDefaultLlmModel(),
     })
     scheduleWorksheetJobQueue()

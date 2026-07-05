@@ -7,6 +7,7 @@ import fontkit from '@pdf-lib/fontkit'
 import { createZipBuffer } from './zip.js'
 import { createDocxBuffer } from './docx.js'
 import { ALL_QUESTION_TYPE_KEYS, FIXED_TEST_PAPER_QUESTION_KEYS, FIXED_TEST_PAPER_SECTIONS, QUESTION_TYPE_OPTIONS } from '../shared/worksheetTypes.js'
+import { GENERATION_MODE_FIXED_TEST_PAPER, GENERATION_MODE_LEGACY_ZIP } from '../shared/generationModes.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const BLACK = rgb(0, 0, 0)
@@ -49,6 +50,7 @@ const QUESTION_TYPE_MAP = new Map(QUESTION_TYPE_OPTIONS.map((item) => [item.key,
 const FIXED_TEST_PAPER_SECTION_MAP = new Map(FIXED_TEST_PAPER_SECTIONS.map((item) => [item.key, item]))
 const LEXICAL_QUESTION_KEYS = new Set(['一_释义匹配', '三_同义替换', '六_同义反义辨析', '七_同义词匹配', '八_反义词匹配'])
 const BASIC_MATERIAL_QUESTION_KEYS = new Set(['二_选择题', '九_判断正误'])
+const normalizeGenerationMode = (mode) => (mode === GENERATION_MODE_LEGACY_ZIP ? GENERATION_MODE_LEGACY_ZIP : GENERATION_MODE_FIXED_TEST_PAPER)
 
 let cjkFontBytesPromise = null
 
@@ -1937,6 +1939,7 @@ export const generateWorksheetArchive = async ({
   rows,
   fileName = '词组练习.xlsx',
   questionTypes = ALL_QUESTION_TYPE_KEYS,
+  generationMode = GENERATION_MODE_FIXED_TEST_PAPER,
   rowLimit = MAX_EXPORT_ROWS,
   onProgress,
   onShouldCancel,
@@ -1957,12 +1960,15 @@ export const generateWorksheetArchive = async ({
   const words = normalizeRows(rows, rowLimit)
   if (!words.length) throw new Error('没有可生成的词条')
 
-  const selectedKeys = normalizeQuestionTypes(
-    Array.isArray(questionTypes) && questionTypes.length ? questionTypes : FIXED_TEST_PAPER_QUESTION_KEYS,
-  ).filter((key) => FIXED_TEST_PAPER_QUESTION_KEYS.includes(key))
-  if (!selectedKeys.length) throw new Error('固定测试卷结构为空，无法生成。')
+  const normalizedMode = normalizeGenerationMode(generationMode)
+  const selectedKeys = normalizedMode === GENERATION_MODE_FIXED_TEST_PAPER
+    ? normalizeQuestionTypes(FIXED_TEST_PAPER_QUESTION_KEYS).filter((key) => FIXED_TEST_PAPER_QUESTION_KEYS.includes(key))
+    : normalizeQuestionTypes(questionTypes)
+  if (!selectedKeys.length) throw new Error('未配置可生成的题型结构。')
 
-  const exportName = sanitizeExportName(`${String(fileName || '词组练习').replace(/\.[^.]+$/, '')} 测试卷包`)
+  const exportName = sanitizeExportName(
+    `${String(fileName || '词组练习').replace(/\.[^.]+$/, '')} ${normalizedMode === GENERATION_MODE_FIXED_TEST_PAPER ? '测试卷包' : '练习包'}`,
+  )
   const context = createGenerationContext(
     words,
     exportName,
@@ -1974,6 +1980,7 @@ export const generateWorksheetArchive = async ({
     llmBatchSize,
     llmConcurrency,
   )
+  context.generationMode = normalizedMode
 
   // Restore any caches saved by a previous attempt of this job.
   if (initialCache?.lexical && typeof initialCache.lexical === 'object') {
@@ -1995,7 +2002,7 @@ export const generateWorksheetArchive = async ({
         synonym: Object.fromEntries(context.synonymMaterialCache),
       }).catch(() => {})
     : null
-  const groups = chunkGroups(words, TEST_PAPER_GROUP_SIZE)
+  const groups = chunkGroups(words, normalizedMode === GENERATION_MODE_FIXED_TEST_PAPER ? TEST_PAPER_GROUP_SIZE : GROUP_SIZE)
   const needsLexical = selectedKeys.some((key) => LEXICAL_QUESTION_KEYS.has(key))
   const needsBasicMaterials = selectedKeys.some((key) => BASIC_MATERIAL_QUESTION_KEYS.has(key))
   const needsSynonymMaterials = selectedKeys.includes('三_同义替换')
@@ -2020,7 +2027,9 @@ export const generateWorksheetArchive = async ({
   context.choicePlan = new Map()
   let uniqueBasicEntries = []
   if (needsBasicMaterials) {
-    const { plan, basicEntries } = buildTestPaperBasicChoicePlan(groups, context)
+    const { plan, basicEntries } = normalizedMode === GENERATION_MODE_FIXED_TEST_PAPER
+      ? buildTestPaperBasicChoicePlan(groups, context)
+      : buildBasicChoicePlan(groups, context)
     context.choicePlan = new Map(plan)
     uniqueBasicEntries = Array.from(new Map(basicEntries.map((entry) => [entry.key, entry])).values())
   }
@@ -2104,7 +2113,9 @@ export const generateWorksheetArchive = async ({
   }
 
   if (needsSynonymMaterials) {
-    const { plan, synonymEntries } = buildTestPaperSynonymChoicePlan(groups, context)
+    const { plan, synonymEntries } = normalizedMode === GENERATION_MODE_FIXED_TEST_PAPER
+      ? buildTestPaperSynonymChoicePlan(groups, context)
+      : buildSynonymChoicePlan(groups, context)
     plan.forEach((value, key) => {
       context.choicePlan.set(key, value)
     })
@@ -2132,16 +2143,45 @@ export const generateWorksheetArchive = async ({
     })
   }
 
-  await report({
-    message: `[${exportName}] 开始按模板生成测试卷`,
-    currentStep: '生成测试卷',
-    stageLabel: '生成测试卷',
-    totalWords: words.length,
-    stageWordTotal: words.length,
-    stageWordCompleted: 0,
-  })
-
-  const files = await createFixedTestPaperFiles(groups, context)
+  let files = []
+  if (normalizedMode === GENERATION_MODE_FIXED_TEST_PAPER) {
+    await report({
+      message: `[${exportName}] 开始按模板生成测试卷`,
+      currentStep: '生成测试卷',
+      stageLabel: '生成测试卷',
+      totalWords: words.length,
+      stageWordTotal: words.length,
+      stageWordCompleted: 0,
+    })
+    files = await createFixedTestPaperFiles(groups, context)
+  } else {
+    for (const questionKey of selectedKeys) {
+      const typeInfo = QUESTION_TYPE_MAP.get(questionKey)
+      await report({
+        message: `[${exportName}] 开始生成 ${questionKey}`,
+        currentStep: `生成 ${typeInfo?.title || questionKey}`,
+        stageLabel: typeInfo?.title || questionKey,
+        totalWords: words.length,
+        stageWordTotal: words.length,
+        stageWordCompleted: 0,
+        currentQuestionType: questionKey,
+      })
+      const questionFiles = questionKey === '十_汉译英' || questionKey === '十一_英译汉'
+        ? await createTranslationFiles(questionKey, groups, context)
+        : await createNonTranslationFiles(questionKey, groups, context)
+      files.push(...questionFiles)
+      await report({
+        message: `  ✓ ${questionKey}`,
+        currentStep: `${typeInfo?.title || questionKey} 完成`,
+        stageLabel: typeInfo?.title || questionKey,
+        totalWords: words.length,
+        stageWordTotal: words.length,
+        stageWordCompleted: words.length,
+        currentQuestionType: questionKey,
+        stepDelta: 1,
+      })
+    }
+  }
 
   await report({
     message: `[${exportName}] 已打包为 ZIP`,
