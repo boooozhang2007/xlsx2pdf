@@ -491,7 +491,6 @@ function App() {
                 <FileSpreadsheet size={17} />
                 <span>模板版导出</span>
               </div>
-              <p className="panelNote">按你给的人教版模板导出，和模板分页、页眉页脚保持一致。</p>
               <div className="exportStack">
                 <button className="exportButton secondaryExportButton" onClick={handleExportTemplatePdf} disabled={Boolean(exportingFormat) || !rows.length}>
                   {exportingFormat === 'template-pdf' ? <Loader2 className="spin" size={19} /> : <FileText size={19} />}
