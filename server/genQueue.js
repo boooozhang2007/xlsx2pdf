@@ -87,6 +87,14 @@ const createProgress = (totalSteps, totalWords = 0) => ({
   currentQuestionType: '',
 })
 
+const resetJobProgress = (job, overrides = {}) => ({
+  ...createProgress(
+    buildTotalSteps(job.questionTypes || [], job.wordCount || 0, job.generationMode),
+    job.wordCount || 0,
+  ),
+  ...overrides,
+})
+
 const buildTotalSteps = (questionTypes, wordCount = 0, generationMode = GENERATION_MODE_FIXED_TEST_PAPER) => {
   const needsLexical = questionTypes.some((key) => ['一_释义匹配', '三_同义替换', '六_同义反义辨析', '七_同义词匹配', '八_反义词匹配'].includes(key))
   const needsBasicMaterials = questionTypes.some((key) => ['二_选择题', '九_判断正误'].includes(key))
@@ -343,6 +351,10 @@ const processSingleJob = async (job) => {
     startedAt: latestJob.startedAt || now(),
     nextAttemptAt: 0,
     error: '',
+    progress: resetJobProgress(latestJob, {
+      currentStep: '准备处理',
+      message: '服务器正在处理任务…',
+    }),
   })
   let lastPersistedProgress = liveJob.progress || null
   let lastProgressWriteAt = now()
@@ -504,12 +516,11 @@ const processSingleJob = async (job) => {
           llmFallbackModels: runtimeUpdate.llmFallbackModels,
           llmValidationRetries: retryCount + 1,
           nextAttemptAt,
-          progress: {
-            ...(retryBaseJob.progress || createProgress(buildTotalSteps(retryBaseJob.questionTypes || [], retryBaseJob.wordCount || 0, retryBaseJob.generationMode), retryBaseJob.wordCount || 0)),
+          progress: resetJobProgress(retryBaseJob, {
             currentStep: '等待题面补跑',
             stageLabel: '等待题面补跑',
             message: waitingMessage,
-          },
+          }),
         })
         await writeJsonObject({
           key: jobPayloadKey(job.id),
@@ -582,12 +593,11 @@ const processSingleJob = async (job) => {
         llmFallbackModels: runtimeUpdate.llmFallbackModels,
         llmRateLimitRetries: retryCount + 1,
         nextAttemptAt,
-        progress: {
-          ...(retryBaseJob.progress || createProgress(buildTotalSteps(retryBaseJob.questionTypes || [], retryBaseJob.wordCount || 0, retryBaseJob.generationMode), retryBaseJob.wordCount || 0)),
+        progress: resetJobProgress(retryBaseJob, {
           currentStep: '等待限流恢复',
           stageLabel: '等待限流恢复',
           message: waitingMessage,
-        },
+        }),
       })
       await writeJsonObject({
         key: jobPayloadKey(job.id),
