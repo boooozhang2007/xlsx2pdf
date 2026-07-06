@@ -1,6 +1,6 @@
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib'
 import fontkit from '@pdf-lib/fontkit'
-import { TEMPLATE_HEADERS, TEMPLATE_PDF, TEMPLATE_TITLE, getTemplatePdfFileName, paginateTemplateRows } from './templateLayout.js'
+import { TEMPLATE_HEADERS, TEMPLATE_PDF, getTemplatePdfFileName, getTemplateTitle, paginateTemplateRows } from './templateLayout.js'
 
 const BLACK = rgb(0, 0, 0)
 const YELLOW = rgb(1, 0.96, 0)
@@ -142,7 +142,7 @@ const buildColumnXs = () => {
   return xs
 }
 
-const drawPageFrame = (page, capacity, fonts, pageNumber, totalPages) => {
+const drawPageFrame = (page, capacity, fonts, pageNumber, totalPages, titleText) => {
   const xs = buildColumnXs()
   const tableTop = TEMPLATE_PDF.tableTop
   const titleBottom = tableTop - TEMPLATE_PDF.titleHeight
@@ -188,13 +188,23 @@ const drawPageFrame = (page, capacity, fonts, pageNumber, totalPages) => {
     })
   }
 
-  page.drawText(TEMPLATE_TITLE, {
-    x: xs[1] + TEMPLATE_PDF.titlePaddingX,
-    y: tableTop - TEMPLATE_PDF.titleHeight + 4.2,
-    size: 12.8,
-    font: fonts.cjk,
-    color: BLACK,
-  })
+  drawCellText(
+    page,
+    titleText,
+    xs[1],
+    titleBottom,
+    xs.at(-1) - xs[1],
+    TEMPLATE_PDF.titleHeight,
+    fonts.cjk,
+    12.8,
+    {
+      align: 'left',
+      maxLines: 1,
+      minSize: 7.2,
+      paddingX: TEMPLATE_PDF.titlePaddingX,
+      paddingY: 1,
+    },
+  )
 
   TEMPLATE_HEADERS.forEach((header, index) => {
     if (!header) return
@@ -237,6 +247,7 @@ const drawPageFrame = (page, capacity, fonts, pageNumber, totalPages) => {
 export const createTemplatePdfFromRows = async (rows, inputFileName = 'example.xlsx') => {
   const pdfDoc = await PDFDocument.create()
   pdfDoc.registerFontkit(fontkit)
+  const templateTitle = getTemplateTitle(inputFileName)
 
   const [cjkBytes] = await loadTemplateAssets()
   const cjk = await pdfDoc.embedFont(cjkBytes, { subset: true })
@@ -246,7 +257,7 @@ export const createTemplatePdfFromRows = async (rows, inputFileName = 'example.x
   const pages = paginateTemplateRows(rows)
   pages.forEach((pageData, pageIndex) => {
     const page = pdfDoc.addPage([TEMPLATE_PDF.pageWidth, TEMPLATE_PDF.pageHeight])
-    const layout = drawPageFrame(page, pageData.capacity, { cjk }, pageIndex + 1, pages.length)
+    const layout = drawPageFrame(page, pageData.capacity, { cjk }, pageIndex + 1, pages.length, templateTitle)
 
     pageData.rows.forEach((row, rowIndex) => {
       const rowBottom = layout.rowsTop - layout.rowHeight * (rowIndex + 1)
@@ -273,7 +284,7 @@ export const createTemplatePdfFromRows = async (rows, inputFileName = 'example.x
     })
   })
 
-  pdfDoc.setTitle(TEMPLATE_TITLE)
+  pdfDoc.setTitle(templateTitle)
   pdfDoc.setAuthor('XLSX2PDF')
   pdfDoc.setSubject('Template worksheet export')
   pdfDoc.setCreationDate(new Date())

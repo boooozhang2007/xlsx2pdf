@@ -5,7 +5,7 @@ const TEMPLATE_PAGE_COUNTS = [
   38, 37, 40, 38, 39, 40, 40, 40, 37, 39, 39, 41, 37, 4,
 ]
 
-export const TEMPLATE_TITLE = '人教版初中英语单词汇总乱序版'
+export const TEMPLATE_TITLE = '词表'
 export const TEMPLATE_HEADERS = ['', '英文', '默写汉语', '中文', '默写英文']
 export const TEMPLATE_DEFAULT_PAGE_CAPACITY = 40
 
@@ -71,5 +71,6 @@ const sanitizeExportBase = (value, fallback) => {
   return base || fallback || '词表'
 }
 
+export const getTemplateTitle = (inputFileName) => sanitizeExportBase(inputFileName, TEMPLATE_TITLE)
 export const getTemplatePdfFileName = (inputFileName) => `${sanitizeExportBase(inputFileName, '词表')} 模板版.pdf`
 export const getTemplateXlsxFileName = (inputFileName) => `${sanitizeExportBase(inputFileName, '词表')} 模板版.xlsx`

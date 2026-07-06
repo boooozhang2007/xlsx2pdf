@@ -1,4 +1,4 @@
-import { TEMPLATE_HEADERS, TEMPLATE_PDF, TEMPLATE_TITLE, getTemplateXlsxFileName, paginateTemplateRows } from './templateLayout.js'
+import { TEMPLATE_HEADERS, TEMPLATE_PDF, getTemplateTitle, getTemplateXlsxFileName, paginateTemplateRows } from './templateLayout.js'
 
 const TEMPLATE_WORKBOOK_URL = '/template-worksheet.xlsx'
 const TEMPLATE_PRINT_SCALE = 0.82
@@ -69,6 +69,7 @@ const getDataRowHeightPt = (capacity) => {
 export const createTemplateXlsxBlob = async (rows, inputFileName = 'example.xlsx') => {
   const { ExcelJS, templateWorkbook } = await createWorkbookFromTemplate()
   const sourceSheet = templateWorkbook.worksheets[0]
+  const templateTitle = getTemplateTitle(inputFileName)
   const workbook = new ExcelJS.Workbook()
   workbook.creator = 'XLSX2PDF'
   workbook.lastModifiedBy = 'XLSX2PDF'
@@ -90,7 +91,7 @@ export const createTemplateXlsxBlob = async (rows, inputFileName = 'example.xlsx
   })
 
   copyCell(worksheet.getCell('A1'), sourceSheet.getCell('A3'), null)
-  copyCell(worksheet.getCell('B1'), sourceSheet.getCell('B1'), TEMPLATE_TITLE)
+  copyCell(worksheet.getCell('B1'), sourceSheet.getCell('B1'), templateTitle)
   copyCell(worksheet.getCell('C1'), sourceSheet.getCell('C1'), null)
   copyCell(worksheet.getCell('D1'), sourceSheet.getCell('D1'), null)
   copyCell(worksheet.getCell('E1'), sourceSheet.getCell('E1'), null)
