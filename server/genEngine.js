@@ -315,6 +315,15 @@ const buildStrictJsonInstruction = (requiredFields, example) => [
   `Example output item: ${JSON.stringify(example)}.`,
 ].join(' ')
 
+const buildStrictJsonObjectInstruction = (requiredFields, example) => [
+  'Return exactly one valid JSON object and nothing else.',
+  'Do not output markdown, code fences, comments, headings, explanations, or any extra text.',
+  'The object must contain all required fields exactly once.',
+  'If a value is unknown or unsafe, return an empty string instead of omitting the field.',
+  `The object must contain exactly these fields: ${requiredFields.join(', ')}.`,
+  `Example output object: ${JSON.stringify(example)}.`,
+].join(' ')
+
 const parseLlmModelOptions = () => {
   const raw = String(process.env.VIVI_LLM_MODELS || '').trim()
   const legacyDefault = String(process.env.VIVI_LLM_MODEL || '').trim()
@@ -500,6 +509,17 @@ const parseJsonArrayContent = (content) => {
   throw new Error('LLM 响应不是数组')
 }
 
+const parseJsonObjectContent = (content) => {
+  const parsed = JSON.parse(extractJsonCandidate(content))
+  if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+    if (parsed.item && typeof parsed.item === 'object' && !Array.isArray(parsed.item)) return parsed.item
+    if (parsed.data && typeof parsed.data === 'object' && !Array.isArray(parsed.data)) return parsed.data
+    if (parsed.result && typeof parsed.result === 'object' && !Array.isArray(parsed.result)) return parsed.result
+    return parsed
+  }
+  throw new Error('LLM 响应不是对象')
+}
+
 const extractLlmMessageContent = (data) => {
   const content = data?.choices?.[0]?.message?.content
   if (typeof content === 'string') return content
@@ -558,6 +578,61 @@ const fetchLlmArray = async (payload, kind, llmOptions = {}) => {
         return parseJsonArrayContent(extractLlmMessageContent(data)).filter(Boolean)
       } catch (error) {
         throw createLlmError(`${kind} 响应解析失败：${error.message || '返回内容不是有效 JSON 数组'}`, {
+          retryable: false,
+        })
+      }
+    } catch (error) {
+      clearTimeout(timeoutId)
+      lastError = error?.name === 'AbortError'
+        ? createLlmError(`${kind} 请求超时（>${requestTimeoutMs / 1000}s）`, { retryable: true })
+        : error
+      if (attempt >= requestRetries - 1 || !lastError?.retryable || lastError?.code === 'LLM_RATE_LIMITED') break
+      await sleep(500 * (attempt + 1))
+    }
+  }
+  throw lastError || new Error(`${kind} 请求失败`)
+}
+
+const fetchLlmObject = async (payload, kind, llmOptions = {}) => {
+  const { apiKey, url } = getLlmConfig(llmOptions)
+  const { requestRetries, requestTimeoutMs } = getLlmRetryPolicy()
+  let lastError = null
+  for (let attempt = 0; attempt < requestRetries; attempt += 1) {
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), requestTimeoutMs)
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+        signal: controller.signal,
+      })
+      clearTimeout(timeoutId)
+      if (!response.ok) {
+        const retryAfterMs = parseRetryAfterMs(response.headers.get('retry-after'))
+        const isRateLimited = response.status === 429
+        throw createLlmError(`${kind} 请求失败：${response.status}`, {
+          code: isRateLimited ? 'LLM_RATE_LIMITED' : 'LLM_REQUEST_FAILED',
+          status: response.status,
+          retryAfterMs,
+          retryable: isRetryableLlmStatus(response.status),
+          model: payload.model,
+        })
+      }
+      const rawText = await response.text()
+      let data = null
+      try {
+        data = JSON.parse(rawText)
+      } catch {
+        data = { choices: [{ message: { content: rawText } }] }
+      }
+      try {
+        return parseJsonObjectContent(extractLlmMessageContent(data))
+      } catch (error) {
+        throw createLlmError(`${kind} 响应解析失败：${error.message || '返回内容不是有效 JSON 对象'}`, {
           retryable: false,
         })
       }
@@ -633,7 +708,13 @@ const callLlmForMaterials = async (entries, requireSynonym, llmOptions = {}) => 
       'If an input item provides required_synonym, you must use that exact text as synonym and also place that exact text in synonym_rewrite_full once.',
       'synonym_original must be a complete sentence using the input word naturally.',
       'synonym_rewrite_full must be a very similar complete sentence containing synonym exactly once; do not use blanks in it.',
-      ...(isSingle ? ['Single-item strict mode: choose the final synonym text first; if grammar needs an inflected form put that form in synonym; then copy that exact text unchanged into synonym_rewrite_full once and only once.'] : []),
+      'Never omit synonym_original or synonym_rewrite_full; if you are unsure, still write a short safe classroom sentence.',
+      ...(isSingle
+        ? [
+            'Single-item strict mode: choose the final synonym text first; if grammar needs an inflected form put that form in synonym; then copy that exact text unchanged into synonym_rewrite_full once and only once.',
+            'Single-item strict mode checklist: return one object only; keep the same id; make synonym, synonym_original, and synonym_rewrite_full all non-empty strings.',
+          ]
+        : []),
     ]
   }
   const system = [
@@ -657,6 +738,11 @@ const callLlmForMaterials = async (entries, requireSynonym, llmOptions = {}) => 
           },
     ),
     `For each input item, keep the same id and produce: ${requestedFields}.`,
+    ...(requireSynonym
+      ? [
+          'Preferred synonym pattern: synonym_original uses the exact input word once; synonym_rewrite_full keeps the sentence almost unchanged and swaps only that word with the synonym.',
+        ]
+      : []),
     ...rules,
   ].join(' ')
 
@@ -721,21 +807,7 @@ const callLlmForSynonymRepair = async (entry, lastRaw, llmOptions = {}) => {
     max_tokens: 512,
   }
   try {
-    const { apiKey, url } = getLlmConfig(llmOptions)
-    const { requestTimeoutMs } = getLlmRetryPolicy()
-    const controller = new AbortController()
-    const timeoutId = setTimeout(() => controller.abort(), requestTimeoutMs)
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-      signal: controller.signal,
-    })
-    clearTimeout(timeoutId)
-    if (!response.ok) return null
-    const data = JSON.parse(await response.text())
-    const content = extractLlmMessageContent(data)
-    const repaired = JSON.parse(stripCodeFence(content))
+    const repaired = await fetchLlmObject(payload, 'LLM 同义替换修复', llmOptions)
     if (!repaired || typeof repaired !== 'object') return null
     // Merge repair fields into lastRaw so sanitizeMaterial can re-validate
     return {
@@ -744,6 +816,101 @@ const callLlmForSynonymRepair = async (entry, lastRaw, llmOptions = {}) => {
       synonym,
       synonym_original: String(repaired.synonym_original || originalSentence).trim(),
       synonym_rewrite_full: String(repaired.synonym_rewrite_full || '').trim(),
+    }
+  } catch {
+    return null
+  }
+}
+
+const callLlmForSynonymDoctor = async (entry, lexical, lastRaw, lastError, llmOptions = {}) => {
+  const synonym = normalizeRelationTerm(
+    entry.requiredSynonym
+    || lastRaw?.synonym
+    || lastRaw?.synonyms
+    || lastRaw?.similar_word
+    || lexical?.synonym
+    || '',
+  )
+  if (!synonym) return null
+  const { model } = getLlmConfig(llmOptions)
+  const payload = {
+    model,
+    messages: [
+      {
+        role: 'system',
+        content: [
+          'You are a doctor for failed English synonym replacement items.',
+          buildStrictJsonObjectInstruction(
+            ['id', 'synonym', 'synonym_original', 'synonym_rewrite_full'],
+            {
+              id: 'sample-id',
+              synonym: 'quick',
+              synonym_original: 'The runner is fast today.',
+              synonym_rewrite_full: 'The runner is quick today.',
+            },
+          ),
+          'Return one repaired object only.',
+          'Keep the given id exactly unchanged.',
+          'Keep the given synonym exactly unchanged; do not replace it with another word.',
+          'If grammar becomes awkward, rewrite the whole sentence frame instead of changing the synonym text.',
+          'synonym_original must contain the exact input word once and only once.',
+          'synonym_rewrite_full must be a very similar complete sentence containing the exact synonym once and only once.',
+          'Fill every required field even if the partial draft is bad; rewrite from scratch when needed.',
+          'Keep vocabulary simple and classroom-friendly for Chinese students.',
+        ].join(' '),
+      },
+      {
+        role: 'user',
+        content: JSON.stringify({
+          id: entry.key,
+          word: entry.displayEnglish,
+          meaning: entry.plainChinese,
+          synonym,
+          validation_error: lastError?.message || '',
+          partial_draft: lastRaw && typeof lastRaw === 'object'
+            ? {
+                synonym: String(lastRaw.synonym || lastRaw.synonyms || '').trim(),
+                synonym_original: String(
+                  lastRaw.synonym_original
+                  || lastRaw.original_sentence
+                  || lastRaw.source_sentence
+                  || '',
+                ).trim(),
+                synonym_rewrite_full: String(
+                  lastRaw.synonym_rewrite_full
+                  || lastRaw.rewrite_full
+                  || lastRaw.rewrite_sentence
+                  || '',
+                ).trim(),
+              }
+            : {},
+        }),
+      },
+    ],
+    temperature: 0,
+    max_tokens: 640,
+  }
+  try {
+    const repaired = await fetchLlmObject(payload, 'LLM 同义替换 doctor', llmOptions)
+    if (!repaired || typeof repaired !== 'object') return null
+    return {
+      ...(lastRaw && typeof lastRaw === 'object' ? lastRaw : {}),
+      ...repaired,
+      id: entry.key,
+      synonym,
+      synonym_original: String(
+        repaired.synonym_original
+        || repaired.original_sentence
+        || repaired.source_sentence
+        || '',
+      ).trim(),
+      synonym_rewrite_full: String(
+        repaired.synonym_rewrite_full
+        || repaired.rewrite_full
+        || repaired.rewrite_sentence
+        || repaired.rewritten_sentence
+        || '',
+      ).trim(),
     }
   } catch {
     return null
@@ -769,15 +936,46 @@ const sanitizeLexical = (raw, entry) => {
 const sanitizeMaterial = (raw, entry, lexical, requireSynonym) => {
   if (!raw || typeof raw !== 'object') throw new Error('题面结果为空')
   if (requireSynonym) {
-    const synonym = normalizeRelationTerm(raw.synonym || raw.synonyms || lexical?.synonym || '')
-    const synonymOriginal = String(raw.synonym_original || raw.original_sentence || raw.source_sentence || '').trim()
-    const rewriteFull = String(raw.synonym_rewrite_full || raw.rewrite_full || '').trim()
-    const rewriteBlankSource = String(raw.synonym_rewrite_blank || raw.rewrite_blank || '').trim()
+    const synonym = normalizeRelationTerm(
+      raw.synonym
+      || raw.synonyms
+      || raw.similar_word
+      || raw.answer_synonym
+      || lexical?.synonym
+      || '',
+    )
+    const synonymOriginal = String(
+      raw.synonym_original
+      || raw.original_sentence
+      || raw.source_sentence
+      || raw.original_full_sentence
+      || raw.source_full_sentence
+      || raw.sentence_with_word
+      || '',
+    ).trim()
+    const rewriteFull = String(
+      raw.synonym_rewrite_full
+      || raw.rewrite_full
+      || raw.rewrite_sentence
+      || raw.rewritten_sentence
+      || raw.target_sentence
+      || raw.sentence_with_synonym
+      || '',
+    ).trim()
+    const rewriteBlankSource = String(
+      raw.synonym_rewrite_blank
+      || raw.rewrite_blank
+      || raw.blank_rewrite
+      || '',
+    ).trim()
     const synonymRewriteBlank = countBlankSlots(rewriteBlankSource) === 1
       ? rewriteBlankSource
       : replaceAnswerWithBlank(rewriteFull, synonym)
-    if (!synonym || !synonymOriginal || !synonymRewriteBlank) throw new Error('同义替换题面缺字段')
-    if (countBlankSlots(synonymRewriteBlank) !== 1) throw new Error('同义替换空格替换失败')
+    if (!synonym) throw new Error('同义替换缺少 synonym')
+    if (!synonymOriginal) throw new Error('同义替换缺少 synonym_original')
+    if (!rewriteFull && countBlankSlots(rewriteBlankSource) !== 1) throw new Error('同义替换缺少 synonym_rewrite_full')
+    if (!synonymRewriteBlank) throw new Error('同义替换空格替换失败')
+    if (countBlankSlots(synonymRewriteBlank) !== 1) throw new Error('同义替换空格数量不正确')
     return {
       synonym,
       synonymOriginal,
@@ -792,7 +990,10 @@ const sanitizeMaterial = (raw, entry, lexical, requireSynonym) => {
     : replaceAnswerWithBlank(clozeFullSentence, entry.displayEnglish)
   const tfTrue = String(raw.tf_true || raw.true_sentence || raw.trueStatement || '').trim()
   const tfFalse = String(raw.tf_false || raw.false_sentence || raw.falseStatement || '').trim()
-  if (!clozeSentence || !tfTrue || !tfFalse) throw new Error('基础题面缺字段')
+  if (!tfTrue) throw new Error('基础题面缺少 tf_true')
+  if (!tfFalse) throw new Error('基础题面缺少 tf_false')
+  if (!clozeFullSentence && countBlankSlots(clozeBlankSource) !== 1) throw new Error('基础题面缺少 cloze_full_sentence')
+  if (!clozeSentence) throw new Error('cloze 替换失败')
   if (countBlankSlots(clozeSentence) !== 1) throw new Error('cloze 替换失败')
   return { clozeSentence, tfTrue, tfFalse }
 }
@@ -855,6 +1056,7 @@ const resolveSingleEntryStrict = async ({
   onResolved,
   onTick,
   repairLlm,
+  doctorLlm,
 }) => {
   const { singleItemRetries } = getLlmRetryPolicy()
   let lastError = null
@@ -882,8 +1084,22 @@ const resolveSingleEntryStrict = async ({
           [entry], [repairedRaw], sanitizeEntry, onResolved,
         )
         if (!unresolved.length) return { resolvedCount }
+        lastError = unresolved[0]?.error || lastError
+        lastRaw = repairedRaw
       }
     } catch { /* repair is best-effort; fall through to error */ }
+  }
+  if (typeof doctorLlm === 'function') {
+    try {
+      const doctoredRaw = await doctorLlm(entry, lastRaw, lastError)
+      if (doctoredRaw) {
+        const { unresolved, resolvedCount } = await resolveResponseItems(
+          [entry], [doctoredRaw], sanitizeEntry, onResolved,
+        )
+        if (!unresolved.length) return { resolvedCount }
+        lastError = unresolved[0]?.error || lastError
+      }
+    } catch { /* doctor is best-effort; fall through to error */ }
   }
   if (lastError?.code === 'LLM_RATE_LIMITED') {
     lastError.failedEntry = entry.displayEnglish || entry.english || entry.key || ''
@@ -903,6 +1119,7 @@ const resolveLlmEntries = async ({
   onProgress,
   onTick,
   repairLlm,
+  doctorLlm,
 }) => {
   const uniqueEntries = dedupeEntriesByKey(entries)
   const totalEntries = uniqueEntries.length
@@ -955,6 +1172,7 @@ const resolveLlmEntries = async ({
               onResolved,
               onTick,
               repairLlm,
+              doctorLlm,
             }),
           }
         } catch (error) {
@@ -993,32 +1211,38 @@ const ensureLexicalData = async (entries, context) => {
   })
   const resolvedKeys = new Set()
   const stageLabel = '预热 LLM 词汇关系'
-  await resolveLlmEntries({
-    entries: uncachedEntries,
-    batchSize,
-    concurrency,
-    kind: 'LLM 词汇',
-    callLlm: (batch) => callLlmForLexical(batch, { model: context.llmModel }),
-    sanitizeEntry: sanitizeLexical,
-    onResolved: async (entry, value) => {
-      const isNew = !resolvedKeys.has(entry.key)
-      if (isNew) resolvedKeys.add(entry.key)
-      context.lexicalCache.set(entry.key, value)
-      return isNew
-    },
-    onProgress: async (resolvedCount) => {
-      await context.reportProgress({
-        message: `[${context.exportName}] ${stageLabel} ${resolvedCount}/${uncachedEntries.length}`,
-        currentStep: stageLabel,
-        stageLabel,
-        stageWordCompleted: resolvedCount,
-        stageWordTotal: uncachedEntries.length,
-        totalWords: context.wordCount,
-      })
-      if (context.onCacheCheckpoint && resolvedCount % 50 === 0) await context.onCacheCheckpoint()
-    },
-    onTick: context.checkForCancellation,
-  })
+  try {
+    await resolveLlmEntries({
+      entries: uncachedEntries,
+      batchSize,
+      concurrency,
+      kind: 'LLM 词汇',
+      callLlm: (batch) => callLlmForLexical(batch, { model: context.llmModel }),
+      sanitizeEntry: sanitizeLexical,
+      onResolved: async (entry, value) => {
+        const isNew = !resolvedKeys.has(entry.key)
+        if (isNew) resolvedKeys.add(entry.key)
+        context.lexicalCache.set(entry.key, value)
+        return isNew
+      },
+      onProgress: async (resolvedCount) => {
+        await context.reportProgress({
+          message: `[${context.exportName}] ${stageLabel} ${resolvedCount}/${uncachedEntries.length}`,
+          currentStep: stageLabel,
+          stageLabel,
+          stageWordCompleted: resolvedCount,
+          stageWordTotal: uncachedEntries.length,
+          totalWords: context.wordCount,
+        })
+        if (context.onCacheCheckpoint && resolvedCount % 50 === 0) await context.onCacheCheckpoint()
+      },
+      onTick: context.checkForCancellation,
+    })
+  } catch (error) {
+    if (context.onCacheCheckpoint) await context.onCacheCheckpoint()
+    throw error
+  }
+  if (context.onCacheCheckpoint) await context.onCacheCheckpoint()
   return context.lexicalCache
 }
 
@@ -1037,35 +1261,50 @@ const ensureMaterials = async (entries, context, requireSynonym) => {
   })
   const resolvedKeys = new Set()
   const stageLabel = requireSynonym ? '预热 LLM 同义替换题面材料' : '预热 LLM 基础题面材料'
-  await resolveLlmEntries({
-    entries: uncachedEntries,
-    batchSize,
-    concurrency,
-    kind: requireSynonym ? 'LLM 同义替换题面' : 'LLM 基础题面',
-    callLlm: (batch) => callLlmForMaterials(batch, requireSynonym, { model: context.llmModel }),
-    sanitizeEntry: (raw, entry) => sanitizeMaterial(raw, entry, lexicalCache.get(entry.key), requireSynonym),
-    onResolved: async (entry, value) => {
-      const isNew = !resolvedKeys.has(entry.key)
-      if (isNew) resolvedKeys.add(entry.key)
-      cache.set(entry.key, value)
-      return isNew
-    },
-    onProgress: async (resolvedCount) => {
-      await context.reportProgress({
-        message: `[${context.exportName}] ${stageLabel} ${resolvedCount}/${uncachedEntries.length}`,
-        currentStep: stageLabel,
-        stageLabel,
-        stageWordCompleted: resolvedCount,
-        stageWordTotal: uncachedEntries.length,
-        totalWords: context.wordCount,
-      })
-      if (context.onCacheCheckpoint && resolvedCount % 50 === 0) await context.onCacheCheckpoint()
-    },
-    onTick: context.checkForCancellation,
-    repairLlm: requireSynonym
-      ? (entry, lastRaw) => callLlmForSynonymRepair(entry, lastRaw, { model: context.llmModel })
-      : null,
-  })
+  try {
+    await resolveLlmEntries({
+      entries: uncachedEntries,
+      batchSize,
+      concurrency,
+      kind: requireSynonym ? 'LLM 同义替换题面' : 'LLM 基础题面',
+      callLlm: (batch) => callLlmForMaterials(batch, requireSynonym, { model: context.llmModel }),
+      sanitizeEntry: (raw, entry) => sanitizeMaterial(raw, entry, lexicalCache.get(entry.key), requireSynonym),
+      onResolved: async (entry, value) => {
+        const isNew = !resolvedKeys.has(entry.key)
+        if (isNew) resolvedKeys.add(entry.key)
+        cache.set(entry.key, value)
+        return isNew
+      },
+      onProgress: async (resolvedCount) => {
+        await context.reportProgress({
+          message: `[${context.exportName}] ${stageLabel} ${resolvedCount}/${uncachedEntries.length}`,
+          currentStep: stageLabel,
+          stageLabel,
+          stageWordCompleted: resolvedCount,
+          stageWordTotal: uncachedEntries.length,
+          totalWords: context.wordCount,
+        })
+        if (context.onCacheCheckpoint && resolvedCount % 50 === 0) await context.onCacheCheckpoint()
+      },
+      onTick: context.checkForCancellation,
+      repairLlm: requireSynonym
+        ? (entry, lastRaw) => callLlmForSynonymRepair(entry, lastRaw, { model: context.llmModel })
+        : null,
+      doctorLlm: requireSynonym
+        ? (entry, lastRaw, lastError) => callLlmForSynonymDoctor(
+          entry,
+          lexicalCache.get(entry.key),
+          lastRaw,
+          lastError,
+          { model: context.llmModel },
+        )
+        : null,
+    })
+  } catch (error) {
+    if (context.onCacheCheckpoint) await context.onCacheCheckpoint()
+    throw error
+  }
+  if (context.onCacheCheckpoint) await context.onCacheCheckpoint()
   return cache
 }
 

@@ -14,6 +14,18 @@ const MAX_INTERNAL_QUEUE_WAIT_MS = Math.max(1000, Number.parseInt(process.env.GE
 const MIN_RATE_LIMIT_DELAY_MS = Math.max(1000, Number.parseInt(process.env.VIVI_LLM_RATE_LIMIT_MIN_DELAY_MS || '10000', 10) || 10000)
 const MAX_RATE_LIMIT_DELAY_MS = Math.max(MIN_RATE_LIMIT_DELAY_MS, Number.parseInt(process.env.VIVI_LLM_RATE_LIMIT_MAX_DELAY_MS || '120000', 10) || 120000)
 const MAX_RATE_LIMIT_REQUEUES = Math.max(1, Number.parseInt(process.env.VIVI_LLM_RATE_LIMIT_MAX_REQUEUES || '8', 10) || 8)
+const VALIDATION_RETRY_DELAY_MS = Math.max(
+  1000,
+  Number.isFinite(Number.parseInt(process.env.VIVI_LLM_VALIDATION_RETRY_DELAY_MS || '3000', 10))
+    ? Number.parseInt(process.env.VIVI_LLM_VALIDATION_RETRY_DELAY_MS || '3000', 10)
+    : 3000,
+)
+const MAX_VALIDATION_REQUEUES = Math.max(
+  0,
+  Number.isFinite(Number.parseInt(process.env.VIVI_LLM_VALIDATION_MAX_REQUEUES || '2', 10))
+    ? Number.parseInt(process.env.VIVI_LLM_VALIDATION_MAX_REQUEUES || '2', 10)
+    : 2,
+)
 const CANCELABLE_STATUSES = new Set(['queued', 'processing', 'canceling'])
 const TERMINAL_STATUSES = new Set(['completed', 'failed', 'canceled'])
 const TEST_PAPER_GROUP_SIZE = 100
@@ -48,6 +60,7 @@ const summarizeJob = (job) => ({
   llmBatchSize: job.llmBatchSize || 0,
   llmConcurrency: job.llmConcurrency || 0,
   llmRateLimitRetries: job.llmRateLimitRetries || 0,
+  llmValidationRetries: job.llmValidationRetries || 0,
   nextAttemptAt: job.nextAttemptAt || 0,
   progress: job.progress || null,
   error: job.error || '',
@@ -225,6 +238,47 @@ const tuneLlmRuntimeAfterRateLimit = (job = {}) => {
     llmConcurrency: current.concurrency,
     llmFallbackModels: current.fallbackModels,
     reason: '等待限流恢复',
+  }
+}
+
+const tuneLlmRuntimeAfterValidationFailure = (job = {}) => {
+  const current = buildLlmRuntimeForJob(job)
+  if (current.batchSize > 1) {
+    const nextBatchSize = Math.max(1, Math.floor(current.batchSize / 2))
+    return {
+      llmModel: current.model,
+      llmBatchSize: nextBatchSize,
+      llmConcurrency: current.concurrency,
+      llmFallbackModels: current.fallbackModels,
+      reason: `降低批次到 ${nextBatchSize}`,
+    }
+  }
+  if (current.concurrency > 1) {
+    return {
+      llmModel: current.model,
+      llmBatchSize: current.batchSize,
+      llmConcurrency: current.concurrency - 1,
+      llmFallbackModels: current.fallbackModels,
+      reason: `降低并发到 ${current.concurrency - 1}`,
+    }
+  }
+  if (current.fallbackModels.length) {
+    const [nextModel, ...remainingFallbacks] = current.fallbackModels
+    const nextRuntime = getLlmJobRuntime(nextModel)
+    return {
+      llmModel: nextRuntime.model,
+      llmBatchSize: nextRuntime.batchSize,
+      llmConcurrency: nextRuntime.concurrency,
+      llmFallbackModels: remainingFallbacks,
+      reason: `切换备用模型 ${nextRuntime.model}`,
+    }
+  }
+  return {
+    llmModel: current.model,
+    llmBatchSize: current.batchSize,
+    llmConcurrency: current.concurrency,
+    llmFallbackModels: current.fallbackModels,
+    reason: '复用当前模型补跑未完成条目',
   }
 }
 
@@ -410,6 +464,70 @@ const processSingleJob = async (job) => {
       await deleteObject({ key: jobCacheKey(job.id) }).catch(() => {})
       return
     }
+    if (error?.code === 'LLM_GENERATION_INCOMPLETE') {
+      const latestJobForRetry = await readLatestJobState(job.id)
+      if (latestJobForRetry && ['canceling', 'canceled'].includes(latestJobForRetry.status)) {
+        await writeJob({
+          ...latestJobForRetry,
+          status: 'canceled',
+          canceledAt: latestJobForRetry.canceledAt || now(),
+          nextAttemptAt: 0,
+          error: '',
+          progress: {
+            ...(latestJobForRetry.progress || createProgress(buildTotalSteps(latestJobForRetry.questionTypes || [], latestJobForRetry.wordCount || 0, latestJobForRetry.generationMode), latestJobForRetry.wordCount || 0)),
+            currentStep: '已取消',
+            message: '任务已取消。',
+          },
+        })
+        await deleteObject({ key: jobCacheKey(job.id) }).catch(() => {})
+        return
+      }
+
+      const retryBaseJob = {
+        ...(latestJobForRetry || liveJob),
+        questionTypes: (latestJobForRetry && latestJobForRetry.questionTypes) || liveJob.questionTypes || job.questionTypes || [],
+        wordCount: (latestJobForRetry && latestJobForRetry.wordCount) || liveJob.wordCount || job.wordCount || 0,
+      }
+      const retryCount = Math.max(0, Number(retryBaseJob.llmValidationRetries || 0))
+      if (retryCount < MAX_VALIDATION_REQUEUES) {
+        const runtimeUpdate = tuneLlmRuntimeAfterValidationFailure(retryBaseJob)
+        const delayMs = Math.min(MAX_INTERNAL_QUEUE_WAIT_MS, VALIDATION_RETRY_DELAY_MS * (retryCount + 1))
+        const nextAttemptAt = now() + delayMs
+        const waitingMessage = `LLM 返回内容未通过校验，${Math.max(1, Math.ceil(delayMs / 1000))} 秒后自动补跑未完成条目；${runtimeUpdate.reason}。`
+        const queuedRetryJob = await writeJob({
+          ...retryBaseJob,
+          status: 'queued',
+          error: '',
+          llmModel: runtimeUpdate.llmModel,
+          llmBatchSize: runtimeUpdate.llmBatchSize,
+          llmConcurrency: runtimeUpdate.llmConcurrency,
+          llmFallbackModels: runtimeUpdate.llmFallbackModels,
+          llmValidationRetries: retryCount + 1,
+          nextAttemptAt,
+          progress: {
+            ...(retryBaseJob.progress || createProgress(buildTotalSteps(retryBaseJob.questionTypes || [], retryBaseJob.wordCount || 0, retryBaseJob.generationMode), retryBaseJob.wordCount || 0)),
+            currentStep: '等待题面补跑',
+            stageLabel: '等待题面补跑',
+            message: waitingMessage,
+          },
+        })
+        await writeJsonObject({
+          key: jobPayloadKey(job.id),
+          value: {
+            ...(payload || {}),
+            rows: payload?.rows || [],
+            fileName: payload?.fileName || queuedRetryJob.fileName,
+            questionTypes: payload?.questionTypes || queuedRetryJob.questionTypes,
+            generationMode: payload?.generationMode || queuedRetryJob.generationMode || GENERATION_MODE_FIXED_TEST_PAPER,
+            llmModel: queuedRetryJob.llmModel,
+            llmBatchSize: queuedRetryJob.llmBatchSize,
+            llmConcurrency: queuedRetryJob.llmConcurrency,
+            llmFallbackModels: queuedRetryJob.llmFallbackModels || [],
+          },
+        })
+        return
+      }
+    }
     if (error?.code === 'LLM_RATE_LIMITED') {
       const latestJobForRetry = await readLatestJobState(job.id)
       if (latestJobForRetry && ['canceling', 'canceled'].includes(latestJobForRetry.status)) {
@@ -542,6 +660,7 @@ export const submitWorksheetJob = async ({ rows, fileName, questionTypes, genera
     llmBatchSize: llmRuntime.batchSize,
     llmConcurrency: llmRuntime.concurrency,
     llmRateLimitRetries: 0,
+    llmValidationRetries: 0,
     nextAttemptAt: 0,
     createdAt: submittedAt,
     submittedAt,

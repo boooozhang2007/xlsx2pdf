@@ -33,7 +33,7 @@
 - 生成请求会先提交到服务端队列，刷新页面后仍可继续查看任务状态与下载结果
 - 队列状态与 ZIP 成品依赖现有 R2 配置持久化
 - 依赖 LLM 的题型会读取服务端环境变量中的 `VIVI_LLM_API_KEY`、`VIVI_LLM_BASE_URL`，并支持在后端预设多个 `VIVI_LLM_MODELS` 供前端切换
-- LLM 题型不再回退到本地模板兜底；如果返回内容缺字段或格式错误，任务会继续重试并在最终失败时明确报错
+- LLM 题型不再回退到本地模板兜底；如果返回内容缺字段或格式错误，会先拆单重试、尝试 doctor 修复，并自动补跑未完成条目，最终仍失败时再明确报错
 
 ## 本地运行
 
@@ -75,6 +75,8 @@ VIVI_LLM_SINGLE_ITEM_RETRIES=可选，单词级严格重试次数，默认 4
 VIVI_LLM_RATE_LIMIT_MIN_DELAY_MS=可选，429 后自动重试的最小等待时间，默认 10000
 VIVI_LLM_RATE_LIMIT_MAX_DELAY_MS=可选，429 后自动重试的最大等待时间，默认 120000
 VIVI_LLM_RATE_LIMIT_MAX_REQUEUES=可选，429 自动重试上限，默认 8
+VIVI_LLM_VALIDATION_RETRY_DELAY_MS=可选，题面校验失败后自动补跑前的等待时间，默认 3000
+VIVI_LLM_VALIDATION_MAX_REQUEUES=可选，题面校验失败自动补跑上限，默认 2
 GEN_QUEUE_PROGRESS_WRITE_INTERVAL_MS=可选，队列进度写回节流间隔，默认 700
 GEN_QUEUE_PROGRESS_WRITE_WORD_DELTA=可选，词条进度累计到多少再写回，默认 5
 GEN_QUEUE_CANCELLATION_POLL_INTERVAL_MS=可选，取消状态轮询间隔，默认 300
