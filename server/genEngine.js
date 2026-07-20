@@ -1703,7 +1703,8 @@ const generateTestPaperMissingLettersSection = (paragraphs, group, context, answ
     const chars = core.split('')
     const blankIndex = core.length <= 4 ? core.length - 1 : Math.min(core.length - 1, 1 + Math.floor(context.rng() * (core.length - 1)))
     chars[blankIndex] = '_'
-    paragraphs.push(paragraph(`${index + 1}. ${chars.join(' ')}`, { size: 11, spaceAfter: 2 }))
+    const meaningSuffix = entry.plainChinese ? ` (${entry.plainChinese})` : ''
+    paragraphs.push(paragraph(`${index + 1}. ${chars.join(' ')}${meaningSuffix}`, { size: 11, spaceAfter: 2 }))
     answers.push(`${index + 1}.${entry.displayEnglish}`)
   })
   const lines = []
