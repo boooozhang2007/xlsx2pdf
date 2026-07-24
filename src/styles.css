@@ -438,6 +438,38 @@ button:disabled {
   box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.12);
 }
 
+.exportSizeSelector {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.exportSizeSelector label {
+  position: relative;
+  display: grid;
+  place-items: center;
+  min-height: 38px;
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.82);
+  color: #475569;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.exportSizeSelector label.active {
+  border-color: rgba(37, 99, 235, 0.55);
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.exportSizeSelector input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
 .inputShell em {
   position: absolute;
   right: 10px;

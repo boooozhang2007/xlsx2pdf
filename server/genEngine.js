@@ -7,7 +7,12 @@ import fontkit from '@pdf-lib/fontkit'
 import { createZipBuffer } from './zip.js'
 import { createDocxBuffer } from './docx.js'
 import { ALL_QUESTION_TYPE_KEYS, FIXED_TEST_PAPER_QUESTION_KEYS, FIXED_TEST_PAPER_SECTIONS, QUESTION_TYPE_OPTIONS } from '../shared/worksheetTypes.js'
-import { GENERATION_MODE_FIXED_TEST_PAPER, GENERATION_MODE_LEGACY_ZIP } from '../shared/generationModes.js'
+import {
+  GENERATION_MODE_FIXED_TEST_PAPER,
+  GENERATION_MODE_LEGACY_ZIP,
+  normalizeLegacyQuestionCount,
+  normalizeTestPaperGroupSizes,
+} from '../shared/generationModes.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const BLACK = rgb(0, 0, 0)
@@ -656,11 +661,12 @@ const callLlmForLexical = async (entries, llmOptions = {}) => {
   const system = [
     'You create vocabulary metadata for Chinese middle-school students.',
     buildStrictJsonInstruction(
-      ['id', 'definition_en', 'synonym', 'antonym'],
-      { id: 'sample-id', definition_en: 'to make something clear', synonym: 'explain', antonym: '' },
+      ['id', 'definition_en', 'definition_zh', 'synonym', 'antonym'],
+      { id: 'sample-id', definition_en: 'to make something clear', definition_zh: '使某事变得清楚', synonym: 'explain', antonym: '' },
     ),
-    'For each input item, keep the same id and produce: definition_en, synonym, antonym.',
+    'For each input item, keep the same id and produce: definition_en, definition_zh, synonym, antonym.',
     'Rules for definition_en: short, clear English explanation, do not repeat the target word, no brackets.',
+    'Rules for definition_zh: accurately translate definition_en into concise Simplified Chinese, no brackets.',
     'Rules for synonym and antonym: use very common classroom-friendly English words or short phrases, base form only, same part of speech when possible.',
     'If there is no safe, common choice, return an empty string.',
     'Avoid rare, slang, archaic, or highly technical words.',
@@ -684,7 +690,7 @@ const callLlmForLexical = async (entries, llmOptions = {}) => {
       },
     ],
     temperature: 0,
-    max_tokens: Math.max(2048, Math.min(32000, 180 * entries.length)),
+    max_tokens: Math.max(2048, Math.min(32000, 230 * entries.length)),
   }
   return fetchLlmArray(payload, 'LLM 词汇', llmOptions)
 }
@@ -920,7 +926,9 @@ const callLlmForSynonymDoctor = async (entry, lexical, lastRaw, lastError, llmOp
 const sanitizeLexical = (raw, entry) => {
   if (!raw || typeof raw !== 'object') throw new Error('词汇结果为空')
   const definitionEn = String(raw.definition_en || raw.definitionEn || raw.definition || raw.meaning_en || '').trim().replace(/\s+/g, ' ')
+  const definitionZh = String(raw.definition_zh || raw.definitionZh || raw.meaning_zh || '').trim().replace(/\s+/g, ' ')
   if (!definitionEn) throw new Error('缺少 definition_en')
+  if (!definitionZh) throw new Error('缺少 definition_zh')
   if (new RegExp(`(?<![A-Za-z])${entry.displayEnglish.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![A-Za-z])`, 'i').test(definitionEn)) {
     throw new Error('definition_en 不能重复目标词')
   }
@@ -928,6 +936,7 @@ const sanitizeLexical = (raw, entry) => {
   const antonym = normalizeRelationTerm(raw.antonym || raw.antonyms || raw.opposite_word || '')
   return {
     definitionEn,
+    definitionZh,
     synonym: synonym && !isMorphVariant(synonym, entry.displayEnglish) ? synonym : '',
     antonym: antonym && !isMorphVariant(antonym, entry.displayEnglish) ? antonym : '',
   }
@@ -1202,7 +1211,7 @@ const resolveLlmEntries = async ({
 }
 
 const ensureLexicalData = async (entries, context) => {
-  const uncachedEntries = dedupeEntriesByKey(entries.filter((entry) => !context.lexicalCache.has(entry.key)))
+  const uncachedEntries = dedupeEntriesByKey(entries.filter((entry) => !context.lexicalCache.get(entry.key)?.definitionZh))
   if (!uncachedEntries.length) return context.lexicalCache
   const { batchSize, concurrency } = getLlmConfig({
     model: context.llmModel,
@@ -1308,15 +1317,15 @@ const ensureMaterials = async (entries, context, requireSynonym) => {
   return cache
 }
 
-const chooseSynonymWords = (group, context) => {
+const chooseSynonymWords = (group, context, count = context.questionsPerGroup || 30) => {
   const compatible = group.filter((entry) => isSentenceCompatibleWord(entry.english))
   const words = compatible.length ? compatible : group
   const withSynonym = words.filter((entry) => context.lexicalCache.get(entry.key)?.synonym)
-  if (withSynonym.length >= 30) return sample(withSynonym, 30, context.rng)
+  if (withSynonym.length >= count) return sample(withSynonym, count, context.rng)
   if (!withSynonym.length) return []
   const chosen = [...withSynonym]
-  while (chosen.length < Math.min(words.length, 30)) chosen.push(withSynonym[chosen.length % withSynonym.length])
-  return shuffle(chosen, context.rng).slice(0, Math.min(30, chosen.length))
+  while (chosen.length < Math.min(words.length, count)) chosen.push(withSynonym[chosen.length % withSynonym.length])
+  return shuffle(chosen, context.rng).slice(0, Math.min(count, chosen.length))
 }
 
 const chooseSynonymWordsByCount = (group, context, count) => {
@@ -1337,11 +1346,11 @@ const buildBasicChoicePlan = (groups, context) => {
   groups.forEach((group, groupIndex) => {
     const compatible = group.filter((entry) => isSentenceCompatibleWord(entry.english))
     const words = compatible.length ? compatible : group
-    const multipleChoice = sample(words, Math.min(30, words.length), context.rng)
+    const multipleChoice = sample(words, Math.min(context.questionsPerGroup, words.length), context.rng)
     plan.set(`二_选择题:${groupIndex}`, multipleChoice)
     basicEntries.push(...multipleChoice)
 
-    const trueFalse = sample(words, Math.min(10, words.length), context.rng)
+    const trueFalse = sample(words, Math.min(context.questionsPerGroup, words.length), context.rng)
     plan.set(`九_判断正误:${groupIndex}`, trueFalse)
     basicEntries.push(...trueFalse)
   })
@@ -1352,7 +1361,7 @@ const buildSynonymChoicePlan = (groups, context) => {
   const plan = new Map()
   const synonymEntries = []
   groups.forEach((group, groupIndex) => {
-    const synonym = chooseSynonymWords(group, context)
+    const synonym = chooseSynonymWords(group, context, context.questionsPerGroup)
     plan.set(`三_同义替换:${groupIndex}`, synonym)
     synonymEntries.push(...synonym)
   })
@@ -1417,8 +1426,8 @@ const writeAnswerBlock = (paragraphs, title, answers, perLine = 10, pageBreakBef
   }
 }
 
-const groupRange = (groupIndex, group) => {
-  const start = groupIndex * GROUP_SIZE + 1
+const groupRange = (groupIndex, group, groupSize = GROUP_SIZE) => {
+  const start = groupIndex * groupSize + 1
   return [start, start + group.length - 1]
 }
 
@@ -1426,7 +1435,7 @@ const generateMatching = (questionParagraphs, answerParagraphs, group, groupInde
   const lexical = context.lexicalCache
   const pool = group.filter((entry) => lexical.get(entry.key)?.definitionEn)
   if (!pool.length) throw new Error('释义匹配缺少可用的 LLM 释义结果。')
-  const chosen = sample(pool, Math.min(30, pool.length), context.rng)
+  const chosen = fillToCount(pool, context.questionsPerGroup, context.rng)
   questionParagraphs.push(paragraph('一. Matching Words with Definitions 单词释义匹配题', { bold: true, size: 12, spaceBefore: 6, spaceAfter: 4 }))
   questionParagraphs.push(paragraph('Match each definition with the correct word. 根据英文释义，从方框中选出正确单词。', { spaceAfter: 6 }))
   const answers = []
@@ -1434,7 +1443,8 @@ const generateMatching = (questionParagraphs, answerParagraphs, group, groupInde
     const distractors = uniqueDistractors(group, entry, 3, (item) => item.cleanEnglish, context.rng)
     const options = shuffle([...distractors.map((item) => item.displayEnglish), entry.displayEnglish], context.rng).slice(0, 4)
     const definition = requireGeneratedValue(lexical.get(entry.key)?.definitionEn, '释义匹配存在缺失的 definition_en。')
-    questionParagraphs.push(paragraph(`${index + 1}. ${definition}`))
+    const definitionZh = requireGeneratedValue(lexical.get(entry.key)?.definitionZh, '释义匹配存在缺失的 definition_zh。')
+    questionParagraphs.push(paragraph(`${index + 1}. ${definition} (${definitionZh})`))
     questionParagraphs.push(paragraph(optionLine(options)))
     answers.push([index + 1, 'ABCD'[options.indexOf(entry.displayEnglish)] || 'A'])
   })
@@ -1442,7 +1452,7 @@ const generateMatching = (questionParagraphs, answerParagraphs, group, groupInde
 }
 
 const generateMultipleChoice = (questionParagraphs, answerParagraphs, group, groupIndex, context) => {
-  const chosen = context.choicePlan.get(`二_选择题:${groupIndex}`) || sample(group, Math.min(30, group.length), context.rng)
+  const chosen = context.choicePlan.get(`二_选择题:${groupIndex}`) || sample(group, Math.min(context.questionsPerGroup, group.length), context.rng)
   questionParagraphs.push(paragraph('二. Multiple-Choice Questions 单词选择题', { bold: true, size: 12, spaceBefore: 6, spaceAfter: 4 }))
   questionParagraphs.push(paragraph('Choose the best word to complete each sentence. 选择最佳单词补全句子。', { spaceAfter: 6 }))
   const answers = []
@@ -1487,7 +1497,7 @@ const generateMissingLetters = (questionParagraphs, answerParagraphs, group, gro
     const core = spellingCore(entry.english)
     return core.length >= 5 && core.length <= 12
   })
-  const chosen = sample(pool, Math.min(10, pool.length), context.rng)
+  const chosen = fillToCount(pool, context.questionsPerGroup, context.rng)
   questionParagraphs.push(paragraph('四. Missing Letters 缺字母填空', { bold: true, size: 12, spaceBefore: 6, spaceAfter: 4 }))
   questionParagraphs.push(paragraph('Fill in the missing letters and write the full word. 补全所缺字母，并写出完整单词。', { spaceAfter: 6 }))
   const answers = []
@@ -1514,12 +1524,13 @@ const generateSynAntJudge = (questionParagraphs, answerParagraphs, group, groupI
     if (lexical.antonym) antPairs.push([entry.displayEnglish, lexical.antonym, 'A'])
   })
   if (!synPairs.length && !antPairs.length) throw new Error('同义反义辨析缺少可用的 LLM 词汇关系。')
-  let pairs = [...sample(antPairs, Math.min(12, antPairs.length), context.rng), ...sample(synPairs, Math.min(18, synPairs.length), context.rng)]
+  const antonymTarget = Math.round(context.questionsPerGroup * 0.4)
+  let pairs = [...sample(antPairs, Math.min(antonymTarget, antPairs.length), context.rng), ...sample(synPairs, Math.min(context.questionsPerGroup - antonymTarget, synPairs.length), context.rng)]
   const rest = [...antPairs, ...synPairs].filter((pair) => !pairs.includes(pair))
-  while (pairs.length < 30 && rest.length) pairs.push(rest.shift())
+  while (pairs.length < context.questionsPerGroup && rest.length) pairs.push(rest.shift())
   const origPairsLen = pairs.length
-  while (origPairsLen && pairs.length < 30) pairs.push(pairs[pairs.length % origPairsLen])
-  pairs = shuffle(pairs.slice(0, 30), context.rng)
+  while (origPairsLen && pairs.length < context.questionsPerGroup) pairs.push(pairs[pairs.length % origPairsLen])
+  pairs = shuffle(pairs.slice(0, context.questionsPerGroup), context.rng)
   const answers = []
   pairs.forEach((pair, index) => {
     questionParagraphs.push(paragraph(`${index + 1}. ${pair[0]} & ${pair[1]} (    )`))
@@ -1544,12 +1555,14 @@ const generateMatchBlocks = (questionParagraphs, answerParagraphs, group, groupI
   let usedPairIndex = 0
   const answers = []
   let questionNumber = 0
-  for (let blockIndex = 0; blockIndex < 6; blockIndex += 1) {
+  const blockCount = Math.ceil(context.questionsPerGroup / 5)
+  for (let blockIndex = 0; blockIndex < blockCount; blockIndex += 1) {
     const block = []
+    const blockTarget = Math.min(5, context.questionsPerGroup - questionNumber)
     const usedLeft = new Set()
     const usedRight = new Set()
     let attempts = 0
-    while (block.length < 5 && pairs.length && attempts < Math.max(80, pairs.length * 4)) {
+    while (block.length < blockTarget && pairs.length && attempts < Math.max(80, pairs.length * 4)) {
       const pair = pairs[usedPairIndex % pairs.length]
       usedPairIndex += 1
       attempts += 1
@@ -1558,7 +1571,7 @@ const generateMatchBlocks = (questionParagraphs, answerParagraphs, group, groupI
       usedLeft.add(pair[0].cleanEnglish)
       usedRight.add(pair[1])
     }
-    while (block.length < 5 && pairs.length) {
+    while (block.length < blockTarget && pairs.length) {
       const pair = pairs[usedPairIndex % pairs.length]
       usedPairIndex += 1
       block.push(pair)
@@ -1585,7 +1598,7 @@ const generateMatchBlocks = (questionParagraphs, answerParagraphs, group, groupI
 }
 
 const generateTrueFalse = (questionParagraphs, answerParagraphs, group, groupIndex, context) => {
-  const chosen = context.choicePlan.get(`九_判断正误:${groupIndex}`) || sample(group, Math.min(10, group.length), context.rng)
+  const chosen = context.choicePlan.get(`九_判断正误:${groupIndex}`) || sample(group, Math.min(context.questionsPerGroup, group.length), context.rng)
   questionParagraphs.push(paragraph('八. True or False 判断正误', { bold: true, size: 12, spaceBefore: 6, spaceAfter: 4 }))
   questionParagraphs.push(paragraph('Write T (true) or F (false) for each statement. 判断下列句子的正误，正确填T，错误填F。', { spaceAfter: 6 }))
   const answers = []
@@ -1604,8 +1617,8 @@ const createDocxParagraphs = (title) => [paragraph(title, { size: 16, bold: true
 const createAnswerParagraphs = (title) => [paragraph(title, { size: 18, bold: true, align: 'center', spaceAfter: 10 })]
 
 const testPaperOptionLine = (options) => options.map((value, index) => `${'ABCD'[index]}. ${value}`).join('  ')
-const testPaperRange = (groupIndex, group) => {
-  const start = groupIndex * TEST_PAPER_GROUP_SIZE + 1
+const testPaperRange = (groupIndex, group, groupSize = TEST_PAPER_GROUP_SIZE) => {
+  const start = groupIndex * groupSize + 1
   return [start, start + group.length - 1]
 }
 
@@ -1642,7 +1655,8 @@ const generateTestPaperMatchingSection = (paragraphs, group, context, answersOut
     const distractors = uniqueDistractors(group, entry, 3, (item) => item.cleanEnglish, context.rng)
     const options = shuffle([...distractors.map((item) => item.displayEnglish), entry.displayEnglish], context.rng).slice(0, 4)
     const definition = requireGeneratedValue(context.lexicalCache.get(entry.key)?.definitionEn, '释义匹配存在缺失的 definition_en。')
-    paragraphs.push(paragraph(`(    ) ${index + 1}. ${definition}`, { size: 11, spaceAfter: 1 }))
+    const definitionZh = requireGeneratedValue(context.lexicalCache.get(entry.key)?.definitionZh, '释义匹配存在缺失的 definition_zh。')
+    paragraphs.push(paragraph(`(    ) ${index + 1}. ${definition} (${definitionZh})`, { size: 11, spaceAfter: 1 }))
     paragraphs.push(paragraph(testPaperOptionLine(options), { size: 11, spaceAfter: 2 }))
     answers.push(`${index + 1}.${'ABCD'[options.indexOf(entry.displayEnglish)] || 'A'}`)
   })
@@ -1718,8 +1732,8 @@ const generateTestPaperSynAntSection = (paragraphs, group, context, answersOut) 
   const antonymPairs = []
   group.forEach((entry) => {
     const lexical = context.lexicalCache.get(entry.key) || {}
-    if (lexical.synonym) synonymPairs.push([entry.displayEnglish, lexical.synonym, 'S', entry.plainChinese])
-    if (lexical.antonym) antonymPairs.push([entry.displayEnglish, lexical.antonym, 'A', entry.plainChinese])
+    if (lexical.synonym) synonymPairs.push([entry.displayEnglish, lexical.synonym, 'S'])
+    if (lexical.antonym) antonymPairs.push([entry.displayEnglish, lexical.antonym, 'A'])
   })
   if (!synonymPairs.length && !antonymPairs.length) throw new Error('同义反义辨析缺少可用的 LLM 词汇关系。')
   const selected = [
@@ -1731,8 +1745,7 @@ const generateTestPaperSynAntSection = (paragraphs, group, context, answersOut) 
   paragraphs.push(paragraph('Write S (synonym) or A (antonym) in each bracket. 判断每组单词是同义词还是反义词，并在括号内填写 S 或 A。', { size: 11, spaceAfter: 4 }))
   const answers = []
   pairs.forEach((pair, index) => {
-    const meaningSuffix = pair[3] ? ` (${pair[3]})` : ''
-    paragraphs.push(paragraph(`(    ) ${index + 1}. ${pair[0]} & ${pair[1]}${meaningSuffix}`, { size: 11, spaceAfter: 2 }))
+    paragraphs.push(paragraph(`(    ) ${index + 1}. ${pair[0]} & ${pair[1]}`, { size: 11, spaceAfter: 2 }))
     answers.push(`${index + 1}.${pair[2]}`)
   })
   answersOut.push({ title: '五、同义反义词', lines: [answers.join('  ')] })
@@ -1788,7 +1801,7 @@ const createFixedTestPaperFiles = async (groups, context) => {
 
   for (let groupIndex = 0; groupIndex < groups.length; groupIndex += 1) {
     const group = groups[groupIndex]
-    const [start, end] = testPaperRange(groupIndex, group)
+    const [start, end] = testPaperRange(groupIndex, group, context.groupSize)
     const title = buildTestPaperTitle(start, end)
     const questionParagraphs = createDocxParagraphs(title)
     const answerGroups = []
@@ -1805,7 +1818,7 @@ const createFixedTestPaperFiles = async (groups, context) => {
     addTestPaperAnswerSection(questionParagraphs, answerGroups)
 
     files.push({
-      name: `${context.exportName}/${start}-${end}测试卷.docx`,
+      name: `${context.exportName}/${context.exportVariantLabel || '100词一组'}/${start}-${end}测试卷.docx`,
       data: createDocxBuffer({ title, paragraphs: questionParagraphs }),
     })
 
@@ -2055,7 +2068,7 @@ const createNonTranslationFiles = async (questionKey, groups, context) => {
   for (let groupIndex = 0; groupIndex < groups.length; groupIndex += 1) {
     const group = groups[groupIndex]
     await context.checkForCancellation()
-    const [start, end] = groupRange(groupIndex, group)
+    const [start, end] = groupRange(groupIndex, group, context.groupSize)
     questionParagraphs.push(paragraph(`第 ${groupIndex + 1} 组（第${start}～${end}词）`, {
       size: 14,
       bold: true,
@@ -2111,8 +2124,9 @@ const createTranslationFiles = async (questionKey, groups, context) => {
   for (let groupIndex = 0; groupIndex < groups.length; groupIndex += 1) {
     const group = groups[groupIndex]
     await context.checkForCancellation()
-    const [start, end] = groupRange(groupIndex, group)
-    const rows = generateTranslationRows(group, context, questionKey === '十_汉译英' ? 'cn2en' : 'en2cn')
+    const [start, end] = groupRange(groupIndex, group, context.groupSize)
+    const selected = sample(group, Math.min(context.questionsPerGroup, group.length), context.rng)
+    const rows = generateTranslationRows(selected, context, questionKey === '十_汉译英' ? 'cn2en' : 'en2cn')
     pages.push({
       headerText: `${start}~${end}`,
       layout: chooseTranslationLayout(rows, font),
@@ -2166,20 +2180,27 @@ const createGenerationContext = (
   llmModel,
   llmBatchSize,
   llmConcurrency,
-) => ({
-  exportName,
-  selectedKeys,
-  wordCount: words.length,
-  llmModel: String(llmModel || '').trim(),
-  llmBatchSize: Math.max(1, Number.parseInt(llmBatchSize, 10) || getLlmJobRuntime(llmModel).batchSize),
-  llmConcurrency: Math.max(1, Number.parseInt(llmConcurrency, 10) || getLlmJobRuntime(llmModel).concurrency),
-  rng: createSeededRng(`${fileName}|${exportName}|${words.map((word) => word.key).join('|')}`),
-  lexicalCache: new Map(),
-  basicMaterialCache: new Map(),
-  synonymMaterialCache: new Map(),
-  reportProgress,
-  checkForCancellation,
-})
+  questionsPerGroup,
+) => {
+  const rngSeed = `${fileName}|${exportName}|${words.map((word) => word.key).join('|')}`
+  return {
+    exportName,
+    selectedKeys,
+    wordCount: words.length,
+    llmModel: String(llmModel || '').trim(),
+    llmBatchSize: Math.max(1, Number.parseInt(llmBatchSize, 10) || getLlmJobRuntime(llmModel).batchSize),
+    llmConcurrency: Math.max(1, Number.parseInt(llmConcurrency, 10) || getLlmJobRuntime(llmModel).concurrency),
+    questionsPerGroup: normalizeLegacyQuestionCount(questionsPerGroup),
+    groupSize: GROUP_SIZE,
+    rngSeed,
+    rng: createSeededRng(rngSeed),
+    lexicalCache: new Map(),
+    basicMaterialCache: new Map(),
+    synonymMaterialCache: new Map(),
+    reportProgress,
+    checkForCancellation,
+  }
+}
 
 export const generateWorksheetArchive = async ({
   rows,
@@ -2192,6 +2213,8 @@ export const generateWorksheetArchive = async ({
   llmModel,
   llmBatchSize,
   llmConcurrency,
+  legacyQuestionCount,
+  testPaperGroupSizes,
   initialCache = null,
   onCacheCheckpoint = null,
 }) => {
@@ -2225,6 +2248,7 @@ export const generateWorksheetArchive = async ({
     llmModel || getDefaultLlmModel(),
     llmBatchSize,
     llmConcurrency,
+    legacyQuestionCount,
   )
   context.generationMode = normalizedMode
 
@@ -2248,7 +2272,18 @@ export const generateWorksheetArchive = async ({
         synonym: Object.fromEntries(context.synonymMaterialCache),
       }).catch(() => {})
     : null
-  const groups = chunkGroups(words, normalizedMode === GENERATION_MODE_FIXED_TEST_PAPER ? TEST_PAPER_GROUP_SIZE : GROUP_SIZE)
+  const fixedGroupSets = normalizedMode === GENERATION_MODE_FIXED_TEST_PAPER
+    ? normalizeTestPaperGroupSizes(testPaperGroupSizes).map((configuredSize) => {
+        const groupSize = configuredSize || words.length
+        return {
+          configuredSize,
+          groupSize,
+          label: configuredSize ? `${configuredSize}词一组` : '全部单词一组',
+          groups: chunkGroups(words, groupSize),
+        }
+      })
+    : []
+  const groups = normalizedMode === GENERATION_MODE_FIXED_TEST_PAPER ? fixedGroupSets[0].groups : chunkGroups(words, GROUP_SIZE)
   const needsLexical = selectedKeys.some((key) => LEXICAL_QUESTION_KEYS.has(key))
   const needsBasicMaterials = selectedKeys.some((key) => BASIC_MATERIAL_QUESTION_KEYS.has(key))
   const needsSynonymMaterials = selectedKeys.includes('三_同义替换')
@@ -2262,7 +2297,9 @@ export const generateWorksheetArchive = async ({
     stageWordCompleted: 0,
   })
   await report({
-    message: `[${exportName}] 共 ${groups.length} 份测试卷`,
+    message: normalizedMode === GENERATION_MODE_FIXED_TEST_PAPER
+      ? `[${exportName}] 将导出 ${fixedGroupSets.reduce((total, item) => total + item.groups.length, 0)} 份测试卷`
+      : `[${exportName}] 共 ${groups.length} 组题目`,
     currentStep: '准备生成',
     stageLabel: '准备生成',
     totalWords: words.length,
@@ -2271,13 +2308,27 @@ export const generateWorksheetArchive = async ({
   })
 
   context.choicePlan = new Map()
+  context.fixedChoicePlans = new Map()
   let uniqueBasicEntries = []
   if (needsBasicMaterials) {
-    const { plan, basicEntries } = normalizedMode === GENERATION_MODE_FIXED_TEST_PAPER
-      ? buildTestPaperBasicChoicePlan(groups, context)
-      : buildBasicChoicePlan(groups, context)
-    context.choicePlan = new Map(plan)
-    uniqueBasicEntries = Array.from(new Map(basicEntries.map((entry) => [entry.key, entry])).values())
+    if (normalizedMode === GENERATION_MODE_FIXED_TEST_PAPER) {
+      const basicEntries = []
+      fixedGroupSets.forEach((groupSet) => {
+        const planContext = {
+          ...context,
+          rng: createSeededRng(`${context.rngSeed}|${groupSet.label}|plan-basic`),
+        }
+        const result = buildTestPaperBasicChoicePlan(groupSet.groups, planContext)
+        context.fixedChoicePlans.set(groupSet.label, new Map(result.plan))
+        basicEntries.push(...result.basicEntries)
+      })
+      context.choicePlan = context.fixedChoicePlans.get(fixedGroupSets[0].label) || new Map()
+      uniqueBasicEntries = Array.from(new Map(basicEntries.map((entry) => [entry.key, entry])).values())
+    } else {
+      const { plan, basicEntries } = buildBasicChoicePlan(groups, context)
+      context.choicePlan = new Map(plan)
+      uniqueBasicEntries = Array.from(new Map(basicEntries.map((entry) => [entry.key, entry])).values())
+    }
   }
 
   // Lexical data and basic materials are independent — run them in parallel.
@@ -2359,12 +2410,25 @@ export const generateWorksheetArchive = async ({
   }
 
   if (needsSynonymMaterials) {
-    const { plan, synonymEntries } = normalizedMode === GENERATION_MODE_FIXED_TEST_PAPER
-      ? buildTestPaperSynonymChoicePlan(groups, context)
-      : buildSynonymChoicePlan(groups, context)
-    plan.forEach((value, key) => {
-      context.choicePlan.set(key, value)
-    })
+    const synonymEntries = []
+    if (normalizedMode === GENERATION_MODE_FIXED_TEST_PAPER) {
+      fixedGroupSets.forEach((groupSet) => {
+        const planContext = {
+          ...context,
+          rng: createSeededRng(`${context.rngSeed}|${groupSet.label}|plan-synonym`),
+        }
+        const result = buildTestPaperSynonymChoicePlan(groupSet.groups, planContext)
+        const plan = context.fixedChoicePlans.get(groupSet.label) || new Map()
+        result.plan.forEach((value, key) => plan.set(key, value))
+        context.fixedChoicePlans.set(groupSet.label, plan)
+        synonymEntries.push(...result.synonymEntries)
+      })
+      context.choicePlan = context.fixedChoicePlans.get(fixedGroupSets[0].label) || new Map()
+    } else {
+      const result = buildSynonymChoicePlan(groups, context)
+      result.plan.forEach((value, key) => context.choicePlan.set(key, value))
+      synonymEntries.push(...result.synonymEntries)
+    }
     const uniqueSynonymEntries = Array.from(new Map(synonymEntries.map((entry) => [entry.key, entry])).values())
     if (!uniqueSynonymEntries.length) {
       throw new Error('当前词表缺少可用的同义词结果，无法生成同义替换题。')
@@ -2399,7 +2463,13 @@ export const generateWorksheetArchive = async ({
       stageWordTotal: words.length,
       stageWordCompleted: 0,
     })
-    files = await createFixedTestPaperFiles(groups, context)
+    for (const groupSet of fixedGroupSets) {
+      context.groupSize = groupSet.groupSize
+      context.exportVariantLabel = groupSet.label
+      context.choicePlan = context.fixedChoicePlans.get(groupSet.label) || new Map()
+      context.rng = createSeededRng(`${context.rngSeed}|${groupSet.label}|render`)
+      files.push(...await createFixedTestPaperFiles(groupSet.groups, context))
+    }
   } else {
     for (const questionKey of selectedKeys) {
       const typeInfo = QUESTION_TYPE_MAP.get(questionKey)

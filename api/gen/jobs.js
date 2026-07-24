@@ -57,6 +57,8 @@ export default async function handler(req, res) {
       questionTypes,
       generationMode,
       llmModel: body.llmModel || getDefaultLlmModel(),
+      legacyQuestionCount: body.legacyQuestionCount,
+      testPaperGroupSizes: body.testPaperGroupSizes,
     })
     scheduleWorksheetJobQueue()
     return sendJson(res, 200, { ok: true, job })

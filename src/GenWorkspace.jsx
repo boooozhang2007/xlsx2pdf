@@ -16,7 +16,14 @@ import {
 import { apiJson, fetchDownloadRequest } from './api'
 import { downloadNamedBlob } from './ttsUtils'
 import { ALL_QUESTION_TYPE_KEYS, FIXED_TEST_PAPER_QUESTION_KEYS, FIXED_TEST_PAPER_SECTIONS, QUESTION_TYPE_OPTIONS } from '../shared/worksheetTypes'
-import { GENERATION_MODE_FIXED_TEST_PAPER, GENERATION_MODE_LEGACY_ZIP, GENERATION_MODE_OPTIONS } from '../shared/generationModes'
+import {
+  DEFAULT_LEGACY_QUESTION_COUNT,
+  GENERATION_MODE_FIXED_TEST_PAPER,
+  GENERATION_MODE_LEGACY_ZIP,
+  GENERATION_MODE_OPTIONS,
+  TEST_PAPER_GROUP_SIZE_OPTIONS,
+  normalizeLegacyQuestionCount,
+} from '../shared/generationModes'
 
 const DEFAULT_QUESTION_TYPES = ALL_QUESTION_TYPE_KEYS
 
@@ -308,6 +315,8 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
   const [jobs, setJobs] = useState([])
   const [selectedGenerationMode, setSelectedGenerationMode] = useState(GENERATION_MODE_FIXED_TEST_PAPER)
   const [selectedTypes, setSelectedTypes] = useState(DEFAULT_QUESTION_TYPES)
+  const [legacyQuestionCount, setLegacyQuestionCount] = useState(DEFAULT_LEGACY_QUESTION_COUNT)
+  const [testPaperGroupSizes, setTestPaperGroupSizes] = useState([100])
   const [llmModels, setLlmModels] = useState([])
   const [selectedLlmModel, setSelectedLlmModel] = useState('')
 
@@ -316,8 +325,10 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
     [rows],
   )
   const paperCount = useMemo(
-    () => Math.max(1, Math.ceil(usableRows.length / 100)),
-    [usableRows.length],
+    () => testPaperGroupSizes.reduce((total, size) => (
+      total + Math.max(1, Math.ceil(usableRows.length / (size || Math.max(1, usableRows.length))))
+    ), 0),
+    [testPaperGroupSizes, usableRows.length],
   )
 
   const llmModelLabelById = useMemo(
@@ -402,6 +413,13 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
     ))
   }
 
+  const toggleTestPaperGroupSize = (value) => {
+    setTestPaperGroupSizes((current) => {
+      if (!current.includes(value)) return [...current, value]
+      return current.length > 1 ? current.filter((item) => item !== value) : current
+    })
+  }
+
   const generateArchive = async () => {
     if (!usableRows.length) {
       setStatus('当前词表没有可生成的英文词条。请先上传或调整读表设置。')
@@ -428,6 +446,8 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
           generationMode: selectedGenerationMode,
           questionTypes: selectedGenerationMode === GENERATION_MODE_FIXED_TEST_PAPER ? FIXED_TEST_PAPER_QUESTION_KEYS : selectedTypes,
           llmModel: selectedLlmModel,
+          legacyQuestionCount: normalizeLegacyQuestionCount(legacyQuestionCount),
+          testPaperGroupSizes,
         }),
       })
       setJobs((current) => [data.job, ...current.filter((job) => job.id !== data.job.id)])
@@ -625,6 +645,11 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
                       <strong>{job.fileName.replace(/\.[^.]+$/, '')}</strong>
                       <span className={`genQueueChip ${job.status}`}>{meta.label}</span>
                       <span className="genQueueChip">{MODE_LABEL[job.generationMode] || MODE_LABEL[GENERATION_MODE_FIXED_TEST_PAPER]}</span>
+                      {job.generationMode === GENERATION_MODE_FIXED_TEST_PAPER ? (
+                        <span className="genQueueChip">{(job.testPaperGroupSizes || [100]).map((size) => (size ? `${size}词` : '全部')).join(' / ')}</span>
+                      ) : (
+                        <span className="genQueueChip">每组 {job.legacyQuestionCount || DEFAULT_LEGACY_QUESTION_COUNT} 题</span>
+                      )}
                     </div>
                     <span className="genQueueTime">{formatTime(job.updatedAt || job.createdAt)}</span>
                   </div>
@@ -768,6 +793,24 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
 
           {selectedGenerationMode === GENERATION_MODE_FIXED_TEST_PAPER ? (
             <>
+              <div className="field fullField">
+                <span>导出规格（可多选，共用一次题面生成）</span>
+                <div className="exportSizeSelector">
+                  {TEST_PAPER_GROUP_SIZE_OPTIONS.map((item) => {
+                    const active = testPaperGroupSizes.includes(item.value)
+                    return (
+                      <label className={active ? 'active' : ''} key={item.value}>
+                        <input
+                          type="checkbox"
+                          checked={active}
+                          onChange={() => toggleTestPaperGroupSize(item.value)}
+                        />
+                        <span>{item.label}</span>
+                      </label>
+                    )
+                  })}
+                </div>
+              </div>
               <div className="questionTypeGrid compact">
                 {FIXED_TEST_PAPER_SECTIONS.map((item) => (
                   <div className="questionTypeCard compact active fixed" key={item.key}>
@@ -777,10 +820,22 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
                   </div>
                 ))}
               </div>
-              <p className="genQueueEmpty">按模板固定生成 8 个题段，删除原模板第 4 题后续排；每 100 个单词输出 1 份 docx 测试卷，答案附在文末。当前预计生成 {paperCount} 份。</p>
+              <p className="genQueueEmpty">按模板固定生成 8 个题段，所选规格共享同一批模型题面，仅在导出时分别分组。当前预计生成 {paperCount} 份 docx。</p>
             </>
           ) : (
             <>
+              <div className="field fullField">
+                <span>每组题目数量（1–500）</span>
+                <input
+                  type="number"
+                  min="1"
+                  max="500"
+                  step="1"
+                  value={legacyQuestionCount}
+                  onChange={(event) => setLegacyQuestionCount(event.target.value)}
+                  onBlur={() => setLegacyQuestionCount(normalizeLegacyQuestionCount(legacyQuestionCount))}
+                />
+              </div>
               <div className="questionTypeGrid compact">
                 {QUESTION_TYPE_OPTIONS.map((item) => {
                   const active = selectedTypes.includes(item.key)
@@ -800,7 +855,7 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
                   )
                 })}
               </div>
-              <p className="genQueueEmpty">会按原来的多题型结构重新打包成 ZIP。当前已勾选 {selectedTypes.length} 个题型。</p>
+              <p className="genQueueEmpty">会按原来的多题型结构打包成 ZIP。当前已勾选 {selectedTypes.length} 个题型，每组生成 {normalizeLegacyQuestionCount(legacyQuestionCount)} 题。</p>
             </>
           )}
         </div>

@@ -2,7 +2,12 @@ import crypto from 'node:crypto'
 import { waitUntil } from '@vercel/functions'
 import { generateWorksheetArchive, getDefaultLlmModel, getLlmJobRuntime } from './genEngine.js'
 import { deleteObject, getObjectBuffer, getObjectJson, listObjects, putObject } from './r2.js'
-import { GENERATION_MODE_FIXED_TEST_PAPER, GENERATION_MODE_LEGACY_ZIP } from '../shared/generationModes.js'
+import {
+  GENERATION_MODE_FIXED_TEST_PAPER,
+  GENERATION_MODE_LEGACY_ZIP,
+  normalizeLegacyQuestionCount,
+  normalizeTestPaperGroupSizes,
+} from '../shared/generationModes.js'
 
 const JOB_PREFIX = 'worksheet-jobs'
 const STALE_PROCESSING_MS = 1000 * 60 * 8
@@ -28,8 +33,6 @@ const MAX_VALIDATION_REQUEUES = Math.max(
 )
 const CANCELABLE_STATUSES = new Set(['queued', 'processing', 'canceling'])
 const TERMINAL_STATUSES = new Set(['completed', 'failed', 'canceled'])
-const TEST_PAPER_GROUP_SIZE = 100
-
 let queueLoopPromise = null
 
 const now = () => Date.now()
@@ -56,6 +59,8 @@ const summarizeJob = (job) => ({
   wordCount: job.wordCount || 0,
   questionTypes: job.questionTypes || [],
   generationMode: normalizeGenerationMode(job.generationMode),
+  legacyQuestionCount: normalizeLegacyQuestionCount(job.legacyQuestionCount),
+  testPaperGroupSizes: normalizeTestPaperGroupSizes(job.testPaperGroupSizes),
   llmModel: job.llmModel || '',
   llmBatchSize: job.llmBatchSize || 0,
   llmConcurrency: job.llmConcurrency || 0,
@@ -89,18 +94,20 @@ const createProgress = (totalSteps, totalWords = 0) => ({
 
 const resetJobProgress = (job, overrides = {}) => ({
   ...createProgress(
-    buildTotalSteps(job.questionTypes || [], job.wordCount || 0, job.generationMode),
+    buildTotalSteps(job.questionTypes || [], job.wordCount || 0, job.generationMode, job.testPaperGroupSizes),
     job.wordCount || 0,
   ),
   ...overrides,
 })
 
-const buildTotalSteps = (questionTypes, wordCount = 0, generationMode = GENERATION_MODE_FIXED_TEST_PAPER) => {
+const buildTotalSteps = (questionTypes, wordCount = 0, generationMode = GENERATION_MODE_FIXED_TEST_PAPER, testPaperGroupSizes = [100]) => {
   const needsLexical = questionTypes.some((key) => ['一_释义匹配', '三_同义替换', '六_同义反义辨析', '七_同义词匹配', '八_反义词匹配'].includes(key))
   const needsBasicMaterials = questionTypes.some((key) => ['二_选择题', '九_判断正误'].includes(key))
   const needsSynonymMaterials = questionTypes.includes('三_同义替换')
   const paperCount = normalizeGenerationMode(generationMode) === GENERATION_MODE_FIXED_TEST_PAPER
-    ? Math.max(1, Math.ceil((Number(wordCount) || 0) / TEST_PAPER_GROUP_SIZE))
+    ? normalizeTestPaperGroupSizes(testPaperGroupSizes).reduce((total, size) => (
+        total + Math.max(1, Math.ceil((Number(wordCount) || 0) / (size || Math.max(1, Number(wordCount) || 1))))
+      ), 0)
     : questionTypes.length
   return paperCount + (needsLexical ? 1 : 0) + (needsBasicMaterials ? 1 : 0) + (needsSynonymMaterials ? 1 : 0)
 }
@@ -418,6 +425,8 @@ const processSingleJob = async (job) => {
       llmModel: payload.llmModel || latestJob.llmModel || getDefaultLlmModel(),
       llmBatchSize: payload.llmBatchSize || latestJob.llmBatchSize,
       llmConcurrency: payload.llmConcurrency || latestJob.llmConcurrency,
+      legacyQuestionCount: payload.legacyQuestionCount || latestJob.legacyQuestionCount,
+      testPaperGroupSizes: payload.testPaperGroupSizes || latestJob.testPaperGroupSizes,
       onProgress: async (event) => {
         await persistProgress(progressFromEvent(liveJob, event))
       },
@@ -446,8 +455,8 @@ const processSingleJob = async (job) => {
       downloadSize: result.buffer.length,
       nextAttemptAt: 0,
       progress: {
-        ...(liveJob.progress || createProgress(buildTotalSteps(latestJob.questionTypes || [], latestJob.wordCount || 0, latestJob.generationMode), latestJob.wordCount || 0)),
-        completedSteps: buildTotalSteps(latestJob.questionTypes || [], latestJob.wordCount || 0, latestJob.generationMode),
+        ...(liveJob.progress || createProgress(buildTotalSteps(latestJob.questionTypes || [], latestJob.wordCount || 0, latestJob.generationMode, latestJob.testPaperGroupSizes), latestJob.wordCount || 0)),
+        completedSteps: buildTotalSteps(latestJob.questionTypes || [], latestJob.wordCount || 0, latestJob.generationMode, latestJob.testPaperGroupSizes),
         currentStep: '打包完成',
         message: '已完成',
         percent: 100,
@@ -654,17 +663,21 @@ export const scheduleWorksheetJobQueue = () => {
   waitUntil(kickWorksheetJobQueue())
 }
 
-export const submitWorksheetJob = async ({ rows, fileName, questionTypes, generationMode, llmModel }) => {
+export const submitWorksheetJob = async ({ rows, fileName, questionTypes, generationMode, llmModel, legacyQuestionCount, testPaperGroupSizes }) => {
   const id = crypto.randomUUID()
   const submittedAt = now()
   const normalizedMode = normalizeGenerationMode(generationMode)
-  const totalSteps = buildTotalSteps(questionTypes, Array.isArray(rows) ? rows.length : 0, normalizedMode)
+  const normalizedLegacyQuestionCount = normalizeLegacyQuestionCount(legacyQuestionCount)
+  const normalizedTestPaperGroupSizes = normalizeTestPaperGroupSizes(testPaperGroupSizes)
+  const totalSteps = buildTotalSteps(questionTypes, Array.isArray(rows) ? rows.length : 0, normalizedMode, normalizedTestPaperGroupSizes)
   const llmRuntime = getLlmJobRuntime(String(llmModel || getDefaultLlmModel()).trim())
   const job = {
     id,
     fileName: String(fileName || '词组练习.xlsx'),
     questionTypes,
     generationMode: normalizedMode,
+    legacyQuestionCount: normalizedLegacyQuestionCount,
+    testPaperGroupSizes: normalizedTestPaperGroupSizes,
     llmModel: llmRuntime.model,
     llmFallbackModels: llmRuntime.fallbackModels,
     llmBatchSize: llmRuntime.batchSize,
@@ -692,6 +705,8 @@ export const submitWorksheetJob = async ({ rows, fileName, questionTypes, genera
         fileName: job.fileName,
         questionTypes,
         generationMode: job.generationMode,
+        legacyQuestionCount: job.legacyQuestionCount,
+        testPaperGroupSizes: job.testPaperGroupSizes,
         llmModel: job.llmModel,
         llmFallbackModels: job.llmFallbackModels,
         llmBatchSize: job.llmBatchSize,
