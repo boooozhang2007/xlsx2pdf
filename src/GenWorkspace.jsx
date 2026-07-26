@@ -48,11 +48,6 @@ const STATUS_META = {
   failed: { label: '失败', icon: XCircle },
 }
 
-const MODE_LABEL = {
-  [GENERATION_MODE_FIXED_TEST_PAPER]: '模板测试卷',
-  [GENERATION_MODE_LEGACY_ZIP]: '当前格式 ZIP',
-}
-
 const formatBytes = (value) => {
   const size = Number(value) || 0
   if (!size) return '0 B'
@@ -642,14 +637,13 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
                   {/* Row 1: file name + status chip + time */}
                   <div className="genQueueHead">
                     <div className="genQueueHeadLeft">
-                      <strong>{job.fileName.replace(/\.[^.]+$/, '')}</strong>
                       <span className={`genQueueChip ${job.status}`}>{meta.label}</span>
-                      <span className="genQueueChip">{MODE_LABEL[job.generationMode] || MODE_LABEL[GENERATION_MODE_FIXED_TEST_PAPER]}</span>
-                      {job.generationMode === GENERATION_MODE_FIXED_TEST_PAPER ? (
-                        <span className="genQueueChip">{(job.testPaperGroupSizes || [100]).map((size) => (size ? `${size}词` : '全部')).join(' / ')}</span>
-                      ) : (
-                        <span className="genQueueChip">每组 {job.legacyQuestionCount || DEFAULT_LEGACY_QUESTION_COUNT} 题</span>
-                      )}
+                      <strong>{job.fileName.replace(/\.[^.]+$/, '')}</strong>
+                      <span className="genQueueMetaText">
+                        {job.generationMode === GENERATION_MODE_FIXED_TEST_PAPER
+                          ? `模板·${(job.testPaperGroupSizes || [100]).map((size) => size || '全部').join('/')}`
+                          : `ZIP·每组${job.legacyQuestionCount || DEFAULT_LEGACY_QUESTION_COUNT}题`}
+                      </span>
                     </div>
                     <span className="genQueueTime">{formatTime(job.updatedAt || job.createdAt)}</span>
                   </div>

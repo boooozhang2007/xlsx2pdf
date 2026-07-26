@@ -1206,6 +1206,9 @@ button:disabled {
   padding: 4px 10px;
   font-size: 11px;
   font-weight: 900;
+  line-height: 1.2;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .genStatusChip.idle,
@@ -1459,6 +1462,8 @@ button:disabled {
 }
 
 .genQueuePanel {
+  display: flex;
+  flex-direction: column;
   gap: 10px;
   min-width: 0;
 }
@@ -1483,10 +1488,20 @@ button:disabled {
 .genQueueList {
   display: grid;
   gap: 8px;
-  max-height: 360px;
+  flex: 1;
+  min-height: 0;
   overflow: auto;
   overflow-x: hidden;
   padding-right: 2px;
+}
+
+.genQueueMetaText {
+  color: #94a3b8;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.2;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .genQueueEmpty {
