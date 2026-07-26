@@ -637,11 +637,10 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
               return (
                 <article className={`genQueueItem ${job.status}`} key={job.id}>
 
-                  {/* Row 1: file name + status chip + time */}
+                  {/* Row 1: status chip + meta + time */}
                   <div className="genQueueHead">
                     <div className="genQueueHeadLeft">
                       <span className={`genQueueChip ${job.status}`}>{meta.label}</span>
-                      <strong className="genQueueFileName" title={job.fileName}>{job.fileName.replace(/\.[^.]+$/, '')}</strong>
                       <span className="genQueueMetaText">
                         {job.generationMode === GENERATION_MODE_FIXED_TEST_PAPER
                           ? `模板·${(job.testPaperGroupSizes || [100]).map((size) => size || '全部').join('/')}`
@@ -650,6 +649,11 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
                       </span>
                     </div>
                     <span className="genQueueTime">{formatTime(job.updatedAt || job.createdAt)}</span>
+                  </div>
+
+                  {/* Row 2: full filename (wraps naturally, never truncated) */}
+                  <div className="genQueueFileName" title={job.fileName}>
+                    {job.fileName.replace(/\.[^.]+$/, '')}
                   </div>
 
                   {/* Row 2: current stage + word counter + % */}
