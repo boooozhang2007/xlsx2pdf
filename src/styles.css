@@ -1094,7 +1094,7 @@ button:disabled {
 
 .genQueueFileName {
   color: #0f172a;
-  font-size: 13.5px;
+  font-size: 14px;
   font-weight: 900;
   line-height: 1.45;
   overflow-wrap: anywhere;
@@ -1152,18 +1152,6 @@ button:disabled {
   color: #b91c1c;
   font-size: 11px;
   line-height: 1.45;
-}
-
-.genQueueFootName {
-  color: #64748b;
-  font-size: 11px;
-  font-weight: 700;
-  line-height: 1.4;
-  overflow-wrap: anywhere;
-  word-break: break-word;
-  flex: 1;
-  min-width: 0;
-  padding-right: 6px;
 }
 
 .genConfigStage {
@@ -1561,7 +1549,7 @@ button:disabled {
 
 .genQueueItem {
   display: grid;
-  gap: 9px;
+  gap: 8px;
   min-width: 0;
   border: 1px solid rgba(15, 23, 42, 0.07);
   border-radius: 18px;
@@ -1591,22 +1579,29 @@ button:disabled {
   background: rgba(255, 247, 237, 0.9);
 }
 
-.genQueueHead,
-.genQueueFoot {
+.genQueueHead {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  flex-wrap: wrap;
   gap: 10px;
   min-width: 0;
 }
 
-.genQueueHead > div,
-.genQueueFoot small,
-.genQueueActions {
+.genQueueBody {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
   min-width: 0;
 }
 
+.genQueueBodyInfo {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.genQueueHead > div,
 .genQueueMeta {
   display: flex;
   flex-wrap: wrap;
@@ -1621,8 +1616,7 @@ button:disabled {
 }
 
 .genQueueHead span,
-.genQueueItem p,
-.genQueueFoot small {
+.genQueueItem p {
   color: #64748b;
   font-size: 11px;
   line-height: 1.45;
@@ -1681,24 +1675,23 @@ button:disabled {
 }
 
 .genQueueActions {
-  display: inline-flex;
-  align-items: center;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 8px;
-  max-width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex-shrink: 0;
+  width: 86px;
 }
 
-.genQueueFoot button {
+.genQueueActions button {
   display: inline-flex;
   align-items: center;
-  flex: 0 0 auto;
-  gap: 6px;
+  justify-content: center;
+  gap: 5px;
   border: 0;
-  border-radius: 999px;
+  border-radius: 10px;
   background: #0f172a;
   color: #fff;
-  padding: 6px 10px;
+  padding: 6px 8px;
   font-size: 11px;
   font-weight: 900;
   white-space: nowrap;
@@ -1719,16 +1712,8 @@ button:disabled {
   color: #b91c1c !important;
 }
 
-.genQueueStop:disabled {
+.genQueueActions button:disabled {
   opacity: 0.72;
-}
-
-.genQueueDelete:disabled {
-  opacity: 0.72;
-}
-
-.genQueueFoot small {
-  min-width: 0;
 }
 
 .genPreviewStage {
@@ -4048,6 +4033,12 @@ button:disabled {
 
   .libraryActions {
     justify-content: flex-start;
+  }
+
+  .genQueueActions {
+    width: 100%;
+    flex-direction: row;
+    flex-wrap: wrap;
   }
 
   .playerHero {

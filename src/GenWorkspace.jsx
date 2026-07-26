@@ -656,7 +656,7 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
               return (
                 <article className={`genQueueItem ${job.status}`} key={job.id}>
 
-                  {/* Row 1: status chip + meta + time */}
+                  {/* Top bar: status chip + meta + time */}
                   <div className="genQueueHead">
                     <div className="genQueueHeadLeft">
                       <span className={`genQueueChip ${job.status}`}>{meta.label}</span>
@@ -670,56 +670,50 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
                     <span className="genQueueTime">{formatTime(job.updatedAt || job.createdAt)}</span>
                   </div>
 
-                  {/* Row 2: full filename (wraps naturally, never truncated) */}
-                  <div className="genQueueFileName" title={job.fileName}>
-                    {job.fileName.replace(/\.[^.]+$/, '')}
-                  </div>
-
-                  {/* Row 2: current stage + word counter + % */}
-                  <div className="genQueueStageRow">
-                    <Icon size={13} className={isActive ? 'spin genQueueStageIcon' : 'genQueueStageIcon'} />
-                    <span className="genQueueStageName">{getStageLabel(job)}</span>
-                    {jobStageTotal > 0 ? (
-                      <span className="genQueueWordCount">词条 {jobStageDone}/{jobStageTotal}</span>
-                    ) : (
-                      job.wordCount ? <span className="genQueueWordCount">共 {job.wordCount} 词</span> : null
-                    )}
-                    <span className="genQueuePct">{jobPercent}%</span>
-                  </div>
-
-                  <div className="genQueueProgressBar" aria-hidden="true">
-                    <span style={{ width: `${jobPercent}%` }} />
-                  </div>
-
-                  {/* Error or last message */}
-                  {(job.error || (job.status === 'failed' && job.progress?.message)) ? (
-                    <p className="genQueueError">{job.error || job.progress?.message}</p>
-                  ) : null}
-
-                  {/* Actions */}
-                  <div className="genQueueFoot">
-                    <small className="genQueueFootName" title={job.exportFileName || job.fileName}>{job.exportFileName || job.fileName.replace(/\.[^.]+$/, '')}</small>
+                  {/* Main: left = info, right = vertical actions */}
+                  <div className="genQueueBody">
+                    <div className="genQueueBodyInfo">
+                      <div className="genQueueFileName" title={job.fileName}>
+                        {job.fileName.replace(/\.[^.]+$/, '')}
+                      </div>
+                      <div className="genQueueStageRow">
+                        <Icon size={13} className={isActive ? 'spin genQueueStageIcon' : 'genQueueStageIcon'} />
+                        <span className="genQueueStageName">{getStageLabel(job)}</span>
+                        {jobStageTotal > 0 ? (
+                          <span className="genQueueWordCount">词条 {jobStageDone}/{jobStageTotal}</span>
+                        ) : (
+                          job.wordCount ? <span className="genQueueWordCount">共 {job.wordCount} 词</span> : null
+                        )}
+                        <span className="genQueuePct">{jobPercent}%</span>
+                      </div>
+                      <div className="genQueueProgressBar" aria-hidden="true">
+                        <span style={{ width: `${jobPercent}%` }} />
+                      </div>
+                      {(job.error || (job.status === 'failed' && job.progress?.message)) ? (
+                        <p className="genQueueError">{job.error || job.progress?.message}</p>
+                      ) : null}
+                    </div>
                     <div className="genQueueActions">
                       {canCancel ? (
                         <button className="genQueueStop" type="button" onClick={() => cancelJob(job)} disabled={stopping}>
-                          {stopping ? <Loader2 className="spin" size={14} /> : <Square size={13} />}
+                          {stopping ? <Loader2 className="spin" size={13} /> : <Square size={13} />}
                           {job.status === 'queued' ? '移除' : '停止'}
                         </button>
                       ) : null}
                       {canDelete ? (
                         <button className="genQueueDelete" type="button" onClick={() => deleteJob(job)} disabled={deleting}>
-                          {deleting ? <Loader2 className="spin" size={14} /> : <Trash2 size={14} />}
+                          {deleting ? <Loader2 className="spin" size={13} /> : <Trash2 size={13} />}
                           删除
                         </button>
                       ) : null}
                       {job.status === 'completed' ? (
                         <>
                           <button className="genQueueReexport" type="button" onClick={() => reexportJob(job)} disabled={reexportingJobId === job.id}>
-                            {reexportingJobId === job.id ? <Loader2 className="spin" size={14} /> : <RefreshCw size={14} />}
+                            {reexportingJobId === job.id ? <Loader2 className="spin" size={13} /> : <RefreshCw size={13} />}
                             重新导出
                           </button>
                           <button type="button" onClick={() => downloadJob(job)} disabled={downloadingJobId === job.id}>
-                            {downloadingJobId === job.id ? <Loader2 className="spin" size={14} /> : <ArrowDownToLine size={14} />}
+                            {downloadingJobId === job.id ? <Loader2 className="spin" size={13} /> : <ArrowDownToLine size={13} />}
                             下载
                           </button>
                         </>
