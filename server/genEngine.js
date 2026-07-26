@@ -1058,9 +1058,8 @@ const resolveResponseItems = async (entries, responseItems, sanitizeEntry, onRes
   return { unresolved, resolvedCount }
 }
 
-const resolveSingleEntryStrict = async ({
+const tryModelForSingleEntry = async ({
   entry,
-  kind,
   callLlm,
   sanitizeEntry,
   onResolved,
@@ -1077,40 +1076,80 @@ const resolveSingleEntryStrict = async ({
       const responseItems = await callLlm([entry])
       lastRaw = Array.isArray(responseItems) ? (responseItems[0] ?? null) : null
       const { unresolved, resolvedCount } = await resolveResponseItems([entry], responseItems, sanitizeEntry, onResolved)
-      if (!unresolved.length) return { resolvedCount }
+      if (!unresolved.length) return { success: true, resolvedCount, lastRaw, lastError: null }
       lastError = unresolved[0]?.error || new Error('返回内容缺字段或格式不合法')
     } catch (error) {
       lastError = error
     }
     if (attempt < singleItemRetries - 1) await sleep(250 * (attempt + 1))
   }
-  // Repair fallback: when synonym sentence generation consistently fails, ask LLM
-  // to fix only the sentence structure while keeping the chosen synonym intact.
   if (typeof repairLlm === 'function' && lastRaw) {
     try {
       const repairedRaw = await repairLlm(entry, lastRaw)
       if (repairedRaw) {
-        const { unresolved, resolvedCount } = await resolveResponseItems(
-          [entry], [repairedRaw], sanitizeEntry, onResolved,
-        )
-        if (!unresolved.length) return { resolvedCount }
+        const { unresolved, resolvedCount } = await resolveResponseItems([entry], [repairedRaw], sanitizeEntry, onResolved)
+        if (!unresolved.length) return { success: true, resolvedCount, lastRaw: repairedRaw, lastError: null }
         lastError = unresolved[0]?.error || lastError
         lastRaw = repairedRaw
       }
-    } catch { /* repair is best-effort; fall through to error */ }
+    } catch { /* repair is best-effort */ }
   }
   if (typeof doctorLlm === 'function') {
     try {
       const doctoredRaw = await doctorLlm(entry, lastRaw, lastError)
       if (doctoredRaw) {
-        const { unresolved, resolvedCount } = await resolveResponseItems(
-          [entry], [doctoredRaw], sanitizeEntry, onResolved,
-        )
-        if (!unresolved.length) return { resolvedCount }
+        const { unresolved, resolvedCount } = await resolveResponseItems([entry], [doctoredRaw], sanitizeEntry, onResolved)
+        if (!unresolved.length) return { success: true, resolvedCount, lastRaw: doctoredRaw, lastError: null }
         lastError = unresolved[0]?.error || lastError
       }
-    } catch { /* doctor is best-effort; fall through to error */ }
+    } catch { /* doctor is best-effort */ }
   }
+  return { success: false, resolvedCount: 0, lastRaw, lastError }
+}
+
+const resolveSingleEntryStrict = async ({
+  entry,
+  kind,
+  callLlm,
+  sanitizeEntry,
+  onResolved,
+  onTick,
+  repairLlm,
+  doctorLlm,
+  fallbackModels = [],
+  makeLlmClosures,
+}) => {
+  let result = await tryModelForSingleEntry({
+    entry, callLlm, sanitizeEntry, onResolved, onTick, repairLlm, doctorLlm,
+  })
+  if (result.success) return { resolvedCount: result.resolvedCount }
+
+  let lastError = result.lastError
+  let lastRaw = result.lastRaw
+
+  if (typeof makeLlmClosures === 'function') {
+    for (const fallbackModel of fallbackModels) {
+      try {
+        const closures = makeLlmClosures(fallbackModel)
+        if (!closures?.callLlm) continue
+        result = await tryModelForSingleEntry({
+          entry,
+          callLlm: closures.callLlm,
+          sanitizeEntry,
+          onResolved,
+          onTick,
+          repairLlm: closures.repairLlm,
+          doctorLlm: closures.doctorLlm,
+        })
+        if (result.success) return { resolvedCount: result.resolvedCount }
+        lastError = result.lastError || lastError
+        lastRaw = result.lastRaw || lastRaw
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error || 'fallback 模型失败'))
+      }
+    }
+  }
+
   if (lastError?.code === 'LLM_RATE_LIMITED') {
     lastError.failedEntry = entry.displayEnglish || entry.english || entry.key || ''
     throw lastError
@@ -1130,6 +1169,8 @@ const resolveLlmEntries = async ({
   onTick,
   repairLlm,
   doctorLlm,
+  fallbackModels = [],
+  makeLlmClosures,
 }) => {
   const uniqueEntries = dedupeEntriesByKey(entries)
   const totalEntries = uniqueEntries.length
@@ -1183,6 +1224,8 @@ const resolveLlmEntries = async ({
               onTick,
               repairLlm,
               doctorLlm,
+              fallbackModels,
+              makeLlmClosures,
             }),
           }
         } catch (error) {
@@ -1196,7 +1239,6 @@ const resolveLlmEntries = async ({
     const unresolvedSingles = []
     for (const result of singleResults) {
       if (result?.error) {
-        if (result.error.code === 'LLM_GENERATION_INCOMPLETE') throw result.error
         if (result.error.code === 'LLM_RATE_LIMITED') throw result.error
         unresolvedSingles.push({ entry: result.entry, error: result.error })
         continue
@@ -1247,6 +1289,10 @@ const ensureLexicalData = async (entries, context) => {
         if (context.onCacheCheckpoint && resolvedCount % 50 === 0) await context.onCacheCheckpoint()
       },
       onTick: context.checkForCancellation,
+      fallbackModels: context.llmFallbackModels || [],
+      makeLlmClosures: (model) => ({
+        callLlm: (batch) => callLlmForLexical(batch, { model }),
+      }),
     })
   } catch (error) {
     if (context.onCacheCheckpoint) await context.onCacheCheckpoint()
@@ -1309,6 +1355,22 @@ const ensureMaterials = async (entries, context, requireSynonym) => {
           { model: context.llmModel },
         )
         : null,
+      fallbackModels: context.llmFallbackModels || [],
+      makeLlmClosures: (model) => ({
+        callLlm: (batch) => callLlmForMaterials(batch, requireSynonym, { model }),
+        repairLlm: requireSynonym
+          ? (entry, lastRaw) => callLlmForSynonymRepair(entry, lastRaw, { model })
+          : null,
+        doctorLlm: requireSynonym
+          ? (entry, lastRaw, lastError) => callLlmForSynonymDoctor(
+            entry,
+            lexicalCache.get(entry.key),
+            lastRaw,
+            lastError,
+            { model },
+          )
+          : null,
+      }),
     })
   } catch (error) {
     if (context.onCacheCheckpoint) await context.onCacheCheckpoint()
@@ -1509,7 +1571,7 @@ const generateMissingLetters = (questionParagraphs, answerParagraphs, group, gro
     const indices = sample(Array.from({ length: Math.max(0, core.length - 1) }, (_, offset) => offset + 1), hideCount, context.rng)
     const chars = core.split('')
     indices.forEach((pick) => { chars[pick] = '_' })
-    const meaningSuffix = context.withChineseTranslation && entry.plainChinese ? `  (${entry.plainChinese})` : ''
+    const meaningSuffix = entry.plainChinese ? `  (${entry.plainChinese})` : ''
     questionParagraphs.push(paragraph(`${index + 1}. ${chars.join(' ')}${meaningSuffix}`))
     answers.push([index + 1, entry.displayEnglish])
   })
@@ -1722,7 +1784,7 @@ const generateTestPaperMissingLettersSection = (paragraphs, group, context, answ
     const chars = core.split('')
     const blankIndex = core.length <= 4 ? core.length - 1 : Math.min(core.length - 1, 1 + Math.floor(context.rng() * (core.length - 1)))
     chars[blankIndex] = '_'
-    const meaningSuffix = context.withChineseTranslation && entry.plainChinese ? ` (${entry.plainChinese})` : ''
+    const meaningSuffix = entry.plainChinese ? ` (${entry.plainChinese})` : ''
     paragraphs.push(paragraph(`${index + 1}. ${chars.join(' ')}${meaningSuffix}`, { size: 11, spaceAfter: 2 }))
     answers.push(`${index + 1}.${entry.displayEnglish}`)
   })
@@ -2192,6 +2254,7 @@ const createGenerationContext = (
     selectedKeys,
     wordCount: words.length,
     llmModel: String(llmModel || '').trim(),
+    llmFallbackModels: getFallbackLlmModels(String(llmModel || '').trim()),
     llmBatchSize: Math.max(1, Number.parseInt(llmBatchSize, 10) || getLlmJobRuntime(llmModel).batchSize),
     llmConcurrency: Math.max(1, Number.parseInt(llmConcurrency, 10) || getLlmJobRuntime(llmModel).concurrency),
     questionsPerGroup: normalizeLegacyQuestionCount(questionsPerGroup),
@@ -2218,6 +2281,7 @@ export const generateWorksheetArchive = async ({
   llmModel,
   llmBatchSize,
   llmConcurrency,
+  llmFallbackModels,
   legacyQuestionCount,
   testPaperGroupSizes,
   withChineseTranslation = true,
@@ -2258,6 +2322,9 @@ export const generateWorksheetArchive = async ({
   )
   context.generationMode = normalizedMode
   context.withChineseTranslation = normalizeWithChineseTranslation(withChineseTranslation)
+  if (Array.isArray(llmFallbackModels) && llmFallbackModels.length) {
+    context.llmFallbackModels = llmFallbackModels.filter((m) => String(m || '').trim() && m !== context.llmModel)
+  }
 
   // Restore any caches saved by a previous attempt of this job.
   if (initialCache?.lexical && typeof initialCache.lexical === 'object') {

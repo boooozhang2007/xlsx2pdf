@@ -1,5 +1,5 @@
 import { rejectMethod, requireSession } from '../../../server/auth.js'
-import { getWorksheetJobDownload } from '../../../server/genQueue.js'
+import { getWorksheetJobDownload, reexportWorksheetJob } from '../../../server/genQueue.js'
 
 const toAsciiFileName = (value) => String(value || 'worksheet-export.zip').replace(/[^A-Za-z0-9._-]+/g, '_') || 'worksheet-export.zip'
 
@@ -10,14 +10,17 @@ export default async function handler(req, res) {
   try {
     const url = new URL(req.url, `https://${req.headers.host || 'localhost'}`)
     const jobId = String(url.searchParams.get('id') || '').trim()
+    const reexport = url.searchParams.has('reexport')
     if (!jobId) {
       res.statusCode = 400
       res.end(JSON.stringify({ ok: false, error: '缺少任务 id。' }))
       return
     }
 
-    const { job, buffer } = await getWorksheetJobDownload(jobId)
-    const fileName = job.exportFileName || `${job.fileName.replace(/\.[^.]+$/, '')}.zip`
+    const { job, buffer, fileName: reexportFileName } = reexport
+      ? await reexportWorksheetJob(jobId)
+      : await getWorksheetJobDownload(jobId)
+    const fileName = reexportFileName || job.exportFileName || `${job.fileName.replace(/\.[^.]+$/, '')}.zip`
     res.statusCode = 200
     res.setHeader('content-type', 'application/zip')
     res.setHeader('cache-control', 'no-store')

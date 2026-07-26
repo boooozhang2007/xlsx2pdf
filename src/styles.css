@@ -1709,6 +1709,11 @@ button:disabled {
   color: #334155 !important;
 }
 
+.genQueueReexport {
+  background: rgba(37, 99, 235, 0.1) !important;
+  color: #2563eb !important;
+}
+
 .genQueueDelete {
   background: rgba(239, 68, 68, 0.08) !important;
   color: #b91c1c !important;

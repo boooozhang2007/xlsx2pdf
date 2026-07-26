@@ -427,6 +427,7 @@ const processSingleJob = async (job) => {
       llmModel: payload.llmModel || latestJob.llmModel || getDefaultLlmModel(),
       llmBatchSize: payload.llmBatchSize || latestJob.llmBatchSize,
       llmConcurrency: payload.llmConcurrency || latestJob.llmConcurrency,
+      llmFallbackModels: payload.llmFallbackModels || latestJob.llmFallbackModels,
       legacyQuestionCount: payload.legacyQuestionCount || latestJob.legacyQuestionCount,
       testPaperGroupSizes: payload.testPaperGroupSizes || latestJob.testPaperGroupSizes,
       withChineseTranslation: normalizeWithChineseTranslation(payload.withChineseTranslation ?? latestJob.withChineseTranslation),
@@ -468,8 +469,8 @@ const processSingleJob = async (job) => {
         stageWordCompleted: latestJob.wordCount || result.wordCount || 0,
       },
     })
-    // Job finished — checkpoint is no longer needed.
-    await deleteObject({ key: jobCacheKey(job.id) }).catch(() => {})
+    // Job finished — keep the LLM cache so this job can be re-exported with
+    // new rendering rules without re-running LLM calls.
   } catch (error) {
     if (error?.code === 'JOB_CANCELED') {
       const latestJob = await readLatestJobState(job.id)
@@ -801,5 +802,45 @@ export const getWorksheetJobDownload = async (jobId) => {
   return {
     job: summarizeJob(job),
     buffer: await getObjectBuffer({ key: job.artifactKey }),
+  }
+}
+
+export const reexportWorksheetJob = async (jobId) => {
+  const job = await readJob(jobId)
+  if (job.status !== 'completed') {
+    const error = new Error('该任务尚未生成完成，无法重新导出。')
+    error.statusCode = 409
+    throw error
+  }
+  const payload = await readJobPayload(jobId).catch(() => null)
+  if (!payload) {
+    const error = new Error('找不到该任务的数据，无法重新导出。')
+    error.statusCode = 404
+    throw error
+  }
+  const cache = await getObjectJson({ key: jobCacheKey(jobId) }).catch(() => null)
+  if (!cache) {
+    const error = new Error('该任务的 LLM 缓存已清理，请重新生成。')
+    error.statusCode = 409
+    throw error
+  }
+  const result = await generateWorksheetArchive({
+    rows: payload.rows || [],
+    fileName: payload.fileName || job.fileName || '词组练习.xlsx',
+    questionTypes: payload.questionTypes || job.questionTypes,
+    generationMode: payload.generationMode || job.generationMode || GENERATION_MODE_FIXED_TEST_PAPER,
+    llmModel: payload.llmModel || job.llmModel || getDefaultLlmModel(),
+    llmBatchSize: payload.llmBatchSize || job.llmBatchSize,
+    llmConcurrency: payload.llmConcurrency || job.llmConcurrency,
+    llmFallbackModels: payload.llmFallbackModels || job.llmFallbackModels,
+    legacyQuestionCount: payload.legacyQuestionCount || job.legacyQuestionCount,
+    testPaperGroupSizes: payload.testPaperGroupSizes || job.testPaperGroupSizes,
+    withChineseTranslation: normalizeWithChineseTranslation(payload.withChineseTranslation ?? job.withChineseTranslation),
+    initialCache: cache,
+  })
+  return {
+    job: summarizeJob(job),
+    buffer: result.buffer,
+    fileName: result.fileName,
   }
 }

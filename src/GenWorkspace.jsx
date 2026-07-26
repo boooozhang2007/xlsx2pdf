@@ -305,6 +305,7 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
   const [busy, setBusy] = useState(false)
   const [queueBusy, setQueueBusy] = useState(false)
   const [downloadingJobId, setDownloadingJobId] = useState('')
+  const [reexportingJobId, setReexportingJobId] = useState('')
   const [cancelingJobId, setCancelingJobId] = useState('')
   const [deletingJobId, setDeletingJobId] = useState('')
   const [status, setStatus] = useState('')
@@ -473,6 +474,24 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
       setStatus(error.message || '下载任务失败。')
     } finally {
       setDownloadingJobId('')
+    }
+  }
+
+  const reexportJob = async (job) => {
+    if (!job?.id) return
+    setReexportingJobId(job.id)
+    setStatus('正在复用 LLM 数据重新导出…')
+    try {
+      const { blob, fileName: downloadedName } = await fetchDownloadRequest(
+        `/api/gen/jobs/download?id=${encodeURIComponent(job.id)}&reexport=1`,
+        { method: 'GET' },
+      )
+      downloadNamedBlob(blob, downloadedName || job.exportFileName || fallbackArchiveName(job.fileName))
+      setStatus('已用最新规则重新导出，下载已开始。')
+    } catch (error) {
+      setStatus(error.message || '重新导出失败。')
+    } finally {
+      setReexportingJobId('')
     }
   }
 
@@ -694,10 +713,16 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
                         </button>
                       ) : null}
                       {job.status === 'completed' ? (
-                        <button type="button" onClick={() => downloadJob(job)} disabled={downloadingJobId === job.id}>
-                          {downloadingJobId === job.id ? <Loader2 className="spin" size={14} /> : <ArrowDownToLine size={14} />}
-                          下载
-                        </button>
+                        <>
+                          <button className="genQueueReexport" type="button" onClick={() => reexportJob(job)} disabled={reexportingJobId === job.id}>
+                            {reexportingJobId === job.id ? <Loader2 className="spin" size={14} /> : <RefreshCw size={14} />}
+                            重新导出
+                          </button>
+                          <button type="button" onClick={() => downloadJob(job)} disabled={downloadingJobId === job.id}>
+                            {downloadingJobId === job.id ? <Loader2 className="spin" size={14} /> : <ArrowDownToLine size={14} />}
+                            下载
+                          </button>
+                        </>
                       ) : null}
                     </div>
                   </div>
