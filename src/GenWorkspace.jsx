@@ -831,17 +831,6 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
                   })}
                 </div>
               </div>
-              <label className="genToggleRow">
-                <input
-                  type="checkbox"
-                  checked={withChineseTranslation}
-                  onChange={(event) => setWithChineseTranslation(event.target.checked)}
-                />
-                <span className="genToggleText">
-                  <strong>带中文翻译</strong>
-                  <em>关闭后题面中的中文释义/提示将省略</em>
-                </span>
-              </label>
               <div className="questionTypeGrid compact">
                 {FIXED_TEST_PAPER_SECTIONS.map((item) => (
                   <div className="questionTypeCard compact active fixed" key={item.key}>
@@ -886,9 +875,20 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
                   )
                 })}
               </div>
-              <p className="genQueueEmpty">会按原来的多题型结构打包成 ZIP。当前已勾选 {selectedTypes.length} 个题型，每组生成 {normalizeLegacyQuestionCount(legacyQuestionCount)} 题。</p>
+              <p className="genQueueEmpty">会按原来的多题型结构打包成 ZIP。当前已勾选 {selectedTypes.length} 个题型，每组生成 {normalizeLegacyQuestionCount(legacyQuestionCount)} 题{withChineseTranslation ? '' : '（不含中文翻译）'}。</p>
             </>
           )}
+          <label className="genToggleRow">
+            <input
+              type="checkbox"
+              checked={withChineseTranslation}
+              onChange={(event) => setWithChineseTranslation(event.target.checked)}
+            />
+            <span className="genToggleText">
+              <strong>带中文翻译</strong>
+              <em>关闭后题面中的中文释义/提示将省略</em>
+            </span>
+          </label>
         </div>
       </aside>
     </section>
