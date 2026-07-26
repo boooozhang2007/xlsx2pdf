@@ -1,4 +1,4 @@
-import { TEMPLATE_HEADERS, TEMPLATE_PDF, getTemplateTitle, getTemplateXlsxFileName, paginateTemplateRows } from './templateLayout.js'
+import { TEMPLATE_HEADERS, TEMPLATE_PDF, getTemplateXlsxFileName, paginateTemplateRows } from './templateLayout.js'
 
 const TEMPLATE_WORKBOOK_URL = '/template-worksheet.xlsx'
 const TEMPLATE_PRINT_SCALE = 0.82
@@ -53,8 +53,8 @@ const buildPageSetup = (sourcePageSetup, rowCount) => ({
     header: Number(sourcePageSetup?.margins?.header) || 0.39,
     footer: Number(sourcePageSetup?.margins?.footer) || 0.39,
   },
-  printTitlesRow: '1:2',
-  printArea: `A1:E${Math.max(2, rowCount)}`,
+  printTitlesRow: '1:1',
+  printArea: `A1:E${Math.max(1, rowCount)}`,
 })
 
 const copyCell = (targetCell, sourceCell, value) => {
@@ -69,7 +69,6 @@ const getDataRowHeightPt = (capacity) => {
 export const createTemplateXlsxBlob = async (rows, inputFileName = 'example.xlsx') => {
   const { ExcelJS, templateWorkbook } = await createWorkbookFromTemplate()
   const sourceSheet = templateWorkbook.worksheets[0]
-  const templateTitle = getTemplateTitle(inputFileName)
   const workbook = new ExcelJS.Workbook()
   workbook.creator = 'XLSX2PDF'
   workbook.lastModifiedBy = 'XLSX2PDF'
@@ -81,36 +80,29 @@ export const createTemplateXlsxBlob = async (rows, inputFileName = 'example.xlsx
     properties: {
       defaultRowHeight: sourceSheet.properties?.defaultRowHeight || 20.4,
     },
-    pageSetup: buildPageSetup(sourceSheet.pageSetup, (rows?.length || 0) + 2),
+    pageSetup: buildPageSetup(sourceSheet.pageSetup, (rows?.length || 0) + 1),
   })
-  worksheet.pageSetup.printTitlesRow = '1:2'
-  worksheet.pageSetup.printArea = `A1:E${Math.max(2, (rows?.length || 0) + 2)}`
+  worksheet.pageSetup.printTitlesRow = '1:1'
+  worksheet.pageSetup.printArea = `A1:E${Math.max(1, (rows?.length || 0) + 1)}`
 
   ;[1, 2, 3, 4, 5].forEach((columnIndex) => {
     worksheet.getColumn(columnIndex).width = sourceSheet.getColumn(columnIndex).width
   })
 
-  copyCell(worksheet.getCell('A1'), sourceSheet.getCell('A3'), null)
-  copyCell(worksheet.getCell('B1'), sourceSheet.getCell('B1'), templateTitle)
-  copyCell(worksheet.getCell('C1'), sourceSheet.getCell('C1'), null)
-  copyCell(worksheet.getCell('D1'), sourceSheet.getCell('D1'), null)
-  copyCell(worksheet.getCell('E1'), sourceSheet.getCell('E1'), null)
-  worksheet.getRow(1).height = sourceSheet.properties?.defaultRowHeight || 20.4
+  copyCell(worksheet.getCell('A1'), sourceSheet.getCell('A2'), null)
+  copyCell(worksheet.getCell('B1'), sourceSheet.getCell('B1'), TEMPLATE_HEADERS[1])
+  copyCell(worksheet.getCell('C1'), sourceSheet.getCell('C1'), TEMPLATE_HEADERS[2])
+  copyCell(worksheet.getCell('D1'), sourceSheet.getCell('D1'), TEMPLATE_HEADERS[3])
+  copyCell(worksheet.getCell('E1'), sourceSheet.getCell('E1'), TEMPLATE_HEADERS[4])
+  worksheet.getRow(1).height = sourceSheet.getRow(1).height || 15
 
-  copyCell(worksheet.getCell('A2'), sourceSheet.getCell('A3'), null)
-  copyCell(worksheet.getCell('B2'), sourceSheet.getCell('B2'), TEMPLATE_HEADERS[1])
-  copyCell(worksheet.getCell('C2'), sourceSheet.getCell('C2'), TEMPLATE_HEADERS[2])
-  copyCell(worksheet.getCell('D2'), sourceSheet.getCell('D2'), TEMPLATE_HEADERS[3])
-  copyCell(worksheet.getCell('E2'), sourceSheet.getCell('E2'), TEMPLATE_HEADERS[4])
-  worksheet.getRow(2).height = sourceSheet.getRow(2).height || 15
+  const indexStyleCell = sourceSheet.getCell('A2')
+  const englishStyleCell = sourceSheet.getCell('B4')
+  const blankStyleCell = sourceSheet.getCell('C4')
+  const chineseStyleCell = sourceSheet.getCell('D4')
+  const writeStyleCell = sourceSheet.getCell('E2')
 
-  const indexStyleCell = sourceSheet.getCell('A3')
-  const englishStyleCell = sourceSheet.getCell('B5')
-  const blankStyleCell = sourceSheet.getCell('C5')
-  const chineseStyleCell = sourceSheet.getCell('D5')
-  const writeStyleCell = sourceSheet.getCell('E3')
-
-  let excelRow = 3
+  let excelRow = 2
   paginateTemplateRows(rows || []).forEach((pageData) => {
     pageData.rows.forEach((row, rowIndex) => {
       const serial = pageData.startIndex + rowIndex

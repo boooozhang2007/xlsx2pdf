@@ -3,7 +3,6 @@ import fontkit from '@pdf-lib/fontkit'
 import { TEMPLATE_HEADERS, TEMPLATE_PDF, getTemplatePdfFileName, getTemplateTitle, paginateTemplateRows } from './templateLayout.js'
 
 const BLACK = rgb(0, 0, 0)
-const YELLOW = rgb(1, 0.96, 0)
 
 let cjkFontBytesPromise = null
 
@@ -142,23 +141,12 @@ const buildColumnXs = () => {
   return xs
 }
 
-const drawPageFrame = (page, capacity, fonts, pageNumber, totalPages, titleText) => {
+const drawPageFrame = (page, capacity, fonts, pageNumber, totalPages) => {
   const xs = buildColumnXs()
   const tableTop = TEMPLATE_PDF.tableTop
-  const titleBottom = tableTop - TEMPLATE_PDF.titleHeight
-  const headerBottom = titleBottom - TEMPLATE_PDF.headerHeight
+  const headerBottom = tableTop - TEMPLATE_PDF.headerHeight
   const rowHeight = TEMPLATE_PDF.dataHeight / capacity
   const tableBottom = headerBottom - rowHeight * capacity
-
-  for (let index = 1; index < xs.length; index += 1) {
-    page.drawRectangle({
-      x: xs[index - 1],
-      y: titleBottom,
-      width: xs[index] - xs[index - 1],
-      height: TEMPLATE_PDF.titleHeight,
-      color: index === 1 ? rgb(1, 1, 1) : YELLOW,
-    })
-  }
 
   xs.forEach((x) => {
     page.drawLine({
@@ -169,7 +157,7 @@ const drawPageFrame = (page, capacity, fonts, pageNumber, totalPages, titleText)
     })
   })
 
-  ;[tableTop, titleBottom, headerBottom].forEach((y) => {
+  ;[tableTop, headerBottom].forEach((y) => {
     page.drawLine({
       start: { x: xs[0], y },
       end: { x: xs.at(-1), y },
@@ -188,35 +176,17 @@ const drawPageFrame = (page, capacity, fonts, pageNumber, totalPages, titleText)
     })
   }
 
-  drawCellText(
-    page,
-    titleText,
-    xs[1],
-    titleBottom,
-    xs.at(-1) - xs[1],
-    TEMPLATE_PDF.titleHeight,
-    fonts.cjk,
-    12.8,
-    {
-      align: 'left',
-      maxLines: 1,
-      minSize: 7.2,
-      paddingX: TEMPLATE_PDF.titlePaddingX,
-      paddingY: 1,
-    },
-  )
-
   TEMPLATE_HEADERS.forEach((header, index) => {
     if (!header) return
     drawCellText(
       page,
       header,
       xs[index],
-      titleBottom - TEMPLATE_PDF.headerHeight,
+      headerBottom,
       TEMPLATE_PDF.columns[index],
       TEMPLATE_PDF.headerHeight,
       fonts.cjk,
-      11.2,
+      11.4,
       {
         align: 'center',
         maxLines: 1,
@@ -257,7 +227,7 @@ export const createTemplatePdfFromRows = async (rows, inputFileName = 'example.x
   const pages = paginateTemplateRows(rows)
   pages.forEach((pageData, pageIndex) => {
     const page = pdfDoc.addPage([TEMPLATE_PDF.pageWidth, TEMPLATE_PDF.pageHeight])
-    const layout = drawPageFrame(page, pageData.capacity, { cjk }, pageIndex + 1, pages.length, templateTitle)
+    const layout = drawPageFrame(page, pageData.capacity, { cjk }, pageIndex + 1, pages.length)
 
     pageData.rows.forEach((row, rowIndex) => {
       const rowBottom = layout.rowsTop - layout.rowHeight * (rowIndex + 1)
