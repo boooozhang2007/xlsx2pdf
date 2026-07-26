@@ -678,7 +678,6 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
                       </div>
                       <div className="genQueueStageRow">
                         <Icon size={13} className={isActive ? 'spin genQueueStageIcon' : 'genQueueStageIcon'} />
-                        <span className="genQueueStageName">{getStageLabel(job)}</span>
                         {jobStageTotal > 0 ? (
                           <span className="genQueueWordCount">词条 {jobStageDone}/{jobStageTotal}</span>
                         ) : (
