@@ -7,6 +7,7 @@ import {
   GENERATION_MODE_LEGACY_ZIP,
   normalizeLegacyQuestionCount,
   normalizeTestPaperGroupSizes,
+  normalizeWithChineseTranslation,
 } from '../shared/generationModes.js'
 
 const JOB_PREFIX = 'worksheet-jobs'
@@ -61,6 +62,7 @@ const summarizeJob = (job) => ({
   generationMode: normalizeGenerationMode(job.generationMode),
   legacyQuestionCount: normalizeLegacyQuestionCount(job.legacyQuestionCount),
   testPaperGroupSizes: normalizeTestPaperGroupSizes(job.testPaperGroupSizes),
+  withChineseTranslation: normalizeWithChineseTranslation(job.withChineseTranslation),
   llmModel: job.llmModel || '',
   llmBatchSize: job.llmBatchSize || 0,
   llmConcurrency: job.llmConcurrency || 0,
@@ -427,6 +429,7 @@ const processSingleJob = async (job) => {
       llmConcurrency: payload.llmConcurrency || latestJob.llmConcurrency,
       legacyQuestionCount: payload.legacyQuestionCount || latestJob.legacyQuestionCount,
       testPaperGroupSizes: payload.testPaperGroupSizes || latestJob.testPaperGroupSizes,
+      withChineseTranslation: normalizeWithChineseTranslation(payload.withChineseTranslation ?? latestJob.withChineseTranslation),
       onProgress: async (event) => {
         await persistProgress(progressFromEvent(liveJob, event))
       },
@@ -539,6 +542,7 @@ const processSingleJob = async (job) => {
             fileName: payload?.fileName || queuedRetryJob.fileName,
             questionTypes: payload?.questionTypes || queuedRetryJob.questionTypes,
             generationMode: payload?.generationMode || queuedRetryJob.generationMode || GENERATION_MODE_FIXED_TEST_PAPER,
+            withChineseTranslation: normalizeWithChineseTranslation(payload?.withChineseTranslation ?? queuedRetryJob.withChineseTranslation),
             llmModel: queuedRetryJob.llmModel,
             llmBatchSize: queuedRetryJob.llmBatchSize,
             llmConcurrency: queuedRetryJob.llmConcurrency,
@@ -616,6 +620,7 @@ const processSingleJob = async (job) => {
           fileName: payload?.fileName || queuedRetryJob.fileName,
           questionTypes: payload?.questionTypes || queuedRetryJob.questionTypes,
           generationMode: payload?.generationMode || queuedRetryJob.generationMode || GENERATION_MODE_FIXED_TEST_PAPER,
+          withChineseTranslation: normalizeWithChineseTranslation(payload?.withChineseTranslation ?? queuedRetryJob.withChineseTranslation),
           llmModel: queuedRetryJob.llmModel,
           llmBatchSize: queuedRetryJob.llmBatchSize,
           llmConcurrency: queuedRetryJob.llmConcurrency,
@@ -663,12 +668,13 @@ export const scheduleWorksheetJobQueue = () => {
   waitUntil(kickWorksheetJobQueue())
 }
 
-export const submitWorksheetJob = async ({ rows, fileName, questionTypes, generationMode, llmModel, legacyQuestionCount, testPaperGroupSizes }) => {
+export const submitWorksheetJob = async ({ rows, fileName, questionTypes, generationMode, llmModel, legacyQuestionCount, testPaperGroupSizes, withChineseTranslation }) => {
   const id = crypto.randomUUID()
   const submittedAt = now()
   const normalizedMode = normalizeGenerationMode(generationMode)
   const normalizedLegacyQuestionCount = normalizeLegacyQuestionCount(legacyQuestionCount)
   const normalizedTestPaperGroupSizes = normalizeTestPaperGroupSizes(testPaperGroupSizes)
+  const normalizedWithChineseTranslation = normalizeWithChineseTranslation(withChineseTranslation)
   const totalSteps = buildTotalSteps(questionTypes, Array.isArray(rows) ? rows.length : 0, normalizedMode, normalizedTestPaperGroupSizes)
   const llmRuntime = getLlmJobRuntime(String(llmModel || getDefaultLlmModel()).trim())
   const job = {
@@ -678,6 +684,7 @@ export const submitWorksheetJob = async ({ rows, fileName, questionTypes, genera
     generationMode: normalizedMode,
     legacyQuestionCount: normalizedLegacyQuestionCount,
     testPaperGroupSizes: normalizedTestPaperGroupSizes,
+    withChineseTranslation: normalizedWithChineseTranslation,
     llmModel: llmRuntime.model,
     llmFallbackModels: llmRuntime.fallbackModels,
     llmBatchSize: llmRuntime.batchSize,
@@ -707,6 +714,7 @@ export const submitWorksheetJob = async ({ rows, fileName, questionTypes, genera
         generationMode: job.generationMode,
         legacyQuestionCount: job.legacyQuestionCount,
         testPaperGroupSizes: job.testPaperGroupSizes,
+        withChineseTranslation: job.withChineseTranslation,
         llmModel: job.llmModel,
         llmFallbackModels: job.llmFallbackModels,
         llmBatchSize: job.llmBatchSize,

@@ -1041,7 +1041,7 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
 
       <section className="ttsStage">
         <div className="stageHeader">
-          <div>
+          <div className="stageHeaderInfo">
             <span className="eyebrow">Audio Studio</span>
             <h2>{totalWordCount ? `${totalWordCount} 个单词 · ${totalBatchCount} 段` : '等待单词'}</h2>
           </div>

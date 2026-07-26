@@ -12,6 +12,7 @@ import {
   GENERATION_MODE_LEGACY_ZIP,
   normalizeLegacyQuestionCount,
   normalizeTestPaperGroupSizes,
+  normalizeWithChineseTranslation,
 } from '../shared/generationModes.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -1444,7 +1445,8 @@ const generateMatching = (questionParagraphs, answerParagraphs, group, groupInde
     const options = shuffle([...distractors.map((item) => item.displayEnglish), entry.displayEnglish], context.rng).slice(0, 4)
     const definition = requireGeneratedValue(lexical.get(entry.key)?.definitionEn, '释义匹配存在缺失的 definition_en。')
     const definitionZh = requireGeneratedValue(lexical.get(entry.key)?.definitionZh, '释义匹配存在缺失的 definition_zh。')
-    questionParagraphs.push(paragraph(`${index + 1}. ${definition} (${definitionZh})`))
+    const zhSuffix = context.withChineseTranslation && definitionZh ? ` (${definitionZh})` : ''
+    questionParagraphs.push(paragraph(`${index + 1}. ${definition}${zhSuffix}`))
     questionParagraphs.push(paragraph(optionLine(options)))
     answers.push([index + 1, 'ABCD'[options.indexOf(entry.displayEnglish)] || 'A'])
   })
@@ -1507,7 +1509,8 @@ const generateMissingLetters = (questionParagraphs, answerParagraphs, group, gro
     const indices = sample(Array.from({ length: Math.max(0, core.length - 1) }, (_, offset) => offset + 1), hideCount, context.rng)
     const chars = core.split('')
     indices.forEach((pick) => { chars[pick] = '_' })
-    questionParagraphs.push(paragraph(`${index + 1}. ${chars.join(' ')}  (${entry.plainChinese})`))
+    const meaningSuffix = context.withChineseTranslation && entry.plainChinese ? `  (${entry.plainChinese})` : ''
+    questionParagraphs.push(paragraph(`${index + 1}. ${chars.join(' ')}${meaningSuffix}`))
     answers.push([index + 1, entry.displayEnglish])
   })
   writeAnswerBlock(answerParagraphs, `第${groupIndex + 1}组 四 缺字母填空 答案`, answers, 5, groupIndex > 0)
@@ -1656,7 +1659,8 @@ const generateTestPaperMatchingSection = (paragraphs, group, context, answersOut
     const options = shuffle([...distractors.map((item) => item.displayEnglish), entry.displayEnglish], context.rng).slice(0, 4)
     const definition = requireGeneratedValue(context.lexicalCache.get(entry.key)?.definitionEn, '释义匹配存在缺失的 definition_en。')
     const definitionZh = requireGeneratedValue(context.lexicalCache.get(entry.key)?.definitionZh, '释义匹配存在缺失的 definition_zh。')
-    paragraphs.push(paragraph(`(    ) ${index + 1}. ${definition} (${definitionZh})`, { size: 11, spaceAfter: 1 }))
+    const zhSuffix = context.withChineseTranslation && definitionZh ? ` (${definitionZh})` : ''
+    paragraphs.push(paragraph(`(    ) ${index + 1}. ${definition}${zhSuffix}`, { size: 11, spaceAfter: 1 }))
     paragraphs.push(paragraph(testPaperOptionLine(options), { size: 11, spaceAfter: 2 }))
     answers.push(`${index + 1}.${'ABCD'[options.indexOf(entry.displayEnglish)] || 'A'}`)
   })
@@ -1718,7 +1722,7 @@ const generateTestPaperMissingLettersSection = (paragraphs, group, context, answ
     const chars = core.split('')
     const blankIndex = core.length <= 4 ? core.length - 1 : Math.min(core.length - 1, 1 + Math.floor(context.rng() * (core.length - 1)))
     chars[blankIndex] = '_'
-    const meaningSuffix = entry.plainChinese ? ` (${entry.plainChinese})` : ''
+    const meaningSuffix = context.withChineseTranslation && entry.plainChinese ? ` (${entry.plainChinese})` : ''
     paragraphs.push(paragraph(`${index + 1}. ${chars.join(' ')}${meaningSuffix}`, { size: 11, spaceAfter: 2 }))
     answers.push(`${index + 1}.${entry.displayEnglish}`)
   })
@@ -2191,6 +2195,7 @@ const createGenerationContext = (
     llmBatchSize: Math.max(1, Number.parseInt(llmBatchSize, 10) || getLlmJobRuntime(llmModel).batchSize),
     llmConcurrency: Math.max(1, Number.parseInt(llmConcurrency, 10) || getLlmJobRuntime(llmModel).concurrency),
     questionsPerGroup: normalizeLegacyQuestionCount(questionsPerGroup),
+    withChineseTranslation: true,
     groupSize: GROUP_SIZE,
     rngSeed,
     rng: createSeededRng(rngSeed),
@@ -2215,6 +2220,7 @@ export const generateWorksheetArchive = async ({
   llmConcurrency,
   legacyQuestionCount,
   testPaperGroupSizes,
+  withChineseTranslation = true,
   initialCache = null,
   onCacheCheckpoint = null,
 }) => {
@@ -2251,6 +2257,7 @@ export const generateWorksheetArchive = async ({
     legacyQuestionCount,
   )
   context.generationMode = normalizedMode
+  context.withChineseTranslation = normalizeWithChineseTranslation(withChineseTranslation)
 
   // Restore any caches saved by a previous attempt of this job.
   if (initialCache?.lexical && typeof initialCache.lexical === 'object') {

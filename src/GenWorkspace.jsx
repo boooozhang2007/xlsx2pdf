@@ -23,6 +23,7 @@ import {
   GENERATION_MODE_OPTIONS,
   TEST_PAPER_GROUP_SIZE_OPTIONS,
   normalizeLegacyQuestionCount,
+  normalizeWithChineseTranslation,
 } from '../shared/generationModes'
 
 const DEFAULT_QUESTION_TYPES = ALL_QUESTION_TYPE_KEYS
@@ -312,6 +313,7 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
   const [selectedTypes, setSelectedTypes] = useState(DEFAULT_QUESTION_TYPES)
   const [legacyQuestionCount, setLegacyQuestionCount] = useState(DEFAULT_LEGACY_QUESTION_COUNT)
   const [testPaperGroupSizes, setTestPaperGroupSizes] = useState([100])
+  const [withChineseTranslation, setWithChineseTranslation] = useState(true)
   const [llmModels, setLlmModels] = useState([])
   const [selectedLlmModel, setSelectedLlmModel] = useState('')
 
@@ -443,6 +445,7 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
           llmModel: selectedLlmModel,
           legacyQuestionCount: normalizeLegacyQuestionCount(legacyQuestionCount),
           testPaperGroupSizes,
+          withChineseTranslation: normalizeWithChineseTranslation(withChineseTranslation),
         }),
       })
       setJobs((current) => [data.job, ...current.filter((job) => job.id !== data.job.id)])
@@ -638,11 +641,12 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
                   <div className="genQueueHead">
                     <div className="genQueueHeadLeft">
                       <span className={`genQueueChip ${job.status}`}>{meta.label}</span>
-                      <strong>{job.fileName.replace(/\.[^.]+$/, '')}</strong>
+                      <strong className="genQueueFileName" title={job.fileName}>{job.fileName.replace(/\.[^.]+$/, '')}</strong>
                       <span className="genQueueMetaText">
                         {job.generationMode === GENERATION_MODE_FIXED_TEST_PAPER
                           ? `模板·${(job.testPaperGroupSizes || [100]).map((size) => size || '全部').join('/')}`
                           : `ZIP·每组${job.legacyQuestionCount || DEFAULT_LEGACY_QUESTION_COUNT}题`}
+                        {job.withChineseTranslation === false ? '·无中文' : ''}
                       </span>
                     </div>
                     <span className="genQueueTime">{formatTime(job.updatedAt || job.createdAt)}</span>
@@ -671,7 +675,7 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
 
                   {/* Actions */}
                   <div className="genQueueFoot">
-                    <small className="genQueueFootName">{job.exportFileName || job.fileName.replace(/\.[^.]+$/, '')}</small>
+                    <small className="genQueueFootName" title={job.exportFileName || job.fileName}>{job.exportFileName || job.fileName.replace(/\.[^.]+$/, '')}</small>
                     <div className="genQueueActions">
                       {canCancel ? (
                         <button className="genQueueStop" type="button" onClick={() => cancelJob(job)} disabled={stopping}>
@@ -805,6 +809,17 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
                   })}
                 </div>
               </div>
+              <label className="genToggleRow">
+                <input
+                  type="checkbox"
+                  checked={withChineseTranslation}
+                  onChange={(event) => setWithChineseTranslation(event.target.checked)}
+                />
+                <span className="genToggleText">
+                  <strong>带中文翻译</strong>
+                  <em>关闭后题面中的中文释义/提示将省略</em>
+                </span>
+              </label>
               <div className="questionTypeGrid compact">
                 {FIXED_TEST_PAPER_SECTIONS.map((item) => (
                   <div className="questionTypeCard compact active fixed" key={item.key}>
@@ -814,7 +829,7 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
                   </div>
                 ))}
               </div>
-              <p className="genQueueEmpty">按模板固定生成 8 个题段，所选规格共享同一批模型题面，仅在导出时分别分组。当前预计生成 {paperCount} 份 docx。</p>
+              <p className="genQueueEmpty">按模板固定生成 8 个题段，所选规格共享同一批模型题面，仅在导出时分别分组。当前预计生成 {paperCount} 份 docx{withChineseTranslation ? '' : '（不含中文翻译）'}。</p>
             </>
           ) : (
             <>

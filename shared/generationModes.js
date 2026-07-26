@@ -15,6 +15,8 @@ export const normalizeLegacyQuestionCount = (value) => {
   return Number.isFinite(parsed) ? Math.max(1, Math.min(500, parsed)) : DEFAULT_LEGACY_QUESTION_COUNT
 }
 
+export const normalizeWithChineseTranslation = (value) => value !== false && value !== 'false' && value !== 0
+
 export const normalizeTestPaperGroupSizes = (values) => {
   const allowed = new Set(TEST_PAPER_GROUP_SIZE_OPTIONS.map((item) => item.value))
   const source = Array.isArray(values) ? values : [values]

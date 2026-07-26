@@ -2,7 +2,7 @@ import { readJsonBody, rejectMethod, requireSession, sendJson } from '../../serv
 import { cancelWorksheetJob, deleteWorksheetJob, listWorksheetJobs, scheduleWorksheetJobQueue, submitWorksheetJob } from '../../server/genQueue.js'
 import { getAvailableLlmModels, getDefaultLlmModel } from '../../server/genEngine.js'
 import { ALL_QUESTION_TYPE_KEYS, FIXED_TEST_PAPER_QUESTION_KEYS } from '../../shared/worksheetTypes.js'
-import { GENERATION_MODE_FIXED_TEST_PAPER, GENERATION_MODE_LEGACY_ZIP } from '../../shared/generationModes.js'
+import { GENERATION_MODE_FIXED_TEST_PAPER, GENERATION_MODE_LEGACY_ZIP, normalizeWithChineseTranslation } from '../../shared/generationModes.js'
 
 export default async function handler(req, res) {
   if (!['GET', 'POST', 'DELETE'].includes(req.method || '')) return rejectMethod(res, 'GET, POST, DELETE')
@@ -59,6 +59,7 @@ export default async function handler(req, res) {
       llmModel: body.llmModel || getDefaultLlmModel(),
       legacyQuestionCount: body.legacyQuestionCount,
       testPaperGroupSizes: body.testPaperGroupSizes,
+      withChineseTranslation: normalizeWithChineseTranslation(body.withChineseTranslation),
     })
     scheduleWorksheetJobQueue()
     return sendJson(res, 200, { ok: true, job })
