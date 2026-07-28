@@ -220,6 +220,17 @@ const computeRateLimitDelayMs = (error, retryCount) => {
 
 const tuneLlmRuntimeAfterRateLimit = (job = {}) => {
   const current = buildLlmRuntimeForJob(job)
+  if (current.fallbackModels.length) {
+    const [nextModel, ...remainingFallbacks] = current.fallbackModels
+    const nextRuntime = getLlmJobRuntime(nextModel)
+    return {
+      llmModel: nextRuntime.model,
+      llmBatchSize: Math.max(1, Math.min(current.batchSize, nextRuntime.batchSize)),
+      llmConcurrency: Math.max(1, Math.min(nextRuntime.concurrency, current.concurrency - 1 || 1)),
+      llmFallbackModels: [...remainingFallbacks, current.model],
+      reason: `切换备用模型 ${nextRuntime.model}，并发降到 ${Math.max(1, Math.min(nextRuntime.concurrency, current.concurrency - 1 || 1))}`,
+    }
+  }
   if (current.concurrency > 1) {
     return {
       llmModel: current.model,
@@ -236,17 +247,6 @@ const tuneLlmRuntimeAfterRateLimit = (job = {}) => {
       llmConcurrency: current.concurrency,
       llmFallbackModels: current.fallbackModels,
       reason: `降低批次到 ${Math.max(1, Math.floor(current.batchSize / 2))}`,
-    }
-  }
-  if (current.fallbackModels.length) {
-    const [nextModel, ...remainingFallbacks] = current.fallbackModels
-    const nextRuntime = getLlmJobRuntime(nextModel)
-    return {
-      llmModel: nextRuntime.model,
-      llmBatchSize: nextRuntime.batchSize,
-      llmConcurrency: nextRuntime.concurrency,
-      llmFallbackModels: remainingFallbacks,
-      reason: `切换备用模型 ${nextRuntime.model}`,
     }
   }
   return {

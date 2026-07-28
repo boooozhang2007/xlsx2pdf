@@ -285,6 +285,14 @@ const replaceAnswerWithBlank = (sentence, answer) => {
   return match ? source.replace(regex, '______') : ''
 }
 
+const containsWholeWord = (sentence, answer) => {
+  const source = String(sentence ?? '').trim()
+  const expected = String(answer ?? '').trim()
+  if (!source || !expected) return false
+  const pattern = expected.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/ /g, '\\s+')
+  return new RegExp(`(?<![A-Za-z])${pattern}(?![A-Za-z])`, 'i').test(source)
+}
+
 const uniqueDistractors = (pool, correct, count, keyFn, rng) => {
   const correctKey = keyFn(correct)
   const seen = new Set([correctKey])
@@ -312,20 +320,20 @@ const STRICT_JSON_ONLY_RULES = [
   'Keep every input id exactly once.',
   'Preserve the input order.',
   'Every array item must be a JSON object containing all required fields.',
-  'If a value is unknown or unsafe, return an empty string instead of omitting the field.',
+  'Never omit a required field. Use an empty string only when that field-specific rule explicitly allows it.',
 ]
 
 const buildStrictJsonInstruction = (requiredFields, example) => [
   ...STRICT_JSON_ONLY_RULES,
   `Each object must contain exactly these fields: ${requiredFields.join(', ')}.`,
-  `Example output item: ${JSON.stringify(example)}.`,
+  `Complete example output array for one input item: ${JSON.stringify([example])}.`,
 ].join(' ')
 
 const buildStrictJsonObjectInstruction = (requiredFields, example) => [
   'Return exactly one valid JSON object and nothing else.',
   'Do not output markdown, code fences, comments, headings, explanations, or any extra text.',
   'The object must contain all required fields exactly once.',
-  'If a value is unknown or unsafe, return an empty string instead of omitting the field.',
+  'Never omit a required field. Use an empty string only when that field-specific rule explicitly allows it.',
   `The object must contain exactly these fields: ${requiredFields.join(', ')}.`,
   `Example output object: ${JSON.stringify(example)}.`,
 ].join(' ')
@@ -490,7 +498,7 @@ export const getLlmJobRuntime = (selectedModel = '', overrides = {}) => {
 
 const getLlmRetryPolicy = () => ({
   requestRetries: Math.max(1, Number.parseInt(process.env.VIVI_LLM_REQUEST_RETRIES || '3', 10) || 3),
-  singleItemRetries: Math.max(1, Number.parseInt(process.env.VIVI_LLM_SINGLE_ITEM_RETRIES || '4', 10) || 4),
+  singleItemRetries: Math.max(1, Number.parseInt(process.env.VIVI_LLM_SINGLE_ITEM_RETRIES || '2', 10) || 2),
   requestTimeoutMs: Math.max(5000, Number.parseInt(process.env.VIVI_LLM_REQUEST_TIMEOUT_MS || '60000', 10) || 60000),
 })
 
@@ -691,7 +699,7 @@ const callLlmForLexical = async (entries, llmOptions = {}) => {
       },
     ],
     temperature: 0,
-    max_tokens: Math.max(2048, Math.min(32000, 230 * entries.length)),
+    max_tokens: Math.max(1536, Math.min(24000, 140 * entries.length)),
   }
   return fetchLlmArray(payload, 'LLM 词汇', llmOptions)
 }
@@ -708,18 +716,20 @@ const callLlmForMaterials = async (entries, requireSynonym, llmOptions = {}) => 
     ...(isSingle ? ['Single-item strict mode: make sure cloze_full_sentence contains the exact word field once and only once.'] : []),
   ]
   if (requireSynonym) {
-    requestedFields = 'synonym, synonym_original, synonym_rewrite_full'
+    requestedFields = 'synonym, synonym_original, synonym_rewrite_full, synonym_rewrite_blank'
     rules = [
       'Rules for synonym: it is the exact answer shown in the options for synonym replacement.',
       'It may be inflected if grammar requires it, but synonym_rewrite_full must contain that exact synonym string once.',
       'If an input item provides required_synonym, you must use that exact text as synonym and also place that exact text in synonym_rewrite_full once.',
       'synonym_original must be a complete sentence using the input word naturally.',
       'synonym_rewrite_full must be a very similar complete sentence containing synonym exactly once; do not use blanks in it.',
-      'Never omit synonym_original or synonym_rewrite_full; if you are unsure, still write a short safe classroom sentence.',
+      'synonym_rewrite_blank must equal synonym_rewrite_full with that exact synonym occurrence replaced by exactly six underscores: ______.',
+      'synonym_rewrite_blank must contain exactly one ______ and must not contain the synonym answer.',
+      'Never omit any required field; if the supplied synonym is difficult, use a short grammar-safe complete sentence that contains the exact synonym text.',
       ...(isSingle
         ? [
-            'Single-item strict mode: choose the final synonym text first; if grammar needs an inflected form put that form in synonym; then copy that exact text unchanged into synonym_rewrite_full once and only once.',
-            'Single-item strict mode checklist: return one object only; keep the same id; make synonym, synonym_original, and synonym_rewrite_full all non-empty strings.',
+            'Single-item strict mode: choose the final synonym text first, copy it unchanged into synonym_rewrite_full exactly once, then replace only that occurrence with ______ in synonym_rewrite_blank.',
+            'Single-item strict mode checklist: return one array containing one object; keep the same id; all four output strings must be non-empty.',
           ]
         : []),
     ]
@@ -728,7 +738,7 @@ const callLlmForMaterials = async (entries, requireSynonym, llmOptions = {}) => 
     'You create English vocabulary worksheet items for Chinese students.',
     buildStrictJsonInstruction(
       requireSynonym
-        ? ['id', 'synonym', 'synonym_original', 'synonym_rewrite_full']
+        ? ['id', 'synonym', 'synonym_original', 'synonym_rewrite_full', 'synonym_rewrite_blank']
         : ['id', 'cloze_full_sentence', 'tf_true', 'tf_false'],
       requireSynonym
         ? {
@@ -736,6 +746,7 @@ const callLlmForMaterials = async (entries, requireSynonym, llmOptions = {}) => 
             synonym: 'quick',
             synonym_original: 'The runner is fast today.',
             synonym_rewrite_full: 'The runner is quick today.',
+            synonym_rewrite_blank: 'The runner is ______ today.',
           }
         : {
             id: 'sample-id',
@@ -777,7 +788,7 @@ const callLlmForMaterials = async (entries, requireSynonym, llmOptions = {}) => 
       },
     ],
     temperature: 0,
-    max_tokens: Math.max(2048, Math.min(32000, 260 * entries.length)),
+    max_tokens: Math.max(1536, Math.min(24000, 180 * entries.length)),
   }
   return fetchLlmArray(payload, 'LLM 题面', llmOptions)
 }
@@ -794,10 +805,17 @@ const callLlmForSynonymRepair = async (entry, lastRaw, llmOptions = {}) => {
         role: 'system',
         content: [
           'You repair one English synonym replacement item.',
-          'Return valid JSON only as a single object with keys: synonym_original, synonym_rewrite_full.',
+          buildStrictJsonObjectInstruction(
+            ['synonym_original', 'synonym_rewrite_full', 'synonym_rewrite_blank'],
+            {
+              synonym_original: 'The runner is fast today.',
+              synonym_rewrite_full: 'The runner is quick today.',
+              synonym_rewrite_blank: 'The runner is ______ today.',
+            },
+          ),
           'Keep the two sentences very similar in meaning and structure.',
           'synonym_rewrite_full must contain the exact given synonym string once and only once.',
-          'Do not use blanks.',
+          'synonym_rewrite_blank must copy synonym_rewrite_full and replace only that synonym with exactly ______.',
         ].join(' '),
       },
       {
@@ -823,6 +841,7 @@ const callLlmForSynonymRepair = async (entry, lastRaw, llmOptions = {}) => {
       synonym,
       synonym_original: String(repaired.synonym_original || originalSentence).trim(),
       synonym_rewrite_full: String(repaired.synonym_rewrite_full || '').trim(),
+      synonym_rewrite_blank: String(repaired.synonym_rewrite_blank || '').trim(),
     }
   } catch {
     return null
@@ -848,12 +867,13 @@ const callLlmForSynonymDoctor = async (entry, lexical, lastRaw, lastError, llmOp
         content: [
           'You are a doctor for failed English synonym replacement items.',
           buildStrictJsonObjectInstruction(
-            ['id', 'synonym', 'synonym_original', 'synonym_rewrite_full'],
+            ['id', 'synonym', 'synonym_original', 'synonym_rewrite_full', 'synonym_rewrite_blank'],
             {
               id: 'sample-id',
               synonym: 'quick',
               synonym_original: 'The runner is fast today.',
               synonym_rewrite_full: 'The runner is quick today.',
+              synonym_rewrite_blank: 'The runner is ______ today.',
             },
           ),
           'Return one repaired object only.',
@@ -862,6 +882,7 @@ const callLlmForSynonymDoctor = async (entry, lexical, lastRaw, lastError, llmOp
           'If grammar becomes awkward, rewrite the whole sentence frame instead of changing the synonym text.',
           'synonym_original must contain the exact input word once and only once.',
           'synonym_rewrite_full must be a very similar complete sentence containing the exact synonym once and only once.',
+          'synonym_rewrite_blank must copy synonym_rewrite_full and replace only the synonym with exactly ______.',
           'Fill every required field even if the partial draft is bad; rewrite from scratch when needed.',
           'Keep vocabulary simple and classroom-friendly for Chinese students.',
         ].join(' '),
@@ -887,6 +908,12 @@ const callLlmForSynonymDoctor = async (entry, lexical, lastRaw, lastError, llmOp
                   lastRaw.synonym_rewrite_full
                   || lastRaw.rewrite_full
                   || lastRaw.rewrite_sentence
+                  || '',
+                ).trim(),
+                synonym_rewrite_blank: String(
+                  lastRaw.synonym_rewrite_blank
+                  || lastRaw.rewrite_blank
+                  || lastRaw.blank_rewrite
                   || '',
                 ).trim(),
               }
@@ -916,6 +943,12 @@ const callLlmForSynonymDoctor = async (entry, lexical, lastRaw, lastError, llmOp
         || repaired.rewrite_full
         || repaired.rewrite_sentence
         || repaired.rewritten_sentence
+        || '',
+      ).trim(),
+      synonym_rewrite_blank: String(
+        repaired.synonym_rewrite_blank
+        || repaired.rewrite_blank
+        || repaired.blank_rewrite
         || '',
       ).trim(),
     }
@@ -979,6 +1012,7 @@ const sanitizeMaterial = (raw, entry, lexical, requireSynonym) => {
       || '',
     ).trim()
     const synonymRewriteBlank = countBlankSlots(rewriteBlankSource) === 1
+      && !containsWholeWord(rewriteBlankSource, synonym)
       ? rewriteBlankSource
       : replaceAnswerWithBlank(rewriteFull, synonym)
     if (!synonym) throw new Error('同义替换缺少 synonym')
@@ -1080,8 +1114,12 @@ const tryModelForSingleEntry = async ({
       lastError = unresolved[0]?.error || new Error('返回内容缺字段或格式不合法')
     } catch (error) {
       lastError = error
+      if (error?.code === 'LLM_RATE_LIMITED') break
     }
     if (attempt < singleItemRetries - 1) await sleep(250 * (attempt + 1))
+  }
+  if (lastError?.code === 'LLM_RATE_LIMITED') {
+    return { success: false, resolvedCount: 0, lastRaw, lastError }
   }
   if (typeof repairLlm === 'function' && lastRaw) {
     try {
@@ -1177,7 +1215,7 @@ const resolveLlmEntries = async ({
   if (!totalEntries) return 0
   let resolvedTotal = 0
   const batches = chunkGroups(uniqueEntries, batchSize)
-  const batchResults = await runWithConcurrency(batches, concurrency, async (batch) => {
+  const batchResults = await runWithConcurrency(batches, concurrency, async (batch, batchIndex) => {
     let pending = batch
     let subBatchSize = batch.length
     let guard = 0
@@ -1185,10 +1223,43 @@ const resolveLlmEntries = async ({
     while (pending.length > 1 && subBatchSize > 1 && guard < 12) {
       guard += 1
       const unresolved = []
-      for (const chunk of chunkGroups(pending, subBatchSize)) {
+      const chunks = chunkGroups(pending, subBatchSize)
+      for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex += 1) {
+        const chunk = chunks[chunkIndex]
         try {
           await onTick?.()
-          const responseItems = await callLlm(chunk)
+          let responseItems
+          try {
+            responseItems = await callLlm(chunk)
+          } catch (error) {
+            if (error?.code !== 'LLM_RATE_LIMITED' || typeof makeLlmClosures !== 'function' || !fallbackModels.length) throw error
+
+            // Spread concurrent 429 fallbacks across available models instead
+            // of moving every failed batch to the same model at once.
+            const offset = (batchIndex + chunkIndex) % fallbackModels.length
+            const orderedFallbacks = [
+              ...fallbackModels.slice(offset),
+              ...fallbackModels.slice(0, offset),
+            ]
+            let fallbackError = error
+            for (const fallbackModel of orderedFallbacks) {
+              try {
+                await onTick?.()
+                const closures = makeLlmClosures(fallbackModel)
+                if (!closures?.callLlm) continue
+                responseItems = await closures.callLlm(chunk)
+                fallbackError = null
+                break
+              } catch (nextError) {
+                fallbackError = nextError
+                if (nextError?.code !== 'LLM_RATE_LIMITED') continue
+                const currentDelay = Number(fallbackError?.retryAfterMs || 0)
+                const previousDelay = Number(error?.retryAfterMs || 0)
+                fallbackError.retryAfterMs = Math.max(currentDelay, previousDelay)
+              }
+            }
+            if (!responseItems) throw fallbackError || error
+          }
           const { unresolved: chunkUnresolved, resolvedCount } = await resolveResponseItems(chunk, responseItems, sanitizeEntry, onResolved)
           resolvedTotal += resolvedCount
           if (resolvedCount) await onProgress?.(resolvedTotal, totalEntries)
@@ -1455,6 +1526,18 @@ const buildTestPaperSynonymChoicePlan = (groups, context) => {
     synonymEntries.push(...synonym)
   })
   return { plan, synonymEntries }
+}
+
+const buildTestPaperLexicalCandidates = (fixedGroupSets, context) => {
+  const candidates = []
+  fixedGroupSets.forEach((groupSet) => {
+    groupSet.groups.forEach((group, groupIndex) => {
+      const candidateCount = Math.min(group.length, 60)
+      const rng = createSeededRng(`${context.rngSeed}|${groupSet.label}|${groupIndex}|lexical-candidates`)
+      candidates.push(...sample(group, candidateCount, rng))
+    })
+  })
+  return dedupeEntriesByKey(candidates)
 }
 
 const paragraph = (text, options = {}) => ({
@@ -2361,6 +2444,9 @@ export const generateWorksheetArchive = async ({
   const needsLexical = selectedKeys.some((key) => LEXICAL_QUESTION_KEYS.has(key))
   const needsBasicMaterials = selectedKeys.some((key) => BASIC_MATERIAL_QUESTION_KEYS.has(key))
   const needsSynonymMaterials = selectedKeys.includes('三_同义替换')
+  const lexicalEntries = needsLexical && normalizedMode === GENERATION_MODE_FIXED_TEST_PAPER
+    ? buildTestPaperLexicalCandidates(fixedGroupSets, context)
+    : words
 
   await report({
     message: `[${exportName}] 准备生成 ${words.length} 个词条`,
@@ -2414,7 +2500,7 @@ export const generateWorksheetArchive = async ({
       currentStep: '预热 LLM 词汇关系',
       stageLabel: '预热 LLM 词汇关系',
       totalWords: words.length,
-      stageWordTotal: words.length,
+      stageWordTotal: lexicalEntries.length,
       stageWordCompleted: 0,
     })
   }
@@ -2432,7 +2518,7 @@ export const generateWorksheetArchive = async ({
   // Give each parallel stage its own progress-reporting context so their
   // word counts don't overwrite each other.  Both write to a shared counter
   // and report a single combined stageWordTotal.
-  const parallelWarmupTotal = (needsLexical ? words.length : 0) + (hasBasicWork ? uniqueBasicEntries.length : 0)
+  const parallelWarmupTotal = (needsLexical ? lexicalEntries.length : 0) + (hasBasicWork ? uniqueBasicEntries.length : 0)
   let lexWarmupResolved = 0
   let basicWarmupResolved = 0
   const parallelWarmupLabel = needsLexical && hasBasicWork ? '预热 LLM 词汇与基础材料' : needsLexical ? '预热 LLM 词汇关系' : '预热 LLM 基础题面材料'
@@ -2455,7 +2541,7 @@ export const generateWorksheetArchive = async ({
   const basicContext = makeMergedWarmupContext(() => basicWarmupResolved, (v) => { basicWarmupResolved = v })
 
   await Promise.all([
-    needsLexical ? ensureLexicalData(words, lexicalContext) : Promise.resolve(),
+    needsLexical ? ensureLexicalData(lexicalEntries, lexicalContext) : Promise.resolve(),
     hasBasicWork ? ensureMaterials(uniqueBasicEntries, basicContext, false) : Promise.resolve(),
   ])
 
@@ -2466,8 +2552,8 @@ export const generateWorksheetArchive = async ({
       currentStep: '预热 LLM 词汇关系',
       stageLabel: '预热 LLM 词汇关系',
       totalWords: words.length,
-      stageWordTotal: words.length,
-      stageWordCompleted: words.length,
+      stageWordTotal: lexicalEntries.length,
+      stageWordCompleted: lexicalEntries.length,
       stepDelta: 1,
     })
   }
