@@ -434,6 +434,38 @@ test('request retry count resets after meaningful progress', async () => {
   assert.equal(advanced.progressMark, '0:0:220')
 })
 
+test('stage progress does not jump backward after a retry wait', async () => {
+  const { progressFromEvent } = await import('../server/genQueue.js')
+  const job = {
+    progress: {
+      totalSteps: 40,
+      completedSteps: 2,
+      currentStep: '等待限流恢复',
+      stageLabel: '预热 LLM 同义替换题面材料',
+      stageWordCompleted: 90,
+      stageWordTotal: 330,
+      percent: 6,
+      completedStepKeys: ['warmup:lexical', 'warmup:basic'],
+    },
+  }
+
+  const resumed = progressFromEvent(job, {
+    currentStep: '预热 LLM 同义替换题面材料',
+    stageLabel: '预热 LLM 同义替换题面材料',
+    stageWordCompleted: 0,
+    stageWordTotal: 330,
+  })
+  const nextStage = progressFromEvent({ ...job, progress: resumed }, {
+    currentStep: '生成测试卷',
+    stageLabel: '生成测试卷',
+    stageWordCompleted: 0,
+    stageWordTotal: 1100,
+  })
+
+  assert.equal(resumed.stageWordCompleted, 90)
+  assert.equal(nextStage.stageWordCompleted, 0)
+})
+
 test('request failures switch to durable recovery waits instead of exhausting retries', async () => {
   const { getLlmRequestRetryDelayMs } = await import('../server/genQueue.js')
 

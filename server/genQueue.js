@@ -190,7 +190,7 @@ const progressFromMessage = (job, message) => {
   return progress
 }
 
-const progressFromEvent = (job, event) => {
+export const progressFromEvent = (job, event) => {
   if (!event || typeof event === 'string') return progressFromMessage(job, String(event || ''))
   const previousProgress = job.progress || createProgress(
     buildTotalSteps(job.questionTypes || [], job.wordCount || 0, job.generationMode),
@@ -209,10 +209,9 @@ const progressFromEvent = (job, event) => {
   if (Number.isFinite(event.stageWordTotal)) progress.stageWordTotal = Math.max(0, Number(event.stageWordTotal) || 0)
   if (Number.isFinite(event.stageWordCompleted)) {
     const nextCompleted = Math.max(0, Number(event.stageWordCompleted) || 0)
-    const sameStage = (
-      (!event.stageLabel || event.stageLabel === previousProgress.stageLabel)
-      && (!event.currentStep || event.currentStep === previousProgress.currentStep)
-    )
+    const sameStage = event.stageLabel && previousProgress.stageLabel
+      ? event.stageLabel === previousProgress.stageLabel
+      : (!event.currentStep || event.currentStep === previousProgress.currentStep)
     progress.stageWordCompleted = sameStage
       ? Math.max(Number(progress.stageWordCompleted || 0), nextCompleted)
       : nextCompleted
@@ -784,7 +783,6 @@ const processSingleJob = async (job) => {
         progress: {
           ...(retryBaseJob.progress || resetJobProgress(retryBaseJob)),
           currentStep: '等待 LLM 网关恢复',
-          stageLabel: '等待 LLM 网关恢复',
           message: waitingMessage,
         },
       })
@@ -844,7 +842,6 @@ const processSingleJob = async (job) => {
           progress: {
             ...(retryBaseJob.progress || resetJobProgress(retryBaseJob)),
             currentStep: '等待题面补跑',
-            stageLabel: '等待题面补跑',
             message: waitingMessage,
           },
         })
@@ -910,7 +907,6 @@ const processSingleJob = async (job) => {
         progress: {
           ...(retryBaseJob.progress || resetJobProgress(retryBaseJob)),
           currentStep: '等待限流恢复',
-          stageLabel: '等待限流恢复',
           message: waitingMessage,
         },
       })
