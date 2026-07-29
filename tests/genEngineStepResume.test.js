@@ -534,3 +534,10 @@ test('degraded LLM runtimes cap each Workflow step by request rounds', async () 
   assert.equal(getLlmEntryLimitForRuntime({ llmBatchSize: 5, llmConcurrency: 2 }, 100), 30)
   assert.equal(getLlmEntryLimitForRuntime({ llmBatchSize: 20, llmConcurrency: 5 }, 100), 100)
 })
+
+test('workflow steps yield before the serverless function hard timeout', async () => {
+  const { hasWorksheetStepTimeBudget } = await import('../server/genQueue.js')
+
+  assert.equal(hasWorksheetStepTimeBudget(1_000, 180_999, 180_000), true)
+  assert.equal(hasWorksheetStepTimeBudget(1_000, 181_000, 180_000), false)
+})

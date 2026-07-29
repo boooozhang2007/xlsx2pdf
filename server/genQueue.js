@@ -17,6 +17,10 @@ const PROGRESS_WRITE_WORD_DELTA = Math.max(1, Number.parseInt(process.env.GEN_QU
 const CANCELLATION_POLL_INTERVAL_MS = Math.max(150, Number.parseInt(process.env.GEN_QUEUE_CANCELLATION_POLL_INTERVAL_MS || '300', 10) || 300)
 const LLM_ENTRIES_PER_STEP = Math.max(1, Number.parseInt(process.env.GEN_QUEUE_LLM_ENTRIES_PER_STEP || '100', 10) || 100)
 const LLM_BATCH_ROUNDS_PER_STEP = Math.max(1, Number.parseInt(process.env.GEN_QUEUE_LLM_BATCH_ROUNDS_PER_STEP || '3', 10) || 3)
+const WORKFLOW_STEP_SOFT_LIMIT_MS = Math.max(
+  60_000,
+  Number.parseInt(process.env.GEN_QUEUE_WORKFLOW_STEP_SOFT_LIMIT_MS || '180000', 10) || 180_000,
+)
 const MAX_INTERNAL_QUEUE_WAIT_MS = Math.max(1000, Number.parseInt(process.env.GEN_QUEUE_MAX_INTERNAL_WAIT_MS || '45000', 10) || 45000)
 const MIN_RATE_LIMIT_DELAY_MS = Math.max(1000, Number.parseInt(process.env.VIVI_LLM_RATE_LIMIT_MIN_DELAY_MS || '10000', 10) || 10000)
 const MAX_RATE_LIMIT_DELAY_MS = Math.max(MIN_RATE_LIMIT_DELAY_MS, Number.parseInt(process.env.VIVI_LLM_RATE_LIMIT_MAX_DELAY_MS || '120000', 10) || 120000)
@@ -333,6 +337,10 @@ export const getLlmEntryLimitForRuntime = (job = {}, configuredLimit = LLM_ENTRI
   return Math.min(hardLimit, batchSize * concurrency * LLM_BATCH_ROUNDS_PER_STEP)
 }
 
+export const hasWorksheetStepTimeBudget = (startedAt, currentTime = now(), limitMs = WORKFLOW_STEP_SOFT_LIMIT_MS) => (
+  Math.max(0, Number(currentTime) - Number(startedAt || 0)) < Math.max(1, Number(limitMs) || WORKFLOW_STEP_SOFT_LIMIT_MS)
+)
+
 export const getLlmRequestRetryDelayMs = (retryCount = 0) => {
   const normalizedRetryCount = Math.max(0, Number(retryCount) || 0)
   if (normalizedRetryCount < MAX_REQUEST_REQUEUES) {
@@ -551,6 +559,7 @@ const processSingleJob = async (job) => {
     throw error
   }
   let lastPersistedProgress = liveJob.progress || null
+  const stepStartedAt = now()
   let lastProgressWriteAt = now()
   let cancelKnown = false
   let lastCancelCheckAt = 0
@@ -571,6 +580,15 @@ const processSingleJob = async (job) => {
       error.code = 'JOB_CANCELED'
       throw error
     }
+  }
+
+  const shouldCancelOrYield = async () => {
+    if (!hasWorksheetStepTimeBudget(stepStartedAt)) {
+      const error = new Error('本轮服务器运行时间已到，进度已保存。')
+      error.code = 'JOB_STEP_YIELDED'
+      throw error
+    }
+    return shouldCancel()
   }
 
   const persistProgress = async (nextProgress, force = false) => {
@@ -635,7 +653,7 @@ const processSingleJob = async (job) => {
       testPaperGroupSizes: payload.testPaperGroupSizes || latestJob.testPaperGroupSizes,
       withChineseTranslation: normalizeWithChineseTranslation(payload.withChineseTranslation ?? latestJob.withChineseTranslation),
       onProgress: handleProgress,
-      onShouldCancel: shouldCancel,
+      onShouldCancel: shouldCancelOrYield,
       initialCache,
       onCacheCheckpoint: checkpointCache,
     })
