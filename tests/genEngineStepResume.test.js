@@ -497,8 +497,8 @@ test('validation retry count resets for a new stage or meaningful progress', asy
 test('degraded LLM runtimes cap each Workflow step by request rounds', async () => {
   const { getLlmEntryLimitForRuntime } = await import('../server/genQueue.js')
 
-  assert.equal(getLlmEntryLimitForRuntime({ llmBatchSize: 1, llmConcurrency: 1 }, 100), 8)
-  assert.equal(getLlmEntryLimitForRuntime({ llmBatchSize: 2, llmConcurrency: 1 }, 100), 16)
-  assert.equal(getLlmEntryLimitForRuntime({ llmBatchSize: 5, llmConcurrency: 2 }, 100), 80)
+  assert.equal(getLlmEntryLimitForRuntime({ llmBatchSize: 1, llmConcurrency: 1 }, 100), 3)
+  assert.equal(getLlmEntryLimitForRuntime({ llmBatchSize: 2, llmConcurrency: 1 }, 100), 6)
+  assert.equal(getLlmEntryLimitForRuntime({ llmBatchSize: 5, llmConcurrency: 2 }, 100), 30)
   assert.equal(getLlmEntryLimitForRuntime({ llmBatchSize: 20, llmConcurrency: 5 }, 100), 100)
 })
