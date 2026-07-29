@@ -13,6 +13,25 @@ const parseInputItems = (content) => {
   return match ? JSON.parse(match[1]) : []
 }
 
+const findStoredZipEntry = (buffer, predicate) => {
+  let offset = 0
+  while (offset + 30 <= buffer.length && buffer.readUInt32LE(offset) === 0x04034b50) {
+    const compressionMethod = buffer.readUInt16LE(offset + 8)
+    const dataSize = buffer.readUInt32LE(offset + 18)
+    const nameSize = buffer.readUInt16LE(offset + 26)
+    const extraSize = buffer.readUInt16LE(offset + 28)
+    const nameStart = offset + 30
+    const dataStart = nameStart + nameSize + extraSize
+    const name = buffer.subarray(nameStart, nameStart + nameSize).toString('utf8')
+    if (predicate(name)) {
+      assert.equal(compressionMethod, 0, `test ZIP parser only supports stored entries: ${name}`)
+      return buffer.subarray(dataStart, dataStart + dataSize)
+    }
+    offset = dataStart + dataSize
+  }
+  return null
+}
+
 test('large LLM jobs checkpoint and resume across bounded steps', async (t) => {
   let requestCount = 0
   const server = http.createServer(async (request, response) => {
@@ -324,6 +343,56 @@ test('batch copies use independent numbered archive names', async () => {
 
   assert.equal(result.fileName, '批量测试 练习包 第01份.zip')
   assert.ok(result.buffer.length > 0)
+})
+
+test('batch variation seeds produce different fixed-test-paper question content', async () => {
+  const { generateWorksheetArchive } = await import('../server/genEngine.js')
+  const rows = Array.from({ length: 30 }, (_, index) => ({
+    english: `sampleword${String.fromCharCode(97 + Math.floor(index / 26))}${String.fromCharCode(97 + (index % 26))}`,
+    chinese: `示例词义${index + 1}`,
+  }))
+  const initialCache = { lexical: {}, basic: {}, synonym: {} }
+  rows.forEach(({ english, chinese }, index) => {
+    const key = `${english}||${chinese}`
+    initialCache.lexical[key] = {
+      definitionEn: `definition for item ${index + 1}`,
+      definitionZh: `释义${index + 1}`,
+      synonym: `similar${index + 1}`,
+      antonym: `opposite${index + 1}`,
+    }
+    initialCache.basic[key] = {
+      clozeSentence: `This sentence uses ______ for item ${index + 1}.`,
+      tfTrue: `The true statement for item ${index + 1}.`,
+      tfFalse: `The false statement for item ${index + 1}.`,
+    }
+    initialCache.synonym[key] = {
+      synonym: `similar${index + 1}`,
+      synonymOriginal: `The original sentence contains ${english}.`,
+      synonymRewriteBlank: `The rewritten sentence contains ______.`,
+    }
+  })
+
+  const generateCopy = (variationSeed) => generateWorksheetArchive({
+    rows,
+    fileName: '同配置批量测试.xlsx',
+    generationMode: 'fixed_test_paper',
+    testPaperGroupSizes: [100, 50, 0, 500],
+    withChineseTranslation: false,
+    initialCache,
+    variationSeed,
+    exportSuffix: '第01份',
+  })
+  const [first, second] = await Promise.all([
+    generateCopy('batch-id:1'),
+    generateCopy('batch-id:2'),
+  ])
+  const firstDocx = findStoredZipEntry(first.buffer, (name) => name.endsWith('.docx'))
+  const secondDocx = findStoredZipEntry(second.buffer, (name) => name.endsWith('.docx'))
+  assert.ok(firstDocx && secondDocx)
+  const firstQuestionXml = findStoredZipEntry(firstDocx, (name) => name === 'word/document.xml')
+  const secondQuestionXml = findStoredZipEntry(secondDocx, (name) => name === 'word/document.xml')
+  assert.ok(firstQuestionXml && secondQuestionXml)
+  assert.notEqual(firstQuestionXml.toString('utf8'), secondQuestionXml.toString('utf8'))
 })
 
 test('request retry count resets after meaningful progress', async () => {
