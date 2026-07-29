@@ -319,6 +319,7 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
   const [selectedLlmModel, setSelectedLlmModel] = useState('')
   const jobsRequestIdRef = useRef(0)
   const queueBusyRequestIdRef = useRef(0)
+  const submitInFlightRef = useRef(false)
 
   const usableRows = useMemo(
     () => rows.filter((row) => String(row?.english || '').trim()),
@@ -427,6 +428,7 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
   }
 
   const generateArchive = async () => {
+    if (submitInFlightRef.current) return
     if (!usableRows.length) {
       setStatus('当前词表没有可生成的英文词条。请先上传或调整读表设置。')
       return
@@ -436,6 +438,7 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
       return
     }
 
+    submitInFlightRef.current = true
     setBusy(true)
     setStatus(
       selectedGenerationMode === GENERATION_MODE_FIXED_TEST_PAPER
@@ -458,11 +461,12 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
         }),
       })
       setJobs((current) => [data.job, ...current.filter((job) => job.id !== data.job.id)])
-      setStatus('已提交。')
+      setStatus(data.deduplicated ? '相同任务已在服务器处理，已转到原任务。' : '已提交。')
       loadJobs(true)
     } catch (error) {
       setStatus(error.message || '提交队列失败。')
     } finally {
+      submitInFlightRef.current = false
       setBusy(false)
     }
   }

@@ -50,7 +50,7 @@ export default async function handler(req, res) {
       ? FIXED_TEST_PAPER_QUESTION_KEYS
       : (Array.isArray(body.questionTypes) && body.questionTypes.length ? body.questionTypes : ALL_QUESTION_TYPE_KEYS)
 
-    const job = await submitWorksheetJob({
+    const submission = await submitWorksheetJob({
       rows,
       fileName: body.fileName || body.title || '词组练习.xlsx',
       questionTypes,
@@ -60,6 +60,10 @@ export default async function handler(req, res) {
       testPaperGroupSizes: body.testPaperGroupSizes,
       withChineseTranslation: normalizeWithChineseTranslation(body.withChineseTranslation),
     })
+    const { job, created } = submission
+    if (!created) {
+      return sendJson(res, 200, { ok: true, job, deduplicated: true })
+    }
     try {
       const run = await start(worksheetJobWorkflow, [job.id])
       return sendJson(res, 200, { ok: true, job, workflowRunId: run.runId })

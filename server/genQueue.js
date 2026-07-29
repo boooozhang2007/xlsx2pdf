@@ -43,6 +43,26 @@ const jobArtifactKey = (jobId) => `${jobPrefix(jobId)}/artifact.zip`
 const jobCacheKey = (jobId) => `${jobPrefix(jobId)}/cache.json`
 const normalizeGenerationMode = (mode) => (mode === GENERATION_MODE_LEGACY_ZIP ? GENERATION_MODE_LEGACY_ZIP : GENERATION_MODE_FIXED_TEST_PAPER)
 
+const buildJobFingerprint = ({
+  rows,
+  fileName,
+  questionTypes,
+  generationMode,
+  llmModel,
+  legacyQuestionCount,
+  testPaperGroupSizes,
+  withChineseTranslation,
+}) => crypto.createHash('sha256').update(JSON.stringify({
+  rows,
+  fileName,
+  questionTypes,
+  generationMode,
+  llmModel,
+  legacyQuestionCount,
+  testPaperGroupSizes,
+  withChineseTranslation,
+})).digest('hex')
+
 const summarizeJob = (job) => ({
   id: job.id,
   fileName: job.fileName,
@@ -824,17 +844,35 @@ export const failWorksheetJobStart = async (jobId, message) => {
 }
 
 export const submitWorksheetJob = async ({ rows, fileName, questionTypes, generationMode, llmModel, legacyQuestionCount, testPaperGroupSizes, withChineseTranslation }) => {
-  const id = crypto.randomUUID()
-  const submittedAt = now()
   const normalizedMode = normalizeGenerationMode(generationMode)
   const normalizedLegacyQuestionCount = normalizeLegacyQuestionCount(legacyQuestionCount)
   const normalizedTestPaperGroupSizes = normalizeTestPaperGroupSizes(testPaperGroupSizes)
   const normalizedWithChineseTranslation = normalizeWithChineseTranslation(withChineseTranslation)
-  const totalSteps = buildTotalSteps(questionTypes, Array.isArray(rows) ? rows.length : 0, normalizedMode, normalizedTestPaperGroupSizes)
   const llmRuntime = getLlmJobRuntime(String(llmModel || getDefaultLlmModel()).trim())
+  const normalizedFileName = String(fileName || '词组练习.xlsx')
+  const fingerprint = buildJobFingerprint({
+    rows,
+    fileName: normalizedFileName,
+    questionTypes,
+    generationMode: normalizedMode,
+    llmModel: llmRuntime.model,
+    legacyQuestionCount: normalizedLegacyQuestionCount,
+    testPaperGroupSizes: normalizedTestPaperGroupSizes,
+    withChineseTranslation: normalizedWithChineseTranslation,
+  })
+  const duplicate = (await listJobStates()).find((candidate) => (
+    ['queued', 'processing'].includes(candidate?.status)
+    && candidate.fingerprint === fingerprint
+  ))
+  if (duplicate) return { job: summarizeJob(duplicate), created: false }
+
+  const id = crypto.randomUUID()
+  const submittedAt = now()
+  const totalSteps = buildTotalSteps(questionTypes, Array.isArray(rows) ? rows.length : 0, normalizedMode, normalizedTestPaperGroupSizes)
   const job = {
     id,
-    fileName: String(fileName || '词组练习.xlsx'),
+    fingerprint,
+    fileName: normalizedFileName,
     questionTypes,
     generationMode: normalizedMode,
     legacyQuestionCount: normalizedLegacyQuestionCount,
@@ -882,7 +920,7 @@ export const submitWorksheetJob = async ({ rows, fileName, questionTypes, genera
     }),
   ])
 
-  return summarizeJob(job)
+  return { job: summarizeJob(job), created: true }
 }
 
 export const listWorksheetJobs = async () => {
