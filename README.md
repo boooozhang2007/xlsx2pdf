@@ -118,7 +118,7 @@ npx vercel
 - `src/GenWorkspace.jsx`：受保护的练习生成工作台
 - `src/MobileListenPage.jsx`：手机播放页面
 - `workflows/`：服务端练习生成 Workflow
-- `api/`：Nitro API handlers，包含认证、Azure TTS、Edge-TTS 和 R2 分享签名
+- `server/handlers/`：Nitro 内部 API handlers，包含认证、Azure TTS、Edge-TTS 和 R2 分享签名
 - `server/`：API 与 Workflow 复用的认证、生成、TTS、R2 工具
 - `src/pdf.js`：使用 `pdf-lib` 生成 PDF
 - `src/utils.js`：单元格读取、列号转换、文本换行等工具

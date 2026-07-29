@@ -1,5 +1,5 @@
-import { getEnv, readJsonBody, rejectMethod, requireSession, sendJson } from '../../server/auth.js'
-import { buildAzureSsml, defaultAzureVoice, normalizeWords } from '../../server/tts.js'
+import { getEnv, readJsonBody, rejectMethod, requireSession, sendJson } from '../../auth.js'
+import { buildAzureSsml, defaultAzureVoice, normalizeWords } from '../../tts.js'
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return rejectMethod(res, 'POST')
@@ -52,4 +52,3 @@ export default async function handler(req, res) {
     return sendJson(res, error.statusCode || 500, { ok: false, error: error.message || 'Azure 生成失败。' })
   }
 }
-

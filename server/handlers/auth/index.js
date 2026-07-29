@@ -6,7 +6,7 @@ import {
   rejectMethod,
   sendJson,
   verifySession,
-} from '../../server/auth.js'
+} from '../../auth.js'
 
 const getAction = (req) => {
   const url = new URL(req.url, `https://${req.headers.host || 'localhost'}`)

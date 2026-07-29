@@ -1,6 +1,6 @@
 import { EdgeTTS } from 'edge-tts-universal'
-import { readJsonBody, rejectMethod, requireSession, sendJson } from '../../server/auth.js'
-import { defaultAzureVoice, normalizeWords } from '../../server/tts.js'
+import { readJsonBody, rejectMethod, requireSession, sendJson } from '../../auth.js'
+import { defaultAzureVoice, normalizeWords } from '../../tts.js'
 
 const synthesize = async (text, voice, rate) => {
   const rateText = `${rate >= 0 ? '+' : ''}${Math.round(rate)}%`

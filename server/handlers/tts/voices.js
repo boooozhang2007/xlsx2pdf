@@ -1,5 +1,5 @@
-import { rejectMethod, requireSession, sendJson } from '../../server/auth.js'
-import { azureVoiceFallbacks, edgeVoiceFallbacks } from '../../server/tts.js'
+import { rejectMethod, requireSession, sendJson } from '../../auth.js'
+import { azureVoiceFallbacks, edgeVoiceFallbacks } from '../../tts.js'
 
 const fetchAzureVoices = async () => {
   const key = process.env.AZURE_SPEECH_KEY
@@ -38,4 +38,3 @@ export default async function handler(req, res) {
     return sendJson(res, error.statusCode || 500, { ok: false, error: error.message || '读取音色失败。' })
   }
 }
-

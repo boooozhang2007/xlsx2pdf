@@ -1,5 +1,5 @@
-import { rejectMethod, requireSession } from '../../../server/auth.js'
-import { getWorksheetJobDownload, reexportWorksheetJob } from '../../../server/genQueue.js'
+import { rejectMethod, requireSession } from '../../../auth.js'
+import { getWorksheetJobDownload, reexportWorksheetJob } from '../../../genQueue.js'
 
 const toAsciiFileName = (value) => String(value || 'worksheet-export.zip').replace(/[^A-Za-z0-9._-]+/g, '_') || 'worksheet-export.zip'
 

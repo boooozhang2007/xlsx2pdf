@@ -1,6 +1,6 @@
 import crypto from 'node:crypto'
-import { createShareToken, readJsonBody, rejectMethod, requireSession, sendJson } from '../../server/auth.js'
-import { getShareTtlMs } from '../../server/r2.js'
+import { createShareToken, readJsonBody, rejectMethod, requireSession, sendJson } from '../../auth.js'
+import { getShareTtlMs } from '../../r2.js'
 
 const sanitizeName = (value, fallback) => {
   const slug = String(value || '')
@@ -69,4 +69,3 @@ export default async function handler(req, res) {
     return sendJson(res, error.statusCode || 500, { ok: false, error: error.message || '创建分享失败。' })
   }
 }
-

@@ -1,5 +1,5 @@
-import { readJsonBody, rejectMethod, requireSession, sendJson } from '../../server/auth.js'
-import { generateWorksheetArchive } from '../../server/genEngine.js'
+import { readJsonBody, rejectMethod, requireSession, sendJson } from '../../auth.js'
+import { generateWorksheetArchive } from '../../genEngine.js'
 
 const MAX_CHUNK_SIZE = 64 * 1024
 

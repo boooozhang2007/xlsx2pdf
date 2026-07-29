@@ -1,5 +1,5 @@
-import { rejectMethod, sendJson, verifyShareToken } from '../../server/auth.js'
-import { createGetUrl } from '../../server/r2.js'
+import { rejectMethod, sendJson, verifyShareToken } from '../../auth.js'
+import { createGetUrl } from '../../r2.js'
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') return rejectMethod(res, 'GET')
@@ -29,4 +29,3 @@ export default async function handler(req, res) {
     return sendJson(res, error.statusCode || 500, { ok: false, error: error.message || '读取分享失败。' })
   }
 }
-

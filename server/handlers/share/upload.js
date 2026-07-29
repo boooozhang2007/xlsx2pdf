@@ -1,5 +1,5 @@
-import { readJsonBody, rejectMethod, requireSession, sendJson } from '../../server/auth.js'
-import { putObject } from '../../server/r2.js'
+import { readJsonBody, rejectMethod, requireSession, sendJson } from '../../auth.js'
+import { putObject } from '../../r2.js'
 
 const SHARE_KEY_RE = /^tts-shares\/[0-9a-f-]{36}\/(?:manifest\.json|[a-z0-9._-]{1,96}\/[a-z0-9._-]{1,120}\.mp3)$/i
 

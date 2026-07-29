@@ -1,10 +1,10 @@
-import { readJsonBody, rejectMethod, requireSession, sendJson } from '../../server/auth.js'
+import { readJsonBody, rejectMethod, requireSession, sendJson } from '../../auth.js'
 import { start } from 'workflow/api'
-import { cancelWorksheetJob, deleteWorksheetJob, failWorksheetJobStart, listWorksheetJobs, submitWorksheetJob } from '../../server/genQueue.js'
-import { getAvailableLlmModels, getDefaultLlmModel } from '../../server/genEngine.js'
-import { ALL_QUESTION_TYPE_KEYS, FIXED_TEST_PAPER_QUESTION_KEYS } from '../../shared/worksheetTypes.js'
-import { GENERATION_MODE_FIXED_TEST_PAPER, GENERATION_MODE_LEGACY_ZIP, normalizeWithChineseTranslation } from '../../shared/generationModes.js'
-import { worksheetJobWorkflow } from '../../workflows/worksheetJob.js'
+import { cancelWorksheetJob, deleteWorksheetJob, failWorksheetJobStart, listWorksheetJobs, submitWorksheetJob } from '../../genQueue.js'
+import { getAvailableLlmModels, getDefaultLlmModel } from '../../genEngine.js'
+import { ALL_QUESTION_TYPE_KEYS, FIXED_TEST_PAPER_QUESTION_KEYS } from '../../../shared/worksheetTypes.js'
+import { GENERATION_MODE_FIXED_TEST_PAPER, GENERATION_MODE_LEGACY_ZIP, normalizeWithChineseTranslation } from '../../../shared/generationModes.js'
+import { worksheetJobWorkflow } from '../../../workflows/worksheetJob.js'
 
 export default async function handler(req, res) {
   if (!['GET', 'POST', 'DELETE'].includes(req.method || '')) return rejectMethod(res, 'GET, POST, DELETE')
