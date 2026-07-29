@@ -309,6 +309,16 @@ const replaceAnswerWithBlank = (sentence, answer) => {
   return match ? source.replace(regex, '______') : ''
 }
 
+export const buildClozeSentence = ({ blankSentence = '', fullSentence = '', fallbackSentences = [] } = {}, answer = '') => {
+  const normalizedBlank = normalizeBlankMarkers(blankSentence).trim()
+  if (countBlankSlots(normalizedBlank) === 1) return normalizedBlank
+  for (const sentence of [fullSentence, ...(fallbackSentences || [])]) {
+    const replaced = replaceAnswerWithBlank(sentence, answer)
+    if (countBlankSlots(replaced) === 1) return replaced
+  }
+  return ''
+}
+
 const containsWholeWord = (sentence, answer) => {
   const source = canonicalizeEnglishPunctuation(sentence).trim()
   const expected = canonicalizeEnglishPunctuation(answer).trim()
@@ -1067,11 +1077,13 @@ const sanitizeMaterial = (raw, entry, lexical, requireSynonym) => {
 
   const clozeFullSentence = String(raw.cloze_full_sentence || raw.cloze_sentence_full || raw.full_sentence || '').trim()
   const clozeBlankSource = normalizeBlankMarkers(raw.cloze_sentence || raw.cloze_blank || raw.blank_sentence || '').trim()
-  const clozeSentence = countBlankSlots(clozeBlankSource) === 1
-    ? clozeBlankSource
-    : replaceAnswerWithBlank(clozeFullSentence, entry.displayEnglish)
   const tfTrue = String(raw.tf_true || raw.true_sentence || raw.trueStatement || '').trim()
   const tfFalse = String(raw.tf_false || raw.false_sentence || raw.falseStatement || '').trim()
+  const clozeSentence = buildClozeSentence({
+    blankSentence: clozeBlankSource,
+    fullSentence: clozeFullSentence,
+    fallbackSentences: [tfTrue, tfFalse],
+  }, entry.displayEnglish)
   if (!tfTrue) throw new Error('基础题面缺少 tf_true')
   if (!tfFalse) throw new Error('基础题面缺少 tf_false')
   if (!clozeFullSentence && countBlankSlots(clozeBlankSource) !== 1) throw new Error('基础题面缺少 cloze_full_sentence')

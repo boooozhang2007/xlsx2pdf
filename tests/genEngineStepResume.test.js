@@ -326,6 +326,21 @@ test('hyphenated synonym answers match space-separated sentences', async (t) => 
   assert.ok(result.buffer.length > 0)
 })
 
+test('cloze generation falls back to an exact-word truth sentence', async () => {
+  const { buildClozeSentence } = await import('../server/genEngine.js')
+
+  assert.equal(
+    buildClozeSentence({
+      fullSentence: 'The outage disrupted the entire lesson.',
+      fallbackSentences: [
+        'Disrupt means to interrupt the normal course of something.',
+        'Disrupt means to make everything continue normally.',
+      ],
+    }, 'disrupt'),
+    '______ means to interrupt the normal course of something.',
+  )
+})
+
 test('batch copies use independent numbered archive names', async () => {
   const { generateWorksheetArchive } = await import('../server/genEngine.js')
   const result = await generateWorksheetArchive({
