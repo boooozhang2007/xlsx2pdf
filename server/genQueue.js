@@ -16,6 +16,7 @@ const PROGRESS_WRITE_INTERVAL_MS = Math.max(200, Number.parseInt(process.env.GEN
 const PROGRESS_WRITE_WORD_DELTA = Math.max(1, Number.parseInt(process.env.GEN_QUEUE_PROGRESS_WRITE_WORD_DELTA || '5', 10) || 5)
 const CANCELLATION_POLL_INTERVAL_MS = Math.max(150, Number.parseInt(process.env.GEN_QUEUE_CANCELLATION_POLL_INTERVAL_MS || '300', 10) || 300)
 const LLM_ENTRIES_PER_STEP = Math.max(1, Number.parseInt(process.env.GEN_QUEUE_LLM_ENTRIES_PER_STEP || '100', 10) || 100)
+const LLM_BATCH_ROUNDS_PER_STEP = Math.max(1, Number.parseInt(process.env.GEN_QUEUE_LLM_BATCH_ROUNDS_PER_STEP || '8', 10) || 8)
 const MAX_INTERNAL_QUEUE_WAIT_MS = Math.max(1000, Number.parseInt(process.env.GEN_QUEUE_MAX_INTERNAL_WAIT_MS || '45000', 10) || 45000)
 const MIN_RATE_LIMIT_DELAY_MS = Math.max(1000, Number.parseInt(process.env.VIVI_LLM_RATE_LIMIT_MIN_DELAY_MS || '10000', 10) || 10000)
 const MAX_RATE_LIMIT_DELAY_MS = Math.max(MIN_RATE_LIMIT_DELAY_MS, Number.parseInt(process.env.VIVI_LLM_RATE_LIMIT_MAX_DELAY_MS || '120000', 10) || 120000)
@@ -291,6 +292,16 @@ export const getLlmRequestRetryState = (job = {}) => {
   }
 }
 
+export const getLlmEntryLimitForRuntime = (job = {}, configuredLimit = LLM_ENTRIES_PER_STEP) => {
+  const batchSize = Math.max(1, Number.parseInt(job.llmBatchSize, 10) || 1)
+  const concurrency = Math.max(1, Number.parseInt(job.llmConcurrency, 10) || 1)
+  const hardLimit = Math.max(1, Number.parseInt(configuredLimit, 10) || LLM_ENTRIES_PER_STEP)
+  // Limit each Workflow step by request rounds, not only entry count.  A job
+  // degraded to batch=1/concurrency=1 would otherwise attempt 100 sequential
+  // requests and get killed by the Function timeout before it can yield.
+  return Math.min(hardLimit, batchSize * concurrency * LLM_BATCH_ROUNDS_PER_STEP)
+}
+
 const buildLlmRuntimeForJob = (job = {}) => {
   const runtime = getLlmJobRuntime(job.llmModel || getDefaultLlmModel(), {
     batchSize: job.llmBatchSize,
@@ -563,16 +574,18 @@ const processSingleJob = async (job) => {
   try {
     await ensureNotCanceled(true)
     const initialCache = await getObjectJson({ key: jobCacheKey(job.id) }).catch(() => null)
+    const llmBatchSize = payload.llmBatchSize || latestJob.llmBatchSize
+    const llmConcurrency = payload.llmConcurrency || latestJob.llmConcurrency
     const result = await generateWorksheetArchive({
       rows: payload.rows || [],
       fileName: payload.fileName || '词组练习.xlsx',
       questionTypes: payload.questionTypes || latestJob.questionTypes,
       generationMode: payload.generationMode || latestJob.generationMode || GENERATION_MODE_FIXED_TEST_PAPER,
       llmModel: payload.llmModel || latestJob.llmModel || getDefaultLlmModel(),
-      llmBatchSize: payload.llmBatchSize || latestJob.llmBatchSize,
-      llmConcurrency: payload.llmConcurrency || latestJob.llmConcurrency,
+      llmBatchSize,
+      llmConcurrency,
       llmFallbackModels: payload.llmFallbackModels || latestJob.llmFallbackModels,
-      llmEntryLimit: LLM_ENTRIES_PER_STEP,
+      llmEntryLimit: getLlmEntryLimitForRuntime({ llmBatchSize, llmConcurrency }),
       variationSeed: payload.variationSeed || latestJob.variationSeed || '',
       exportSuffix: payload.exportSuffix || latestJob.exportSuffix || '',
       legacyQuestionCount: payload.legacyQuestionCount || latestJob.legacyQuestionCount,

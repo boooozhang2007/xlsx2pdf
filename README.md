@@ -81,6 +81,7 @@ GEN_QUEUE_PROGRESS_WRITE_INTERVAL_MS=可选，队列进度写回节流间隔，�
 GEN_QUEUE_PROGRESS_WRITE_WORD_DELTA=可选，词条进度累计到多少再写回，默认 5
 GEN_QUEUE_CANCELLATION_POLL_INTERVAL_MS=可选，取消状态轮询间隔，默认 300
 GEN_QUEUE_LLM_ENTRIES_PER_STEP=可选，每个 Workflow step、每个 LLM 阶段最多处理的未缓存词条数，默认 100；较小值更不容易触发 Hobby Function 单次执行时限
+GEN_QUEUE_LLM_BATCH_ROUNDS_PER_STEP=可选，每个 Workflow step 最多连续执行的 LLM 请求轮数，默认 8；任务降级到小批次/低并发时会自动缩小单步工作量，避免超时后等待失联接管
 GEN_QUEUE_MAX_INTERNAL_WAIT_MS=可选，后台队列单次自动等待下次重试的最长时间，默认 45000
 GEN_QUEUE_STALE_PROCESSING_MS=可选，执行器中断后允许其他实例恢复任务的等待时间，默认 360000（6 分钟）
 R2_ENDPOINT=https://<accountid>.r2.cloudflarestorage.com
