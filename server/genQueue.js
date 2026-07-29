@@ -15,6 +15,7 @@ const MAX_LIST_JOBS = 40
 const PROGRESS_WRITE_INTERVAL_MS = Math.max(200, Number.parseInt(process.env.GEN_QUEUE_PROGRESS_WRITE_INTERVAL_MS || '700', 10) || 700)
 const PROGRESS_WRITE_WORD_DELTA = Math.max(1, Number.parseInt(process.env.GEN_QUEUE_PROGRESS_WRITE_WORD_DELTA || '5', 10) || 5)
 const CANCELLATION_POLL_INTERVAL_MS = Math.max(150, Number.parseInt(process.env.GEN_QUEUE_CANCELLATION_POLL_INTERVAL_MS || '300', 10) || 300)
+const LLM_ENTRIES_PER_STEP = Math.max(1, Number.parseInt(process.env.GEN_QUEUE_LLM_ENTRIES_PER_STEP || '100', 10) || 100)
 const MAX_INTERNAL_QUEUE_WAIT_MS = Math.max(1000, Number.parseInt(process.env.GEN_QUEUE_MAX_INTERNAL_WAIT_MS || '45000', 10) || 45000)
 const MIN_RATE_LIMIT_DELAY_MS = Math.max(1000, Number.parseInt(process.env.VIVI_LLM_RATE_LIMIT_MIN_DELAY_MS || '10000', 10) || 10000)
 const MAX_RATE_LIMIT_DELAY_MS = Math.max(MIN_RATE_LIMIT_DELAY_MS, Number.parseInt(process.env.VIVI_LLM_RATE_LIMIT_MAX_DELAY_MS || '120000', 10) || 120000)
@@ -92,6 +93,7 @@ const createProgress = (totalSteps, totalWords = 0) => ({
   stageWordCompleted: 0,
   currentQuestionType: '',
   completedStepKeys: [],
+  inProgressSteps: 0,
 })
 
 const resetJobProgress = (job, overrides = {}) => ({
@@ -116,7 +118,7 @@ const buildTotalSteps = (questionTypes, wordCount = 0, generationMode = GENERATI
 
 const clampPercent = (value) => Math.max(0, Math.min(100, Number(value) || 0))
 const percentFromSteps = (progress) => (progress.totalSteps
-  ? Math.round((progress.completedSteps / progress.totalSteps) * 100)
+  ? Math.round(((progress.completedSteps + Math.max(0, Number(progress.inProgressSteps || 0))) / progress.totalSteps) * 100)
   : 0)
 
 const progressFromMessage = (job, message) => {
@@ -183,7 +185,10 @@ const progressFromEvent = (job, event) => {
   }
   if (Number.isFinite(event.totalSteps)) progress.totalSteps = Math.max(0, Number(event.totalSteps) || 0)
   if (Number.isFinite(event.completedSteps)) {
-    progress.completedSteps = Math.max(0, Math.min(progress.totalSteps || Number(event.completedSteps), Number(event.completedSteps) || 0))
+    progress.completedSteps = Math.max(
+      Number(previousProgress.completedSteps || 0),
+      Math.max(0, Math.min(progress.totalSteps || Number(event.completedSteps), Number(event.completedSteps) || 0)),
+    )
   }
   if (Number.isFinite(event.stepDelta)) {
     const stepKey = String(event.stepKey || '').trim()
@@ -192,7 +197,18 @@ const progressFromEvent = (job, event) => {
       if (stepKey) progress.completedStepKeys.push(stepKey)
     }
   }
-  progress.percent = Number.isFinite(event.percent) ? clampPercent(event.percent) : percentFromSteps(progress)
+  if (Number.isFinite(event.inProgressSteps)) {
+    const requestedInProgress = Math.max(0, Number(event.inProgressSteps) || 0)
+    const inProgressStepKeys = Array.isArray(event.inProgressStepKeys)
+      ? event.inProgressStepKeys.map((key) => String(key || '').trim()).filter(Boolean)
+      : []
+    const pendingStepCount = inProgressStepKeys.filter((key) => !progress.completedStepKeys.includes(key)).length
+    progress.inProgressSteps = inProgressStepKeys.length
+      ? Math.min(requestedInProgress, pendingStepCount)
+      : requestedInProgress
+  }
+  const nextPercent = Number.isFinite(event.percent) ? clampPercent(event.percent) : percentFromSteps(progress)
+  progress.percent = Math.max(clampPercent(previousProgress.percent), nextPercent)
   return progress
 }
 
@@ -454,9 +470,14 @@ const processSingleJob = async (job) => {
   }
 
   let progressChain = Promise.resolve()
+  let cacheChain = Promise.resolve()
   const handleProgress = (event) => {
     progressChain = progressChain.then(() => persistProgress(progressFromEvent(liveJob, event)))
     return progressChain
+  }
+  const checkpointCache = (cache) => {
+    cacheChain = cacheChain.then(() => writeJsonObject({ key: jobCacheKey(job.id), value: cache }))
+    return cacheChain
   }
 
   try {
@@ -471,15 +492,14 @@ const processSingleJob = async (job) => {
       llmBatchSize: payload.llmBatchSize || latestJob.llmBatchSize,
       llmConcurrency: payload.llmConcurrency || latestJob.llmConcurrency,
       llmFallbackModels: payload.llmFallbackModels || latestJob.llmFallbackModels,
+      llmEntryLimit: LLM_ENTRIES_PER_STEP,
       legacyQuestionCount: payload.legacyQuestionCount || latestJob.legacyQuestionCount,
       testPaperGroupSizes: payload.testPaperGroupSizes || latestJob.testPaperGroupSizes,
       withChineseTranslation: normalizeWithChineseTranslation(payload.withChineseTranslation ?? latestJob.withChineseTranslation),
       onProgress: handleProgress,
       onShouldCancel: shouldCancel,
       initialCache,
-      onCacheCheckpoint: async (cache) => {
-        await writeJsonObject({ key: jobCacheKey(job.id), value: cache })
-      },
+      onCacheCheckpoint: checkpointCache,
     })
 
     await ensureNotCanceled(true)
@@ -516,6 +536,62 @@ const processSingleJob = async (job) => {
     // new rendering rules without re-running LLM calls.
   } catch (error) {
     if (error?.code === 'JOB_OWNERSHIP_LOST') return
+    if (error?.code === 'JOB_STEP_YIELDED') {
+      await Promise.all([progressChain, cacheChain])
+      try {
+        const queued = await writeOwnedJob({
+          ...liveJob,
+          status: 'queued',
+          nextAttemptAt: now() + 1000,
+          error: '',
+          progress: {
+            ...(liveJob.progress || resetJobProgress(liveJob)),
+            message: '本轮进度已保存，服务器正在继续处理…',
+          },
+        }, ownershipEtag)
+        liveJob = queued.job
+        ownershipEtag = queued.etag
+      } catch (writeError) {
+        if (writeError?.code !== 'JOB_OWNERSHIP_LOST') throw writeError
+      }
+      return
+    }
+    if (error?.code === 'LLM_BATCH_REJECTED') {
+      await Promise.all([progressChain, cacheChain])
+      const currentBatchSize = Math.max(1, Number(liveJob.llmBatchSize || payload?.llmBatchSize || 1))
+      const nextBatchSize = Math.max(1, Math.floor(currentBatchSize / 2))
+      if (nextBatchSize < currentBatchSize) {
+        const nextAttemptAt = now() + 1000
+        const validationReason = String(error.message || '').replace(/\s+/g, ' ').slice(0, 240)
+        const waitingMessage = `LLM 整批结果未通过校验，批次已从 ${currentBatchSize} 降到 ${nextBatchSize}，正在继续处理。${validationReason ? ` 原因：${validationReason}` : ''}`
+        try {
+          const queued = await writeOwnedJob({
+            ...liveJob,
+            status: 'queued',
+            llmBatchSize: nextBatchSize,
+            nextAttemptAt,
+            error: '',
+            progress: {
+              ...(liveJob.progress || resetJobProgress(liveJob)),
+              currentStep: '调整 LLM 批次',
+              message: waitingMessage,
+            },
+          }, ownershipEtag)
+          liveJob = queued.job
+          ownershipEtag = queued.etag
+          await writeJsonObject({
+            key: jobPayloadKey(job.id),
+            value: {
+              ...(payload || {}),
+              llmBatchSize: nextBatchSize,
+            },
+          })
+        } catch (writeError) {
+          if (writeError?.code !== 'JOB_OWNERSHIP_LOST') throw writeError
+        }
+        return
+      }
+    }
     if (error?.code === 'JOB_CANCELED') {
       const latestJob = await readLatestJobState(job.id)
       await writeJob({
