@@ -22,6 +22,14 @@ const MIN_RATE_LIMIT_DELAY_MS = Math.max(1000, Number.parseInt(process.env.VIVI_
 const MAX_RATE_LIMIT_DELAY_MS = Math.max(MIN_RATE_LIMIT_DELAY_MS, Number.parseInt(process.env.VIVI_LLM_RATE_LIMIT_MAX_DELAY_MS || '120000', 10) || 120000)
 const MAX_RATE_LIMIT_REQUEUES = Math.max(1, Number.parseInt(process.env.VIVI_LLM_RATE_LIMIT_MAX_REQUEUES || '8', 10) || 8)
 const MAX_REQUEST_REQUEUES = Math.max(1, Number.parseInt(process.env.VIVI_LLM_REQUEST_MAX_REQUEUES || '8', 10) || 8)
+const MIN_REQUEST_RECOVERY_WAIT_MS = Math.max(
+  MAX_INTERNAL_QUEUE_WAIT_MS,
+  Number.parseInt(process.env.VIVI_LLM_REQUEST_RECOVERY_MIN_DELAY_MS || '300000', 10) || 300_000,
+)
+const MAX_REQUEST_RECOVERY_WAIT_MS = Math.max(
+  MIN_REQUEST_RECOVERY_WAIT_MS,
+  Number.parseInt(process.env.VIVI_LLM_REQUEST_RECOVERY_MAX_DELAY_MS || '900000', 10) || 900_000,
+)
 const VALIDATION_RETRY_DELAY_MS = Math.max(
   1000,
   Number.isFinite(Number.parseInt(process.env.VIVI_LLM_VALIDATION_RETRY_DELAY_MS || '3000', 10))
@@ -324,6 +332,18 @@ export const getLlmEntryLimitForRuntime = (job = {}, configuredLimit = LLM_ENTRI
   return Math.min(hardLimit, batchSize * concurrency * LLM_BATCH_ROUNDS_PER_STEP)
 }
 
+export const getLlmRequestRetryDelayMs = (retryCount = 0) => {
+  const normalizedRetryCount = Math.max(0, Number(retryCount) || 0)
+  if (normalizedRetryCount < MAX_REQUEST_REQUEUES) {
+    return Math.min(MAX_INTERNAL_QUEUE_WAIT_MS, 3000 * (normalizedRetryCount + 1))
+  }
+  const recoveryRound = normalizedRetryCount - MAX_REQUEST_REQUEUES
+  return Math.min(
+    MAX_REQUEST_RECOVERY_WAIT_MS,
+    MIN_REQUEST_RECOVERY_WAIT_MS * (2 ** Math.min(2, recoveryRound)),
+  )
+}
+
 const buildLlmRuntimeForJob = (job = {}) => {
   const runtime = getLlmJobRuntime(job.llmModel || getDefaultLlmModel(), {
     batchSize: job.llmBatchSize,
@@ -486,17 +506,17 @@ const settleStaleCanceledJobs = async (jobs) => Promise.all((jobs || []).map(asy
   })
 }))
 
-const listJobStates = async () => {
+const listJobStates = async ({ includeAll = false } = {}) => {
   const objects = await listObjects({ prefix: `${JOB_PREFIX}/` })
   const jobKeys = objects
     .map((item) => item.Key)
     .filter((key) => key?.endsWith('/job.json'))
   const jobs = await Promise.all(jobKeys.map((key) => getObjectJson({ key }).catch(() => null)))
   const normalizedJobs = await settleStaleCanceledJobs(jobs.filter(Boolean))
-  return normalizedJobs
+  const sortedJobs = normalizedJobs
     .filter(Boolean)
     .sort((left, right) => (right.createdAt || 0) - (left.createdAt || 0))
-    .slice(0, MAX_LIST_JOBS)
+  return includeAll ? sortedJobs : sortedJobs.slice(0, MAX_LIST_JOBS)
 }
 
 const processSingleJob = async (job) => {
@@ -741,41 +761,42 @@ const processSingleJob = async (job) => {
         wordCount: (latestJobForRetry && latestJobForRetry.wordCount) || liveJob.wordCount || job.wordCount || 0,
       }
       const { progressMark, retryCount } = getLlmRequestRetryState(retryBaseJob)
-      if (retryCount < MAX_REQUEST_REQUEUES) {
-        const runtimeUpdate = tuneLlmRuntimeAfterRequestFailure(retryBaseJob)
-        const delayMs = Math.min(MAX_INTERNAL_QUEUE_WAIT_MS, 3000 * (retryCount + 1))
-        const nextAttemptAt = now() + delayMs
-        const waitingMessage = `LLM 请求暂时失败，${Math.max(1, Math.ceil(delayMs / 1000))} 秒后从已保存进度继续；${runtimeUpdate.reason}。`
-        const queuedRetryJob = await writeJob({
-          ...retryBaseJob,
-          status: 'queued',
-          error: '',
-          llmModel: runtimeUpdate.llmModel,
-          llmBatchSize: runtimeUpdate.llmBatchSize,
-          llmConcurrency: runtimeUpdate.llmConcurrency,
-          llmFallbackModels: runtimeUpdate.llmFallbackModels,
-          llmRequestRetries: retryCount + 1,
-          llmRequestRetryProgressMark: progressMark,
-          nextAttemptAt,
-          progress: {
-            ...(retryBaseJob.progress || resetJobProgress(retryBaseJob)),
-            currentStep: '等待 LLM 请求恢复',
-            stageLabel: '等待 LLM 请求恢复',
-            message: waitingMessage,
-          },
-        })
-        await writeJsonObject({
-          key: jobPayloadKey(job.id),
-          value: {
-            ...(payload || {}),
-            llmModel: queuedRetryJob.llmModel,
-            llmBatchSize: queuedRetryJob.llmBatchSize,
-            llmConcurrency: queuedRetryJob.llmConcurrency,
-            llmFallbackModels: queuedRetryJob.llmFallbackModels || [],
-          },
-        })
-        return
-      }
+      const runtimeUpdate = tuneLlmRuntimeAfterRequestFailure(retryBaseJob)
+      const delayMs = getLlmRequestRetryDelayMs(retryCount)
+      const nextAttemptAt = now() + delayMs
+      const prolongedWait = retryCount >= MAX_REQUEST_REQUEUES
+      const waitingMessage = prolongedWait
+        ? `LLM 网关仍不可用，任务和进度已保留，将在 ${Math.max(1, Math.ceil(delayMs / 60000))} 分钟后继续重试（连续失败 ${retryCount + 1} 轮）。`
+        : `LLM 请求暂时失败，${Math.max(1, Math.ceil(delayMs / 1000))} 秒后从已保存进度继续；${runtimeUpdate.reason}。`
+      const queuedRetryJob = await writeJob({
+        ...retryBaseJob,
+        status: 'queued',
+        error: '',
+        llmModel: runtimeUpdate.llmModel,
+        llmBatchSize: runtimeUpdate.llmBatchSize,
+        llmConcurrency: runtimeUpdate.llmConcurrency,
+        llmFallbackModels: runtimeUpdate.llmFallbackModels,
+        llmRequestRetries: retryCount + 1,
+        llmRequestRetryProgressMark: progressMark,
+        nextAttemptAt,
+        progress: {
+          ...(retryBaseJob.progress || resetJobProgress(retryBaseJob)),
+          currentStep: '等待 LLM 网关恢复',
+          stageLabel: '等待 LLM 网关恢复',
+          message: waitingMessage,
+        },
+      })
+      await writeJsonObject({
+        key: jobPayloadKey(job.id),
+        value: {
+          ...(payload || {}),
+          llmModel: queuedRetryJob.llmModel,
+          llmBatchSize: queuedRetryJob.llmBatchSize,
+          llmConcurrency: queuedRetryJob.llmConcurrency,
+          llmFallbackModels: queuedRetryJob.llmFallbackModels || [],
+        },
+      })
+      return
     }
     if (error?.code === 'LLM_GENERATION_INCOMPLETE') {
       const latestJobForRetry = await readLatestJobState(job.id)
@@ -867,26 +888,12 @@ const processSingleJob = async (job) => {
         wordCount: (latestJobForRetry && latestJobForRetry.wordCount) || liveJob.wordCount || job.wordCount || 0,
       }
       const { progressMark, retryCount } = getLlmRateLimitRetryState(retryBaseJob)
-      if (retryCount >= MAX_RATE_LIMIT_REQUEUES) {
-        await writeJob({
-          ...retryBaseJob,
-          status: 'failed',
-          failedAt: now(),
-          error: `LLM 请求连续触发限流，已达到最大自动重试次数（${MAX_RATE_LIMIT_REQUEUES}）。`,
-          progress: {
-            ...(retryBaseJob.progress || createProgress(buildTotalSteps(retryBaseJob.questionTypes || [], retryBaseJob.wordCount || 0, retryBaseJob.generationMode), retryBaseJob.wordCount || 0)),
-            currentStep: '限流重试失败',
-            message: `LLM 请求连续触发限流，已达到最大自动重试次数（${MAX_RATE_LIMIT_REQUEUES}）。`,
-          },
-        })
-        await deleteObject({ key: jobCacheKey(job.id) }).catch(() => {})
-        return
-      }
-
       const runtimeUpdate = tuneLlmRuntimeAfterRateLimit(retryBaseJob)
       const delayMs = computeRateLimitDelayMs(error, retryCount)
       const nextAttemptAt = now() + delayMs
-      const waitingMessage = `LLM 触发限流，${Math.max(1, Math.ceil(delayMs / 1000))} 秒后自动重试；${runtimeUpdate.reason}。`
+      const waitingMessage = retryCount >= MAX_RATE_LIMIT_REQUEUES
+        ? `LLM 持续限流，任务和进度已保留，将在 ${Math.max(1, Math.ceil(delayMs / 1000))} 秒后继续重试（连续限流 ${retryCount + 1} 轮）。`
+        : `LLM 触发限流，${Math.max(1, Math.ceil(delayMs / 1000))} 秒后自动重试；${runtimeUpdate.reason}。`
       const queuedRetryJob = await writeJob({
         ...retryBaseJob,
         status: 'queued',
@@ -1135,7 +1142,7 @@ export const prepareWorksheetBatchWorkflowMigration = async (batchId) => {
     throw error
   }
 
-  const batchJobs = (await listJobStates())
+  const batchJobs = (await listJobStates({ includeAll: true }))
     .filter((job) => job.batchId === normalizedBatchId)
     .sort((left, right) => Number(left.copyIndex || 0) - Number(right.copyIndex || 0))
   if (!batchJobs.length) {
@@ -1150,7 +1157,7 @@ export const prepareWorksheetBatchWorkflowMigration = async (batchId) => {
     error.statusCode = 409
     throw error
   }
-  const unsafeJob = batchJobs.find((job) => ['failed', 'canceled', 'canceling'].includes(job.status))
+  const unsafeJob = batchJobs.find((job) => ['canceled', 'canceling'].includes(job.status))
   if (unsafeJob) {
     const error = new Error(`第 ${unsafeJob.copyIndex || '?'} 份处于 ${unsafeJob.status} 状态，无法迁移 Workflow。`)
     error.statusCode = 409
@@ -1159,7 +1166,7 @@ export const prepareWorksheetBatchWorkflowMigration = async (batchId) => {
 
   const migratedJobs = []
   for (const job of batchJobs) {
-    if (job.status !== 'processing') {
+    if (!['processing', 'failed'].includes(job.status)) {
       migratedJobs.push(job)
       continue
     }
@@ -1170,19 +1177,33 @@ export const prepareWorksheetBatchWorkflowMigration = async (batchId) => {
       error.statusCode = 404
       throw error
     }
-    if (latestJob.status !== 'processing') {
+    if (!['processing', 'failed'].includes(latestJob.status)) {
       migratedJobs.push(latestJob)
       continue
     }
+    const savedCache = await getObjectJson({ key: jobCacheKey(job.id) }).catch(() => null)
+    const recoveryProgress = savedCache
+      ? (latestJob.progress || resetJobProgress(latestJob))
+      : resetJobProgress(latestJob)
     const migrated = await writeOwnedJob({
       ...latestJob,
       status: 'queued',
+      startedAt: savedCache ? latestJob.startedAt : 0,
+      failedAt: 0,
+      llmRequestRetries: 0,
+      llmRequestRetryProgressMark: '',
+      llmRateLimitRetries: 0,
+      llmRateLimitRetryProgressMark: '',
+      llmValidationRetries: 0,
+      llmValidationRetryProgressMark: '',
       nextAttemptAt: now(),
       error: '',
       progress: {
-        ...(latestJob.progress || resetJobProgress(latestJob)),
+        ...recoveryProgress,
         currentStep: '迁移到最新 Workflow',
-        message: '已保留服务器缓存，正在迁移到最新 Workflow 继续处理…',
+        message: savedCache
+          ? '已保留服务器缓存，正在迁移到最新 Workflow 继续处理…'
+          : '旧任务缓存不存在，正在由服务器重新生成这一份…',
       },
     }, snapshot.etag)
     migratedJobs.push(migrated.job)

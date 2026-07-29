@@ -413,6 +413,16 @@ test('request retry count resets after meaningful progress', async () => {
   assert.equal(advanced.progressMark, '0:warmup:220')
 })
 
+test('request failures switch to durable recovery waits instead of exhausting retries', async () => {
+  const { getLlmRequestRetryDelayMs } = await import('../server/genQueue.js')
+
+  assert.equal(getLlmRequestRetryDelayMs(0), 3000)
+  assert.equal(getLlmRequestRetryDelayMs(7), 24000)
+  assert.equal(getLlmRequestRetryDelayMs(8), 300000)
+  assert.equal(getLlmRequestRetryDelayMs(9), 600000)
+  assert.equal(getLlmRequestRetryDelayMs(100), 900000)
+})
+
 test('rate limit retry count resets after meaningful progress', async () => {
   const { getLlmRateLimitRetryState } = await import('../server/genQueue.js')
   const stalled = getLlmRateLimitRetryState({

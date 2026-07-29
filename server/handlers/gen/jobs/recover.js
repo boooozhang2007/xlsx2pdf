@@ -13,15 +13,18 @@ export default async function handler(req, res) {
     const body = await readJsonBody(req)
     const batchId = String(body.batchId || '').trim()
     const previousRunId = String(body.runId || '').trim()
-    if (!batchId || !previousRunId) {
-      return sendJson(res, 400, { ok: false, error: '缺少 batchId 或 runId。' })
+    if (!batchId) {
+      return sendJson(res, 400, { ok: false, error: '缺少 batchId。' })
     }
 
-    const previousRun = getRun(previousRunId)
-    const previousRunExists = await previousRun.exists
-    const previousRunStatus = previousRunExists ? await previousRun.status : 'not_found'
-    if (previousRunExists && !TERMINAL_RUN_STATUSES.has(previousRunStatus)) {
-      await previousRun.cancel()
+    let previousRunStatus = 'not_provided'
+    if (previousRunId) {
+      const previousRun = getRun(previousRunId)
+      const previousRunExists = await previousRun.exists
+      previousRunStatus = previousRunExists ? await previousRun.status : 'not_found'
+      if (previousRunExists && !TERMINAL_RUN_STATUSES.has(previousRunStatus)) {
+        await previousRun.cancel()
+      }
     }
 
     const jobs = await prepareWorksheetBatchWorkflowMigration(batchId)
