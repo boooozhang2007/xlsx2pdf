@@ -611,7 +611,7 @@ const fetchLlmArray = async (payload, kind, llmOptions = {}) => {
           code: isRateLimited ? 'LLM_RATE_LIMITED' : 'LLM_REQUEST_FAILED',
           status: response.status,
           retryAfterMs,
-          retryable: isRetryableLlmStatus(response.status),
+          retryable: isRetryableLlmStatus(response.status) || [401, 403].includes(response.status),
           model: payload.model,
         })
       }
@@ -666,7 +666,7 @@ const fetchLlmObject = async (payload, kind, llmOptions = {}) => {
           code: isRateLimited ? 'LLM_RATE_LIMITED' : 'LLM_REQUEST_FAILED',
           status: response.status,
           retryAfterMs,
-          retryable: isRetryableLlmStatus(response.status),
+          retryable: isRetryableLlmStatus(response.status) || [401, 403].includes(response.status),
           model: payload.model,
         })
       }
@@ -1170,11 +1170,11 @@ const tryModelForSingleEntry = async ({
       lastError = unresolved[0]?.error || new Error('返回内容缺字段或格式不合法')
     } catch (error) {
       lastError = error
-      if (error?.code === 'LLM_RATE_LIMITED') break
+      if (['LLM_RATE_LIMITED', 'LLM_REQUEST_FAILED'].includes(error?.code)) break
     }
     if (attempt < singleItemRetries - 1) await sleep(250 * (attempt + 1))
   }
-  if (lastError?.code === 'LLM_RATE_LIMITED') {
+  if (['LLM_RATE_LIMITED', 'LLM_REQUEST_FAILED'].includes(lastError?.code)) {
     return { success: false, resolvedCount: 0, lastRaw, lastError }
   }
   if (typeof repairLlm === 'function' && lastRaw) {
@@ -1218,6 +1218,11 @@ const resolveSingleEntryStrict = async ({
   })
   if (result.success) return { resolvedCount: result.resolvedCount }
 
+  if (['LLM_RATE_LIMITED', 'LLM_REQUEST_FAILED'].includes(result.lastError?.code)) {
+    result.lastError.failedEntry = entry.displayEnglish || entry.english || entry.key || ''
+    throw result.lastError
+  }
+
   let lastError = result.lastError
   let lastRaw = result.lastRaw
 
@@ -1245,6 +1250,10 @@ const resolveSingleEntryStrict = async ({
   }
 
   if (lastError?.code === 'LLM_RATE_LIMITED') {
+    lastError.failedEntry = entry.displayEnglish || entry.english || entry.key || ''
+    throw lastError
+  }
+  if (lastError?.code === 'LLM_REQUEST_FAILED') {
     lastError.failedEntry = entry.displayEnglish || entry.english || entry.key || ''
     throw lastError
   }
@@ -1350,7 +1359,7 @@ const resolveLlmEntries = async ({
     const unresolvedSingles = []
     for (const result of singleResults) {
       if (result?.error) {
-        if (result.error.code === 'LLM_RATE_LIMITED') throw result.error
+        if (['LLM_RATE_LIMITED', 'LLM_REQUEST_FAILED'].includes(result.error.code)) throw result.error
         unresolvedSingles.push({ entry: result.entry, error: result.error })
         continue
       }

@@ -341,6 +341,47 @@ const tuneLlmRuntimeAfterRateLimit = (job = {}) => {
   }
 }
 
+const tuneLlmRuntimeAfterRequestFailure = (job = {}) => {
+  const current = buildLlmRuntimeForJob(job)
+  if (current.concurrency > 1) {
+    return {
+      llmModel: current.model,
+      llmBatchSize: current.batchSize,
+      llmConcurrency: current.concurrency - 1,
+      llmFallbackModels: current.fallbackModels,
+      reason: `降低并发到 ${current.concurrency - 1}`,
+    }
+  }
+  if (current.fallbackModels.length) {
+    const [nextModel, ...remainingFallbacks] = current.fallbackModels
+    const nextRuntime = getLlmJobRuntime(nextModel)
+    return {
+      llmModel: nextRuntime.model,
+      llmBatchSize: Math.max(1, Math.min(current.batchSize, nextRuntime.batchSize)),
+      llmConcurrency: 1,
+      llmFallbackModels: [...remainingFallbacks, current.model],
+      reason: `切换备用模型 ${nextRuntime.model}，并发保持 1`,
+    }
+  }
+  if (current.batchSize > 1) {
+    const nextBatchSize = Math.max(1, Math.floor(current.batchSize / 2))
+    return {
+      llmModel: current.model,
+      llmBatchSize: nextBatchSize,
+      llmConcurrency: 1,
+      llmFallbackModels: current.fallbackModels,
+      reason: `降低批次到 ${nextBatchSize}`,
+    }
+  }
+  return {
+    llmModel: current.model,
+    llmBatchSize: current.batchSize,
+    llmConcurrency: 1,
+    llmFallbackModels: current.fallbackModels,
+    reason: '保持最低并发等待上游恢复',
+  }
+}
+
 const tuneLlmRuntimeAfterValidationFailure = (job = {}) => {
   const current = buildLlmRuntimeForJob(job)
   if (current.batchSize > 1) {
@@ -646,7 +687,7 @@ const processSingleJob = async (job) => {
       }
       const retryCount = Math.max(0, Number(retryBaseJob.llmRequestRetries || 0))
       if (retryCount < MAX_REQUEST_REQUEUES) {
-        const runtimeUpdate = tuneLlmRuntimeAfterRateLimit(retryBaseJob)
+        const runtimeUpdate = tuneLlmRuntimeAfterRequestFailure(retryBaseJob)
         const delayMs = Math.min(MAX_INTERNAL_QUEUE_WAIT_MS, 3000 * (retryCount + 1))
         const nextAttemptAt = now() + delayMs
         const waitingMessage = `LLM 请求暂时失败，${Math.max(1, Math.ceil(delayMs / 1000))} 秒后从已保存进度继续；${runtimeUpdate.reason}。`

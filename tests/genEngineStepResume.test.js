@@ -194,6 +194,37 @@ test('rate limits exit the step without cycling through fallback models', async 
   assert.equal(requestCount, 1)
 })
 
+test('intermittent access rejection is retryable across workflow steps', async (t) => {
+  let requestCount = 0
+  const server = http.createServer(async (request, response) => {
+    requestCount += 1
+    await readBody(request)
+    response.writeHead(401, { 'content-type': 'application/json' })
+    response.end(JSON.stringify({ error: 'temporary access rejection' }))
+  })
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
+  t.after(() => server.close())
+
+  const address = server.address()
+  process.env.VIVI_LLM_BASE_URL = `http://127.0.0.1:${address.port}`
+  process.env.VIVI_LLM_MODEL = 'test-model'
+  const { generateWorksheetArchive } = await import('../server/genEngine.js')
+
+  await assert.rejects(
+    generateWorksheetArchive({
+      rows: [{ english: 'alpha', chinese: '阿尔法' }],
+      fileName: 'access-rejection.xlsx',
+      questionTypes: ['一_释义匹配'],
+      generationMode: 'legacy_zip',
+      llmModel: 'test-model',
+      llmEntryLimit: 100,
+      onCacheCheckpoint: async () => {},
+    }),
+    (error) => error?.code === 'LLM_REQUEST_FAILED' && error?.status === 401 && error?.retryable === true,
+  )
+  assert.equal(requestCount, 1)
+})
+
 test('safe format variations are accepted by order and normalized', async (t) => {
   const server = http.createServer(async (request, response) => {
     const payload = JSON.parse(await readBody(request))
