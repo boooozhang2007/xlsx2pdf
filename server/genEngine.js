@@ -525,7 +525,7 @@ export const getLlmJobRuntime = (selectedModel = '', overrides = {}) => {
 }
 
 const getLlmRetryPolicy = () => ({
-  requestRetries: Math.max(1, Number.parseInt(process.env.VIVI_LLM_REQUEST_RETRIES || '3', 10) || 3),
+  requestRetries: Math.max(1, Number.parseInt(process.env.VIVI_LLM_REQUEST_RETRIES || '1', 10) || 1),
   singleItemRetries: Math.max(1, Number.parseInt(process.env.VIVI_LLM_SINGLE_ITEM_RETRIES || '2', 10) || 2),
   requestTimeoutMs: Math.max(5000, Number.parseInt(process.env.VIVI_LLM_REQUEST_TIMEOUT_MS || '60000', 10) || 60000),
 })
@@ -632,7 +632,7 @@ const fetchLlmArray = async (payload, kind, llmOptions = {}) => {
     } catch (error) {
       clearTimeout(timeoutId)
       lastError = error?.name === 'AbortError'
-        ? createLlmError(`${kind} 请求超时（>${requestTimeoutMs / 1000}s）`, { retryable: true })
+        ? createLlmError(`${kind} 请求超时（>${requestTimeoutMs / 1000}s）`, { code: 'LLM_REQUEST_FAILED', retryable: true })
         : error
       if (attempt >= requestRetries - 1 || !lastError?.retryable || lastError?.code === 'LLM_RATE_LIMITED') break
       await sleep(500 * (attempt + 1))
@@ -687,7 +687,7 @@ const fetchLlmObject = async (payload, kind, llmOptions = {}) => {
     } catch (error) {
       clearTimeout(timeoutId)
       lastError = error?.name === 'AbortError'
-        ? createLlmError(`${kind} 请求超时（>${requestTimeoutMs / 1000}s）`, { retryable: true })
+        ? createLlmError(`${kind} 请求超时（>${requestTimeoutMs / 1000}s）`, { code: 'LLM_REQUEST_FAILED', retryable: true })
         : error
       if (attempt >= requestRetries - 1 || !lastError?.retryable || lastError?.code === 'LLM_RATE_LIMITED') break
       await sleep(500 * (attempt + 1))
@@ -1222,7 +1222,7 @@ const resolveSingleEntryStrict = async ({
   let lastRaw = result.lastRaw
 
   if (typeof makeLlmClosures === 'function') {
-    for (const fallbackModel of fallbackModels) {
+    for (const fallbackModel of fallbackModels.slice(0, 1)) {
       try {
         const closures = makeLlmClosures(fallbackModel)
         if (!closures?.callLlm) continue
@@ -1288,33 +1288,9 @@ const resolveLlmEntries = async ({
           try {
             responseItems = await callLlm(chunk)
           } catch (error) {
-            if (error?.code !== 'LLM_RATE_LIMITED' || typeof makeLlmClosures !== 'function' || !fallbackModels.length) throw error
-
-            // Spread concurrent 429 fallbacks across available models instead
-            // of moving every failed batch to the same model at once.
-            const offset = (batchIndex + chunkIndex) % fallbackModels.length
-            const orderedFallbacks = [
-              ...fallbackModels.slice(offset),
-              ...fallbackModels.slice(0, offset),
-            ]
-            let fallbackError = error
-            for (const fallbackModel of orderedFallbacks) {
-              try {
-                await onTick?.()
-                const closures = makeLlmClosures(fallbackModel)
-                if (!closures?.callLlm) continue
-                responseItems = await closures.callLlm(chunk)
-                fallbackError = null
-                break
-              } catch (nextError) {
-                fallbackError = nextError
-                if (nextError?.code !== 'LLM_RATE_LIMITED') continue
-                const currentDelay = Number(fallbackError?.retryAfterMs || 0)
-                const previousDelay = Number(error?.retryAfterMs || 0)
-                fallbackError.retryAfterMs = Math.max(currentDelay, previousDelay)
-              }
-            }
-            if (!responseItems) throw fallbackError || error
+            // Model rotation is handled by the durable queue so every retry is
+            // checkpointed and visible instead of cycling models inside a step.
+            throw error
           }
           const { unresolved: chunkUnresolved, resolvedCount } = await resolveResponseItems(chunk, responseItems, sanitizeEntry, onResolved)
           resolvedTotal += resolvedCount
@@ -1331,6 +1307,7 @@ const resolveLlmEntries = async ({
             error.failedEntries = chunk.map((entry) => entry.displayEnglish || entry.english || entry.key || '')
             throw error
           }
+          if (error?.code === 'LLM_REQUEST_FAILED') throw error
           if (error?.code === 'LLM_BATCH_REJECTED') throw error
           unresolved.push(...chunk)
         }
@@ -2644,10 +2621,13 @@ export const generateWorksheetArchive = async ({
     })
   }
 
-  const [lexicalComplete, basicComplete] = await Promise.all([
+  const warmupResults = await Promise.allSettled([
     needsLexical ? ensureLexicalData(lexicalEntries, lexicalContext) : Promise.resolve(true),
     hasBasicWork ? ensureMaterials(uniqueBasicEntries, basicContext, false) : Promise.resolve(true),
   ])
+  const warmupError = warmupResults.find((result) => result.status === 'rejected')
+  if (warmupError) throw warmupError.reason
+  const [lexicalComplete, basicComplete] = warmupResults.map((result) => result.value)
   if (!lexicalComplete || !basicComplete) throw createStepYieldError()
 
   // Emit step completions sequentially to keep stepDelta counts correct.

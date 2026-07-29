@@ -20,6 +20,7 @@ const MAX_INTERNAL_QUEUE_WAIT_MS = Math.max(1000, Number.parseInt(process.env.GE
 const MIN_RATE_LIMIT_DELAY_MS = Math.max(1000, Number.parseInt(process.env.VIVI_LLM_RATE_LIMIT_MIN_DELAY_MS || '10000', 10) || 10000)
 const MAX_RATE_LIMIT_DELAY_MS = Math.max(MIN_RATE_LIMIT_DELAY_MS, Number.parseInt(process.env.VIVI_LLM_RATE_LIMIT_MAX_DELAY_MS || '120000', 10) || 120000)
 const MAX_RATE_LIMIT_REQUEUES = Math.max(1, Number.parseInt(process.env.VIVI_LLM_RATE_LIMIT_MAX_REQUEUES || '8', 10) || 8)
+const MAX_REQUEST_REQUEUES = Math.max(1, Number.parseInt(process.env.VIVI_LLM_REQUEST_MAX_REQUEUES || '8', 10) || 8)
 const VALIDATION_RETRY_DELAY_MS = Math.max(
   1000,
   Number.isFinite(Number.parseInt(process.env.VIVI_LLM_VALIDATION_RETRY_DELAY_MS || '3000', 10))
@@ -86,6 +87,7 @@ const summarizeJob = (job) => ({
   llmConcurrency: job.llmConcurrency || 0,
   llmRateLimitRetries: job.llmRateLimitRetries || 0,
   llmValidationRetries: job.llmValidationRetries || 0,
+  llmRequestRetries: job.llmRequestRetries || 0,
   nextAttemptAt: job.nextAttemptAt || 0,
   progress: job.progress || null,
   error: job.error || '',
@@ -634,6 +636,50 @@ const processSingleJob = async (job) => {
       await deleteObject({ key: jobCacheKey(job.id) }).catch(() => {})
       return
     }
+    if (error?.code === 'LLM_REQUEST_FAILED' && error?.retryable) {
+      await Promise.all([progressChain, cacheChain])
+      const latestJobForRetry = await readLatestJobState(job.id)
+      const retryBaseJob = {
+        ...(latestJobForRetry || liveJob),
+        questionTypes: (latestJobForRetry && latestJobForRetry.questionTypes) || liveJob.questionTypes || job.questionTypes || [],
+        wordCount: (latestJobForRetry && latestJobForRetry.wordCount) || liveJob.wordCount || job.wordCount || 0,
+      }
+      const retryCount = Math.max(0, Number(retryBaseJob.llmRequestRetries || 0))
+      if (retryCount < MAX_REQUEST_REQUEUES) {
+        const runtimeUpdate = tuneLlmRuntimeAfterRateLimit(retryBaseJob)
+        const delayMs = Math.min(MAX_INTERNAL_QUEUE_WAIT_MS, 3000 * (retryCount + 1))
+        const nextAttemptAt = now() + delayMs
+        const waitingMessage = `LLM 请求暂时失败，${Math.max(1, Math.ceil(delayMs / 1000))} 秒后从已保存进度继续；${runtimeUpdate.reason}。`
+        const queuedRetryJob = await writeJob({
+          ...retryBaseJob,
+          status: 'queued',
+          error: '',
+          llmModel: runtimeUpdate.llmModel,
+          llmBatchSize: runtimeUpdate.llmBatchSize,
+          llmConcurrency: runtimeUpdate.llmConcurrency,
+          llmFallbackModels: runtimeUpdate.llmFallbackModels,
+          llmRequestRetries: retryCount + 1,
+          nextAttemptAt,
+          progress: {
+            ...(retryBaseJob.progress || resetJobProgress(retryBaseJob)),
+            currentStep: '等待 LLM 请求恢复',
+            stageLabel: '等待 LLM 请求恢复',
+            message: waitingMessage,
+          },
+        })
+        await writeJsonObject({
+          key: jobPayloadKey(job.id),
+          value: {
+            ...(payload || {}),
+            llmModel: queuedRetryJob.llmModel,
+            llmBatchSize: queuedRetryJob.llmBatchSize,
+            llmConcurrency: queuedRetryJob.llmConcurrency,
+            llmFallbackModels: queuedRetryJob.llmFallbackModels || [],
+          },
+        })
+        return
+      }
+    }
     if (error?.code === 'LLM_GENERATION_INCOMPLETE') {
       const latestJobForRetry = await readLatestJobState(job.id)
       if (latestJobForRetry && ['canceling', 'canceled'].includes(latestJobForRetry.status)) {
@@ -932,6 +978,7 @@ export const submitWorksheetJob = async ({
     llmConcurrency: llmRuntime.concurrency,
     llmRateLimitRetries: 0,
     llmValidationRetries: 0,
+    llmRequestRetries: 0,
     nextAttemptAt: 0,
     createdAt: submittedAt,
     submittedAt,

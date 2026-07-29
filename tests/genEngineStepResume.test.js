@@ -122,6 +122,78 @@ test('a zero-valid batch stops instead of expanding into a retry storm', async (
   assert.equal(requestCount, 1)
 })
 
+test('a transient request failure exits the step without splitting batches', async (t) => {
+  let requestCount = 0
+  const server = http.createServer(async (request, response) => {
+    requestCount += 1
+    await readBody(request)
+    response.writeHead(500, { 'content-type': 'application/json' })
+    response.end(JSON.stringify({ error: 'temporary upstream failure' }))
+  })
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
+  t.after(() => server.close())
+
+  const address = server.address()
+  process.env.VIVI_LLM_BASE_URL = `http://127.0.0.1:${address.port}`
+  process.env.VIVI_LLM_REQUEST_RETRIES = '1'
+  const { generateWorksheetArchive } = await import('../server/genEngine.js')
+
+  await assert.rejects(
+    generateWorksheetArchive({
+      rows: [
+        { english: 'alpha', chinese: '阿尔法' },
+        { english: 'beta', chinese: '贝塔' },
+      ],
+      fileName: 'request-failure.xlsx',
+      questionTypes: ['一_释义匹配'],
+      generationMode: 'legacy_zip',
+      llmEntryLimit: 100,
+      onCacheCheckpoint: async () => {},
+    }),
+    (error) => error?.code === 'LLM_REQUEST_FAILED' && error?.retryable === true,
+  )
+  assert.equal(requestCount, 1)
+})
+
+test('rate limits exit the step without cycling through fallback models', async (t) => {
+  let requestCount = 0
+  const server = http.createServer(async (request, response) => {
+    requestCount += 1
+    await readBody(request)
+    response.writeHead(429, { 'content-type': 'application/json', 'retry-after': '1' })
+    response.end(JSON.stringify({ error: 'rate limited' }))
+  })
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
+  t.after(() => server.close())
+
+  const address = server.address()
+  process.env.VIVI_LLM_BASE_URL = `http://127.0.0.1:${address.port}`
+  process.env.VIVI_LLM_MODEL = 'test-model'
+  process.env.VIVI_LLM_MODELS = JSON.stringify([
+    { id: 'test-model', label: 'Primary' },
+    { id: 'fallback-one', label: 'Fallback one' },
+    { id: 'fallback-two', label: 'Fallback two' },
+  ])
+  const { generateWorksheetArchive } = await import('../server/genEngine.js')
+
+  await assert.rejects(
+    generateWorksheetArchive({
+      rows: [
+        { english: 'alpha', chinese: '阿尔法' },
+        { english: 'beta', chinese: '贝塔' },
+      ],
+      fileName: 'rate-limit.xlsx',
+      questionTypes: ['一_释义匹配'],
+      generationMode: 'legacy_zip',
+      llmModel: 'test-model',
+      llmEntryLimit: 100,
+      onCacheCheckpoint: async () => {},
+    }),
+    (error) => error?.code === 'LLM_RATE_LIMITED',
+  )
+  assert.equal(requestCount, 1)
+})
+
 test('safe format variations are accepted by order and normalized', async (t) => {
   const server = http.createServer(async (request, response) => {
     const payload = JSON.parse(await readBody(request))
