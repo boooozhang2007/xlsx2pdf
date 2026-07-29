@@ -288,6 +288,7 @@ const chunkGroups = (items, size = GROUP_SIZE) => {
 }
 
 const dedupeEntriesByKey = (entries) => Array.from(new Map((entries || []).map((entry) => [entry.key, entry])).values())
+export const countCachedEntries = (entries, cache) => (entries || []).filter((entry) => cache?.has(entry.key)).length
 
 const normalizeQuestionTypes = (questionTypes) => {
   const keys = Array.isArray(questionTypes) && questionTypes.length ? questionTypes : ALL_QUESTION_TYPE_KEYS
@@ -2705,14 +2706,15 @@ export const generateWorksheetArchive = async ({
     if (!uniqueSynonymEntries.length) {
       throw new Error('当前词表缺少可用的同义词结果，无法生成同义替换题。')
     }
+    const initiallyResolvedSynonyms = countCachedEntries(uniqueSynonymEntries, context.synonymMaterialCache)
     await report({
       message: `[${exportName}] 预热 LLM 同义替换题面材料`,
       currentStep: '预热 LLM 同义替换题面材料',
       stageLabel: '预热 LLM 同义替换题面材料',
       totalWords: words.length,
       stageWordTotal: uniqueSynonymEntries.length,
-      stageWordCompleted: 0,
-      inProgressSteps: 0,
+      stageWordCompleted: initiallyResolvedSynonyms,
+      inProgressSteps: initiallyResolvedSynonyms / uniqueSynonymEntries.length,
       inProgressStepKeys: ['warmup:synonym'],
     })
     const synonymComplete = await ensureMaterials(uniqueSynonymEntries, context, true)

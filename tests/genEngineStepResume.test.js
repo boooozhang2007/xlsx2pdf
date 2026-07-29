@@ -466,6 +466,14 @@ test('stage progress does not jump backward after a retry wait', async () => {
   assert.equal(nextStage.stageWordCompleted, 0)
 })
 
+test('resumed synonym stages report their cached entry count', async () => {
+  const { countCachedEntries } = await import('../server/genEngine.js')
+  const entries = [{ key: 'alpha' }, { key: 'beta' }, { key: 'gamma' }]
+  const cache = new Map([['alpha', {}], ['gamma', {}]])
+
+  assert.equal(countCachedEntries(entries, cache), 2)
+})
+
 test('request failures switch to durable recovery waits instead of exhausting retries', async () => {
   const { getLlmRequestRetryDelayMs } = await import('../server/genQueue.js')
 
