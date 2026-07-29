@@ -860,10 +860,31 @@ export const submitWorksheetJob = async ({ rows, fileName, questionTypes, genera
     testPaperGroupSizes: normalizedTestPaperGroupSizes,
     withChineseTranslation: normalizedWithChineseTranslation,
   })
-  const duplicate = (await listJobStates()).find((candidate) => (
+  const activeJobs = (await listJobStates()).filter((candidate) => (
     ['queued', 'processing'].includes(candidate?.status)
-    && candidate.fingerprint === fingerprint
   ))
+  let duplicate = activeJobs.find((candidate) => candidate.fingerprint === fingerprint)
+  if (!duplicate) {
+    const legacyCandidates = activeJobs.filter((candidate) => !candidate.fingerprint)
+    const legacyFingerprints = await Promise.all(legacyCandidates.map(async (candidate) => {
+      const payload = await readJobPayload(candidate.id).catch(() => null)
+      if (!payload) return null
+      return {
+        candidate,
+        fingerprint: buildJobFingerprint({
+          rows: payload.rows || [],
+          fileName: payload.fileName || candidate.fileName,
+          questionTypes: payload.questionTypes || candidate.questionTypes || [],
+          generationMode: normalizeGenerationMode(payload.generationMode || candidate.generationMode),
+          llmModel: payload.llmModel || candidate.llmModel || getDefaultLlmModel(),
+          legacyQuestionCount: normalizeLegacyQuestionCount(payload.legacyQuestionCount ?? candidate.legacyQuestionCount),
+          testPaperGroupSizes: normalizeTestPaperGroupSizes(payload.testPaperGroupSizes || candidate.testPaperGroupSizes),
+          withChineseTranslation: normalizeWithChineseTranslation(payload.withChineseTranslation ?? candidate.withChineseTranslation),
+        }),
+      }
+    }))
+    duplicate = legacyFingerprints.find((item) => item?.fingerprint === fingerprint)?.candidate
+  }
   if (duplicate) return { job: summarizeJob(duplicate), created: false }
 
   const id = crypto.randomUUID()
