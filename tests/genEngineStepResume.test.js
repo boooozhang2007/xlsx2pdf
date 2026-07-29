@@ -345,7 +345,7 @@ test('batch copies use independent numbered archive names', async () => {
   assert.ok(result.buffer.length > 0)
 })
 
-test('batch variation seeds produce different fixed-test-paper question content', async () => {
+test('nine batch variation seeds produce nine unique fixed-test-paper question sets', async () => {
   const { generateWorksheetArchive } = await import('../server/genEngine.js')
   const rows = Array.from({ length: 30 }, (_, index) => ({
     english: `sampleword${String.fromCharCode(97 + Math.floor(index / 26))}${String.fromCharCode(97 + (index % 26))}`,
@@ -382,17 +382,17 @@ test('batch variation seeds produce different fixed-test-paper question content'
     variationSeed,
     exportSuffix: '第01份',
   })
-  const [first, second] = await Promise.all([
-    generateCopy('batch-id:1'),
-    generateCopy('batch-id:2'),
-  ])
-  const firstDocx = findStoredZipEntry(first.buffer, (name) => name.endsWith('.docx'))
-  const secondDocx = findStoredZipEntry(second.buffer, (name) => name.endsWith('.docx'))
-  assert.ok(firstDocx && secondDocx)
-  const firstQuestionXml = findStoredZipEntry(firstDocx, (name) => name === 'word/document.xml')
-  const secondQuestionXml = findStoredZipEntry(secondDocx, (name) => name === 'word/document.xml')
-  assert.ok(firstQuestionXml && secondQuestionXml)
-  assert.notEqual(firstQuestionXml.toString('utf8'), secondQuestionXml.toString('utf8'))
+  const copies = await Promise.all(
+    Array.from({ length: 9 }, (_, index) => generateCopy(`batch-id:${index + 1}`)),
+  )
+  const questionSets = copies.map((copy) => {
+    const docx = findStoredZipEntry(copy.buffer, (name) => name.endsWith('.docx'))
+    assert.ok(docx)
+    const questionXml = findStoredZipEntry(docx, (name) => name === 'word/document.xml')
+    assert.ok(questionXml)
+    return questionXml.toString('utf8')
+  })
+  assert.equal(new Set(questionSets).size, 9)
 })
 
 test('request retry count resets after meaningful progress', async () => {
