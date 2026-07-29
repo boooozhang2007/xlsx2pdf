@@ -315,6 +315,7 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
   const [legacyQuestionCount, setLegacyQuestionCount] = useState(DEFAULT_LEGACY_QUESTION_COUNT)
   const [testPaperGroupSizes, setTestPaperGroupSizes] = useState([100])
   const [withChineseTranslation, setWithChineseTranslation] = useState(true)
+  const [copyCount, setCopyCount] = useState(1)
   const [llmModels, setLlmModels] = useState([])
   const [selectedLlmModel, setSelectedLlmModel] = useState('')
   const jobsRequestIdRef = useRef(0)
@@ -346,7 +347,7 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
     [jobs],
   )
 
-  const latestJob = activeJobs[0] || jobs[0] || null
+  const latestJob = activeJobs.find((job) => job.status === 'processing') || activeJobs[0] || jobs[0] || null
   const progressPercent = clampPercent(latestJob?.progress?.percent || 0)
 
   const loadJobs = async (silent = false) => {
@@ -458,10 +459,19 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
           legacyQuestionCount: normalizeLegacyQuestionCount(legacyQuestionCount),
           testPaperGroupSizes,
           withChineseTranslation: normalizeWithChineseTranslation(withChineseTranslation),
+          copies: Math.max(1, Math.min(20, Number.parseInt(copyCount, 10) || 1)),
         }),
       })
-      setJobs((current) => [data.job, ...current.filter((job) => job.id !== data.job.id)])
-      setStatus(data.deduplicated ? '相同任务已在服务器处理，已转到原任务。' : '已提交。')
+      const submittedJobs = Array.isArray(data.jobs) && data.jobs.length ? data.jobs : [data.job]
+      setJobs((current) => [
+        ...submittedJobs,
+        ...current.filter((job) => !submittedJobs.some((submitted) => submitted.id === job.id)),
+      ])
+      setStatus(data.deduplicated
+        ? '相同任务已在服务器处理，已转到原任务。'
+        : submittedJobs.length > 1
+          ? `已提交 ${submittedJobs.length} 份，服务器将按顺序生成。`
+          : '已提交。')
       loadJobs(true)
     } catch (error) {
       setStatus(error.message || '提交队列失败。')
@@ -687,6 +697,7 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
                     <div className="genQueueBodyInfo">
                       <div className="genQueueFileName" title={job.fileName}>
                         {job.fileName.replace(/\.[^.]+$/, '')}
+                        {job.copyIndex ? ` · 第 ${job.copyIndex}/${job.copyCount || 1} 份` : ''}
                       </div>
                       <div className="genQueueStageRow">
                         <Icon size={13} className={isActive ? 'spin genQueueStageIcon' : 'genQueueStageIcon'} />
@@ -825,6 +836,18 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
 
           {selectedGenerationMode === GENERATION_MODE_FIXED_TEST_PAPER ? (
             <>
+              <div className="field fullField">
+                <span>独立 ZIP 份数（1–20，服务器按顺序生成）</span>
+                <input
+                  type="number"
+                  min="1"
+                  max="20"
+                  step="1"
+                  value={copyCount}
+                  onChange={(event) => setCopyCount(event.target.value)}
+                  onBlur={() => setCopyCount(Math.max(1, Math.min(20, Number.parseInt(copyCount, 10) || 1)))}
+                />
+              </div>
               <div className="field fullField">
                 <span>导出规格（可多选，共用一次题面生成）</span>
                 <div className="exportSizeSelector">

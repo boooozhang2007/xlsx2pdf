@@ -21,3 +21,17 @@ export async function worksheetJobWorkflow(jobId) {
     await sleep(delayMs)
   }
 }
+
+export async function worksheetJobBatchWorkflow(jobIds) {
+  'use workflow'
+
+  for (const jobId of jobIds) {
+    while (true) {
+      const job = await runWorksheetJobAttempt(jobId)
+      if (TERMINAL_STATUSES.includes(job.status)) break
+
+      const delayMs = Math.max(1000, Number(job.resumeAt || 0) - Date.now())
+      await sleep(delayMs)
+    }
+  }
+}

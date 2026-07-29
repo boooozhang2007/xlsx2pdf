@@ -91,6 +91,9 @@ const summarizeJob = (job) => ({
   error: job.error || '',
   artifactReady: Boolean(job.artifactKey),
   downloadSize: job.downloadSize || 0,
+  batchId: job.batchId || '',
+  copyIndex: job.copyIndex || 0,
+  copyCount: job.copyCount || 1,
 })
 
 const writeJsonObject = async ({ key, value, ifMatch, ifNoneMatch }) => putObject({
@@ -513,6 +516,8 @@ const processSingleJob = async (job) => {
       llmConcurrency: payload.llmConcurrency || latestJob.llmConcurrency,
       llmFallbackModels: payload.llmFallbackModels || latestJob.llmFallbackModels,
       llmEntryLimit: LLM_ENTRIES_PER_STEP,
+      variationSeed: payload.variationSeed || latestJob.variationSeed || '',
+      exportSuffix: payload.exportSuffix || latestJob.exportSuffix || '',
       legacyQuestionCount: payload.legacyQuestionCount || latestJob.legacyQuestionCount,
       testPaperGroupSizes: payload.testPaperGroupSizes || latestJob.testPaperGroupSizes,
       withChineseTranslation: normalizeWithChineseTranslation(payload.withChineseTranslation ?? latestJob.withChineseTranslation),
@@ -843,7 +848,22 @@ export const failWorksheetJobStart = async (jobId, message) => {
   }))
 }
 
-export const submitWorksheetJob = async ({ rows, fileName, questionTypes, generationMode, llmModel, legacyQuestionCount, testPaperGroupSizes, withChineseTranslation }) => {
+export const submitWorksheetJob = async ({
+  rows,
+  fileName,
+  questionTypes,
+  generationMode,
+  llmModel,
+  legacyQuestionCount,
+  testPaperGroupSizes,
+  withChineseTranslation,
+  batchId = '',
+  copyIndex = 0,
+  copyCount = 1,
+  variationSeed = '',
+  exportSuffix = '',
+  allowDuplicate = false,
+}) => {
   const normalizedMode = normalizeGenerationMode(generationMode)
   const normalizedLegacyQuestionCount = normalizeLegacyQuestionCount(legacyQuestionCount)
   const normalizedTestPaperGroupSizes = normalizeTestPaperGroupSizes(testPaperGroupSizes)
@@ -860,32 +880,34 @@ export const submitWorksheetJob = async ({ rows, fileName, questionTypes, genera
     testPaperGroupSizes: normalizedTestPaperGroupSizes,
     withChineseTranslation: normalizedWithChineseTranslation,
   })
-  const activeJobs = (await listJobStates()).filter((candidate) => (
-    ['queued', 'processing'].includes(candidate?.status)
-  ))
-  let duplicate = activeJobs.find((candidate) => candidate.fingerprint === fingerprint)
-  if (!duplicate) {
-    const legacyCandidates = activeJobs.filter((candidate) => !candidate.fingerprint)
-    const legacyFingerprints = await Promise.all(legacyCandidates.map(async (candidate) => {
-      const payload = await readJobPayload(candidate.id).catch(() => null)
-      if (!payload) return null
-      return {
-        candidate,
-        fingerprint: buildJobFingerprint({
-          rows: payload.rows || [],
-          fileName: payload.fileName || candidate.fileName,
-          questionTypes: payload.questionTypes || candidate.questionTypes || [],
-          generationMode: normalizeGenerationMode(payload.generationMode || candidate.generationMode),
-          llmModel: payload.llmModel || candidate.llmModel || getDefaultLlmModel(),
-          legacyQuestionCount: normalizeLegacyQuestionCount(payload.legacyQuestionCount ?? candidate.legacyQuestionCount),
-          testPaperGroupSizes: normalizeTestPaperGroupSizes(payload.testPaperGroupSizes || candidate.testPaperGroupSizes),
-          withChineseTranslation: normalizeWithChineseTranslation(payload.withChineseTranslation ?? candidate.withChineseTranslation),
-        }),
-      }
-    }))
-    duplicate = legacyFingerprints.find((item) => item?.fingerprint === fingerprint)?.candidate
+  if (!allowDuplicate) {
+    const activeJobs = (await listJobStates()).filter((candidate) => (
+      ['queued', 'processing'].includes(candidate?.status)
+    ))
+    let duplicate = activeJobs.find((candidate) => candidate.fingerprint === fingerprint)
+    if (!duplicate) {
+      const legacyCandidates = activeJobs.filter((candidate) => !candidate.fingerprint)
+      const legacyFingerprints = await Promise.all(legacyCandidates.map(async (candidate) => {
+        const payload = await readJobPayload(candidate.id).catch(() => null)
+        if (!payload) return null
+        return {
+          candidate,
+          fingerprint: buildJobFingerprint({
+            rows: payload.rows || [],
+            fileName: payload.fileName || candidate.fileName,
+            questionTypes: payload.questionTypes || candidate.questionTypes || [],
+            generationMode: normalizeGenerationMode(payload.generationMode || candidate.generationMode),
+            llmModel: payload.llmModel || candidate.llmModel || getDefaultLlmModel(),
+            legacyQuestionCount: normalizeLegacyQuestionCount(payload.legacyQuestionCount ?? candidate.legacyQuestionCount),
+            testPaperGroupSizes: normalizeTestPaperGroupSizes(payload.testPaperGroupSizes || candidate.testPaperGroupSizes),
+            withChineseTranslation: normalizeWithChineseTranslation(payload.withChineseTranslation ?? candidate.withChineseTranslation),
+          }),
+        }
+      }))
+      duplicate = legacyFingerprints.find((item) => item?.fingerprint === fingerprint)?.candidate
+    }
+    if (duplicate) return { job: summarizeJob(duplicate), created: false }
   }
-  if (duplicate) return { job: summarizeJob(duplicate), created: false }
 
   const id = crypto.randomUUID()
   const submittedAt = now()
@@ -893,6 +915,11 @@ export const submitWorksheetJob = async ({ rows, fileName, questionTypes, genera
   const job = {
     id,
     fingerprint,
+    batchId,
+    copyIndex,
+    copyCount,
+    variationSeed,
+    exportSuffix,
     fileName: normalizedFileName,
     questionTypes,
     generationMode: normalizedMode,
@@ -933,6 +960,8 @@ export const submitWorksheetJob = async ({ rows, fileName, questionTypes, genera
         llmFallbackModels: job.llmFallbackModels,
         llmBatchSize: job.llmBatchSize,
         llmConcurrency: job.llmConcurrency,
+        variationSeed: job.variationSeed,
+        exportSuffix: job.exportSuffix,
       },
     }),
     writeJsonObject({
@@ -1046,6 +1075,8 @@ export const reexportWorksheetJob = async (jobId) => {
     llmBatchSize: payload.llmBatchSize || job.llmBatchSize,
     llmConcurrency: payload.llmConcurrency || job.llmConcurrency,
     llmFallbackModels: payload.llmFallbackModels || job.llmFallbackModels,
+    variationSeed: payload.variationSeed || job.variationSeed || '',
+    exportSuffix: payload.exportSuffix || job.exportSuffix || '',
     legacyQuestionCount: payload.legacyQuestionCount || job.legacyQuestionCount,
     testPaperGroupSizes: payload.testPaperGroupSizes || job.testPaperGroupSizes,
     withChineseTranslation: normalizeWithChineseTranslation(payload.withChineseTranslation ?? job.withChineseTranslation),

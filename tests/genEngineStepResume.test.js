@@ -203,3 +203,22 @@ test('hyphenated synonym answers match space-separated sentences', async (t) => 
 
   assert.ok(result.buffer.length > 0)
 })
+
+test('batch copies use independent numbered archive names', async () => {
+  const { generateWorksheetArchive } = await import('../server/genEngine.js')
+  const result = await generateWorksheetArchive({
+    rows: [
+      { english: 'variation', chinese: '变化' },
+      { english: 'association', chinese: '联系' },
+      { english: 'standardize', chinese: '使标准化' },
+    ],
+    fileName: '批量测试.xlsx',
+    questionTypes: ['五_缺字母填空'],
+    generationMode: 'legacy_zip',
+    variationSeed: 'batch-id:1',
+    exportSuffix: '第01份',
+  })
+
+  assert.equal(result.fileName, '批量测试 练习包 第01份.zip')
+  assert.ok(result.buffer.length > 0)
+})

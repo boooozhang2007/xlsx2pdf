@@ -2420,8 +2420,9 @@ const createGenerationContext = (
   llmConcurrency,
   llmEntryLimit,
   questionsPerGroup,
+  variationSeed,
 ) => {
-  const rngSeed = `${fileName}|${exportName}|${words.map((word) => word.key).join('|')}`
+  const rngSeed = `${fileName}|${exportName}|${variationSeed || ''}|${words.map((word) => word.key).join('|')}`
   return {
     exportName,
     selectedKeys,
@@ -2462,6 +2463,8 @@ export const generateWorksheetArchive = async ({
   withChineseTranslation = true,
   initialCache = null,
   onCacheCheckpoint = null,
+  variationSeed = '',
+  exportSuffix = '',
 }) => {
   const checkForCancellation = async () => {
     if (typeof onShouldCancel === 'function' && await onShouldCancel()) throw createCanceledError()
@@ -2481,7 +2484,7 @@ export const generateWorksheetArchive = async ({
   if (!selectedKeys.length) throw new Error('未配置可生成的题型结构。')
 
   const exportName = sanitizeExportName(
-    `${String(fileName || '词组练习').replace(/\.[^.]+$/, '')} ${normalizedMode === GENERATION_MODE_FIXED_TEST_PAPER ? '测试卷包' : '练习包'}`,
+    `${String(fileName || '词组练习').replace(/\.[^.]+$/, '')} ${normalizedMode === GENERATION_MODE_FIXED_TEST_PAPER ? '测试卷包' : '练习包'}${exportSuffix ? ` ${exportSuffix}` : ''}`,
   )
   const context = createGenerationContext(
     words,
@@ -2495,6 +2498,7 @@ export const generateWorksheetArchive = async ({
     llmConcurrency,
     llmEntryLimit,
     legacyQuestionCount,
+    variationSeed,
   )
   context.generationMode = normalizedMode
   context.withChineseTranslation = normalizeWithChineseTranslation(withChineseTranslation)

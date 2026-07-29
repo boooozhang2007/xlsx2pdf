@@ -103,6 +103,7 @@ R2 中每次二维码分享会保存为一个可浏览前缀，并按“批次�
 - Build Command: `npm run build`
 - Nitro 统一输出网页、API 与 SPA 路由
 - Vercel Workflow 的 Queue 触发器在构建时自动生成，不需要配置 Cron
+- 练习生成支持一次提交 1–20 个独立 ZIP；批量任务在同一个 Workflow 中按顺序执行，避免并发抢占 LLM 配额
 - Hobby 当前包含每月 50,000 个 Workflow events 和 1 GB Workflow data written；已完成运行记录保留 1 天
 - Workflow 总运行时长不设上限，但每个 step 仍受 Vercel Function 单次执行时限约束；本项目会把进度、缓存和成品持续写入 R2，step 中断后可恢复，Workflow 运行记录过期也不会删除 R2 任务数据
 
