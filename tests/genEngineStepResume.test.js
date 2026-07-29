@@ -423,6 +423,20 @@ test('request failures switch to durable recovery waits instead of exhausting re
   assert.equal(getLlmRequestRetryDelayMs(100), 900000)
 })
 
+test('batch recovery identifies deleted copy records for reconstruction', async () => {
+  const { getMissingBatchCopyIndexes } = await import('../server/genQueue.js')
+
+  assert.deepEqual(
+    getMissingBatchCopyIndexes([
+      { copyIndex: 1 },
+      { copyIndex: 2 },
+      { copyIndex: 4 },
+      { copyIndex: 6 },
+    ], 6),
+    [3, 5],
+  )
+})
+
 test('rate limit retry count resets after meaningful progress', async () => {
   const { getLlmRateLimitRetryState } = await import('../server/genQueue.js')
   const stalled = getLlmRateLimitRetryState({

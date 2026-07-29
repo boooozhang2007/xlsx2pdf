@@ -1134,6 +1134,12 @@ export const listWorksheetJobs = async () => {
   return jobs.map(summarizeJob)
 }
 
+export const getMissingBatchCopyIndexes = (jobs = [], expectedCount = 0) => {
+  const existingIndexes = new Set((jobs || []).map((job) => Number(job.copyIndex || 0)))
+  return Array.from({ length: Math.max(0, Number(expectedCount) || 0) }, (_, index) => index + 1)
+    .filter((copyIndex) => !existingIndexes.has(copyIndex))
+}
+
 export const prepareWorksheetBatchWorkflowMigration = async (batchId) => {
   const normalizedBatchId = String(batchId || '').trim()
   if (!normalizedBatchId) {
@@ -1152,8 +1158,38 @@ export const prepareWorksheetBatchWorkflowMigration = async (batchId) => {
   }
 
   const expectedCount = Math.max(...batchJobs.map((job) => Number(job.copyCount || 1)))
+  const missingCopyIndexes = getMissingBatchCopyIndexes(batchJobs, expectedCount)
+  if (missingCopyIndexes.length) {
+    const sourceJob = batchJobs[0]
+    const sourcePayload = await readJobPayload(sourceJob.id).catch(() => null)
+    if (!sourcePayload || !Array.isArray(sourcePayload.rows)) {
+      const error = new Error(`批次任务记录不完整，且无法读取源数据：缺少第 ${missingCopyIndexes.join('、')} 份。`)
+      error.statusCode = 409
+      throw error
+    }
+    for (const copyIndex of missingCopyIndexes) {
+      const submission = await submitWorksheetJob({
+        rows: sourcePayload.rows,
+        fileName: sourcePayload.fileName || sourceJob.fileName,
+        questionTypes: sourcePayload.questionTypes || sourceJob.questionTypes || [],
+        generationMode: sourcePayload.generationMode || sourceJob.generationMode,
+        llmModel: sourcePayload.llmModel || sourceJob.llmModel || getDefaultLlmModel(),
+        legacyQuestionCount: sourcePayload.legacyQuestionCount ?? sourceJob.legacyQuestionCount,
+        testPaperGroupSizes: sourcePayload.testPaperGroupSizes || sourceJob.testPaperGroupSizes,
+        withChineseTranslation: sourcePayload.withChineseTranslation ?? sourceJob.withChineseTranslation,
+        batchId: normalizedBatchId,
+        copyIndex,
+        copyCount: expectedCount,
+        variationSeed: `${normalizedBatchId}:${copyIndex}`,
+        exportSuffix: `第${String(copyIndex).padStart(2, '0')}份`,
+        allowDuplicate: true,
+      })
+      batchJobs.push(submission.job)
+    }
+    batchJobs.sort((left, right) => Number(left.copyIndex || 0) - Number(right.copyIndex || 0))
+  }
   if (batchJobs.length !== expectedCount) {
-    const error = new Error(`批次任务记录不完整：找到 ${batchJobs.length}/${expectedCount} 份，已停止迁移。`)
+    const error = new Error(`批次任务记录异常：找到 ${batchJobs.length}/${expectedCount} 份。`)
     error.statusCode = 409
     throw error
   }
