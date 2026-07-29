@@ -1325,7 +1325,9 @@ const resolveLlmEntries = async ({
 }
 
 const ensureLexicalData = async (entries, context) => {
-  const uncachedEntries = dedupeEntriesByKey(entries.filter((entry) => !context.lexicalCache.get(entry.key)?.definitionZh))
+  const uniqueEntries = dedupeEntriesByKey(entries)
+  const uncachedEntries = uniqueEntries.filter((entry) => !context.lexicalCache.get(entry.key)?.definitionZh)
+  const cachedCount = uniqueEntries.length - uncachedEntries.length
   if (!uncachedEntries.length) return context.lexicalCache
   const { batchSize, concurrency } = getLlmConfig({
     model: context.llmModel,
@@ -1349,12 +1351,13 @@ const ensureLexicalData = async (entries, context) => {
         return isNew
       },
       onProgress: async (resolvedCount) => {
+        const completedCount = cachedCount + resolvedCount
         await context.reportProgress({
-          message: `[${context.exportName}] ${stageLabel} ${resolvedCount}/${uncachedEntries.length}`,
+          message: `[${context.exportName}] ${stageLabel} ${completedCount}/${uniqueEntries.length}`,
           currentStep: stageLabel,
           stageLabel,
-          stageWordCompleted: resolvedCount,
-          stageWordTotal: uncachedEntries.length,
+          stageWordCompleted: completedCount,
+          stageWordTotal: uniqueEntries.length,
           totalWords: context.wordCount,
         })
         if (context.onCacheCheckpoint && resolvedCount % 50 === 0) await context.onCacheCheckpoint()
@@ -1376,10 +1379,12 @@ const ensureLexicalData = async (entries, context) => {
 const ensureMaterials = async (entries, context, requireSynonym) => {
   const cache = requireSynonym ? context.synonymMaterialCache : context.basicMaterialCache
   const lexicalCache = context.lexicalCache
-  const uncachedEntries = dedupeEntriesByKey(entries.filter((entry) => !cache.has(entry.key))).map((entry) => ({
+  const uniqueEntries = dedupeEntriesByKey(entries)
+  const uncachedEntries = uniqueEntries.filter((entry) => !cache.has(entry.key)).map((entry) => ({
     ...entry,
     requiredSynonym: lexicalCache.get(entry.key)?.synonym || '',
   }))
+  const cachedCount = uniqueEntries.length - uncachedEntries.length
   if (!uncachedEntries.length) return cache
   const { batchSize, concurrency } = getLlmConfig({
     model: context.llmModel,
@@ -1403,12 +1408,13 @@ const ensureMaterials = async (entries, context, requireSynonym) => {
         return isNew
       },
       onProgress: async (resolvedCount) => {
+        const completedCount = cachedCount + resolvedCount
         await context.reportProgress({
-          message: `[${context.exportName}] ${stageLabel} ${resolvedCount}/${uncachedEntries.length}`,
+          message: `[${context.exportName}] ${stageLabel} ${completedCount}/${uniqueEntries.length}`,
           currentStep: stageLabel,
           stageLabel,
-          stageWordCompleted: resolvedCount,
-          stageWordTotal: uncachedEntries.length,
+          stageWordCompleted: completedCount,
+          stageWordTotal: uniqueEntries.length,
           totalWords: context.wordCount,
         })
         if (context.onCacheCheckpoint && resolvedCount % 50 === 0) await context.onCacheCheckpoint()
@@ -1946,7 +1952,6 @@ const generateTestPaperTrueFalseSection = (paragraphs, groupIndex, context, answ
 
 const createFixedTestPaperFiles = async (groups, context) => {
   const files = []
-  let processedWords = 0
 
   for (let groupIndex = 0; groupIndex < groups.length; groupIndex += 1) {
     const group = groups[groupIndex]
@@ -1971,15 +1976,16 @@ const createFixedTestPaperFiles = async (groups, context) => {
       data: createDocxBuffer({ title, paragraphs: questionParagraphs }),
     })
 
-    processedWords += group.length
+    context.renderedWordCount = Number(context.renderedWordCount || 0) + group.length
     await context.reportProgress({
       message: `[${context.exportName}] 已生成第 ${groupIndex + 1} 份测试卷（${start}-${end}）`,
       currentStep: '生成测试卷',
       stageLabel: '生成测试卷',
-      stageWordCompleted: processedWords,
-      stageWordTotal: context.wordCount,
+      stageWordCompleted: context.renderedWordCount,
+      stageWordTotal: context.renderWordTotal || context.wordCount,
       totalWords: context.wordCount,
       stepDelta: 1,
+      stepKey: `test-paper:${context.exportVariantLabel || 'default'}:${groupIndex}`,
     })
     await context.checkForCancellation()
   }
@@ -2494,35 +2500,18 @@ export const generateWorksheetArchive = async ({
   // Lexical data and basic materials are independent — run them in parallel.
   // Synonym materials must wait for lexical (buildSynonymChoicePlan reads lexicalCache).
   const hasBasicWork = needsBasicMaterials && uniqueBasicEntries.length > 0
-  if (needsLexical) {
-    await report({
-      message: `[${exportName}] 预热 LLM 词汇关系`,
-      currentStep: '预热 LLM 词汇关系',
-      stageLabel: '预热 LLM 词汇关系',
-      totalWords: words.length,
-      stageWordTotal: lexicalEntries.length,
-      stageWordCompleted: 0,
-    })
-  }
-  if (hasBasicWork) {
-    await report({
-      message: `[${exportName}] 预热 LLM 基础题面材料`,
-      currentStep: '预热 LLM 基础题面材料',
-      stageLabel: '预热 LLM 基础题面材料',
-      totalWords: words.length,
-      stageWordTotal: uniqueBasicEntries.length,
-      stageWordCompleted: 0,
-    })
-  }
-
   // Give each parallel stage its own progress-reporting context so their
   // word counts don't overwrite each other.  Both write to a shared counter
   // and report a single combined stageWordTotal.
   const parallelWarmupTotal = (needsLexical ? lexicalEntries.length : 0) + (hasBasicWork ? uniqueBasicEntries.length : 0)
-  let lexWarmupResolved = 0
-  let basicWarmupResolved = 0
+  let lexWarmupResolved = needsLexical
+    ? lexicalEntries.filter((entry) => context.lexicalCache.get(entry.key)?.definitionZh).length
+    : 0
+  let basicWarmupResolved = hasBasicWork
+    ? uniqueBasicEntries.filter((entry) => context.basicMaterialCache.has(entry.key)).length
+    : 0
   const parallelWarmupLabel = needsLexical && hasBasicWork ? '预热 LLM 词汇与基础材料' : needsLexical ? '预热 LLM 词汇关系' : '预热 LLM 基础题面材料'
-  const makeMergedWarmupContext = (getOwn, setOwn) => ({
+  const makeMergedWarmupContext = (setOwn) => ({
     ...context,
     reportProgress: async (payload) => {
       if (payload.stageWordCompleted != null) setOwn(payload.stageWordCompleted)
@@ -2537,8 +2526,20 @@ export const generateWorksheetArchive = async ({
       })
     },
   })
-  const lexicalContext = makeMergedWarmupContext(() => lexWarmupResolved, (v) => { lexWarmupResolved = v })
-  const basicContext = makeMergedWarmupContext(() => basicWarmupResolved, (v) => { basicWarmupResolved = v })
+  const lexicalContext = makeMergedWarmupContext((v) => { lexWarmupResolved = v })
+  const basicContext = makeMergedWarmupContext((v) => { basicWarmupResolved = v })
+
+  if (parallelWarmupTotal) {
+    const initiallyResolved = lexWarmupResolved + basicWarmupResolved
+    await report({
+      message: `[${exportName}] ${parallelWarmupLabel} ${initiallyResolved}/${parallelWarmupTotal}`,
+      currentStep: parallelWarmupLabel,
+      stageLabel: parallelWarmupLabel,
+      totalWords: words.length,
+      stageWordTotal: parallelWarmupTotal,
+      stageWordCompleted: initiallyResolved,
+    })
+  }
 
   await Promise.all([
     needsLexical ? ensureLexicalData(lexicalEntries, lexicalContext) : Promise.resolve(),
@@ -2549,23 +2550,25 @@ export const generateWorksheetArchive = async ({
   if (needsLexical) {
     await report({
       message: `[${exportName}] 词汇关系已完成`,
-      currentStep: '预热 LLM 词汇关系',
-      stageLabel: '预热 LLM 词汇关系',
+      currentStep: parallelWarmupLabel,
+      stageLabel: parallelWarmupLabel,
       totalWords: words.length,
-      stageWordTotal: lexicalEntries.length,
-      stageWordCompleted: lexicalEntries.length,
+      stageWordTotal: parallelWarmupTotal,
+      stageWordCompleted: parallelWarmupTotal,
       stepDelta: 1,
+      stepKey: 'warmup:lexical',
     })
   }
   if (hasBasicWork) {
     await report({
       message: `[${exportName}] 基础题面材料已完成`,
-      currentStep: '预热 LLM 基础题面材料',
-      stageLabel: '预热 LLM 基础题面材料',
+      currentStep: parallelWarmupLabel,
+      stageLabel: parallelWarmupLabel,
       totalWords: words.length,
-      stageWordTotal: uniqueBasicEntries.length,
-      stageWordCompleted: uniqueBasicEntries.length,
+      stageWordTotal: parallelWarmupTotal,
+      stageWordCompleted: parallelWarmupTotal,
       stepDelta: 1,
+      stepKey: 'warmup:basic',
     })
   }
 
@@ -2610,17 +2613,23 @@ export const generateWorksheetArchive = async ({
       stageWordTotal: uniqueSynonymEntries.length,
       stageWordCompleted: uniqueSynonymEntries.length,
       stepDelta: 1,
+      stepKey: 'warmup:synonym',
     })
   }
 
   let files = []
   if (normalizedMode === GENERATION_MODE_FIXED_TEST_PAPER) {
+    context.renderedWordCount = 0
+    context.renderWordTotal = fixedGroupSets.reduce(
+      (total, groupSet) => total + groupSet.groups.reduce((subtotal, group) => subtotal + group.length, 0),
+      0,
+    )
     await report({
       message: `[${exportName}] 开始按模板生成测试卷`,
       currentStep: '生成测试卷',
       stageLabel: '生成测试卷',
       totalWords: words.length,
-      stageWordTotal: words.length,
+      stageWordTotal: context.renderWordTotal,
       stageWordCompleted: 0,
     })
     for (const groupSet of fixedGroupSets) {
@@ -2655,6 +2664,7 @@ export const generateWorksheetArchive = async ({
         stageWordCompleted: words.length,
         currentQuestionType: questionKey,
         stepDelta: 1,
+        stepKey: `question:${questionKey}`,
       })
     }
   }

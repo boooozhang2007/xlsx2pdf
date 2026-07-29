@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowDownToLine,
   CheckCircle2,
@@ -317,6 +317,8 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
   const [withChineseTranslation, setWithChineseTranslation] = useState(true)
   const [llmModels, setLlmModels] = useState([])
   const [selectedLlmModel, setSelectedLlmModel] = useState('')
+  const jobsRequestIdRef = useRef(0)
+  const queueBusyRequestIdRef = useRef(0)
 
   const usableRows = useMemo(
     () => rows.filter((row) => String(row?.english || '').trim()),
@@ -347,9 +349,15 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
   const progressPercent = clampPercent(latestJob?.progress?.percent || 0)
 
   const loadJobs = async (silent = false) => {
-    if (!silent) setQueueBusy(true)
+    const requestId = jobsRequestIdRef.current + 1
+    jobsRequestIdRef.current = requestId
+    if (!silent) {
+      queueBusyRequestIdRef.current = requestId
+      setQueueBusy(true)
+    }
     try {
       const data = await apiJson('/api/gen/jobs', { method: 'GET' })
+      if (requestId !== jobsRequestIdRef.current) return
       setJobs(Array.isArray(data.jobs) ? data.jobs : [])
       const models = Array.isArray(data.llmModels) ? data.llmModels : []
       setLlmModels(models)
@@ -359,9 +367,9 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
         return models[0]?.id || ''
       })
     } catch (error) {
-      if (!silent) setStatus(error.message || '读取队列失败。')
+      if (!silent && requestId === jobsRequestIdRef.current) setStatus(error.message || '读取队列失败。')
     } finally {
-      if (!silent) setQueueBusy(false)
+      if (!silent && requestId === queueBusyRequestIdRef.current) setQueueBusy(false)
     }
   }
 

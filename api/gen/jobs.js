@@ -1,8 +1,10 @@
 import { readJsonBody, rejectMethod, requireSession, sendJson } from '../../server/auth.js'
-import { cancelWorksheetJob, deleteWorksheetJob, listWorksheetJobs, scheduleWorksheetJobQueue, submitWorksheetJob } from '../../server/genQueue.js'
+import { start } from 'workflow/api'
+import { cancelWorksheetJob, deleteWorksheetJob, failWorksheetJobStart, listWorksheetJobs, submitWorksheetJob } from '../../server/genQueue.js'
 import { getAvailableLlmModels, getDefaultLlmModel } from '../../server/genEngine.js'
 import { ALL_QUESTION_TYPE_KEYS, FIXED_TEST_PAPER_QUESTION_KEYS } from '../../shared/worksheetTypes.js'
 import { GENERATION_MODE_FIXED_TEST_PAPER, GENERATION_MODE_LEGACY_ZIP, normalizeWithChineseTranslation } from '../../shared/generationModes.js'
+import { worksheetJobWorkflow } from '../../workflows/worksheetJob.js'
 
 export default async function handler(req, res) {
   if (!['GET', 'POST', 'DELETE'].includes(req.method || '')) return rejectMethod(res, 'GET, POST, DELETE')
@@ -11,15 +13,12 @@ export default async function handler(req, res) {
   try {
     if (req.method === 'GET') {
       const jobs = await listWorksheetJobs()
-      if (jobs.some((job) => ['queued', 'processing'].includes(job.status))) {
-        scheduleWorksheetJobQueue()
-      }
       return sendJson(res, 200, {
         ok: true,
         jobs,
         llmModels: getAvailableLlmModels(),
         defaultLlmModel: getDefaultLlmModel(),
-      })
+      }, { 'cache-control': 'no-store' })
     }
 
     if (req.method === 'DELETE') {
@@ -61,8 +60,13 @@ export default async function handler(req, res) {
       testPaperGroupSizes: body.testPaperGroupSizes,
       withChineseTranslation: normalizeWithChineseTranslation(body.withChineseTranslation),
     })
-    scheduleWorksheetJobQueue()
-    return sendJson(res, 200, { ok: true, job })
+    try {
+      const run = await start(worksheetJobWorkflow, [job.id])
+      return sendJson(res, 200, { ok: true, job, workflowRunId: run.runId })
+    } catch (error) {
+      await failWorksheetJobStart(job.id, error.message || 'Workflow 启动失败。').catch(() => {})
+      throw error
+    }
   } catch (error) {
     console.error(error)
     return sendJson(res, error.statusCode || 500, { ok: false, error: error.message || '创建任务失败。' })

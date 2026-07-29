@@ -19,7 +19,7 @@
 - `/tts` 进入受访问密码保护的朗读板块
 - 支持粘贴单词、从 XLSX 导入、复用当前词表英文列
 - 支持美音/英音、朗读速度、朗读者音色、单词间停顿、单批单词数量
-- Azure Speech TTS 为优先生成通道，Edge-TTS Python 函数为备用通道；Edge-TTS 会按片段生成并在播放器/手机播放页用自定义延迟模拟停顿
+- Azure Speech TTS 为优先生成通道，Edge-TTS Node 函数为备用通道；Edge-TTS 会按片段生成并在播放器/手机播放页用自定义延迟模拟停顿
 - 检测 Microsoft Edge 后可用 Web Speech API 做本机试听 fallback（不导出本机 Edge 音频）
 - 支持在线播放、下载 MP3、上传到 Cloudflare R2 后生成手机播放二维码
 - `/listen?token=...` 为移动端适配播放页，支持保存到当前设备播放库、复制长期链接、逐段下载
@@ -31,6 +31,7 @@
 - 复用主页面当前 XLSX 读表设置与已解析的英汉词表
 - 支持一次性勾选全部 11 个题型并导出 ZIP
 - 生成请求会先提交到服务端队列，刷新页面后仍可继续查看任务状态与下载结果
+- 浏览器只负责提交和查询任务；Vercel Workflow 在服务端执行，关闭浏览器后仍会继续运行，并能从 R2 中恢复被中断的任务
 - 队列状态与 ZIP 成品依赖现有 R2 配置持久化
 - 依赖 LLM 的题型会读取服务端环境变量中的 `VIVI_LLM_API_KEY`、`VIVI_LLM_BASE_URL`，并支持在后端预设多个 `VIVI_LLM_MODELS` 供前端切换
 - LLM 题型不再回退到本地模板兜底；如果返回内容缺字段或格式错误，会先拆单重试、尝试 doctor 修复，并自动补跑未完成条目，最终仍失败时再明确报错
@@ -42,9 +43,7 @@ npm install
 npm run dev
 ```
 
-打开 http://localhost:5173。
-
-> Vite 本地开发服务器不会自动运行 Vercel Functions。需要完整测试 API 时请使用 `npx vercel dev`，并配置下面的环境变量。
+打开 http://localhost:5173。Nitro 会同时提供网页与 API；Workflow 的完整持久化调度仍需部署到 Vercel 后验证。
 
 ## 构建
 
@@ -52,7 +51,7 @@ npm run dev
 npm run build
 ```
 
-产物在 `dist/`。
+默认 Node 产物在 `.output/`；Vercel 构建会生成 `.vercel/output/`。
 
 ## Vercel 环境变量
 
@@ -81,6 +80,7 @@ GEN_QUEUE_PROGRESS_WRITE_INTERVAL_MS=可选，队列进度写回节流间隔，�
 GEN_QUEUE_PROGRESS_WRITE_WORD_DELTA=可选，词条进度累计到多少再写回，默认 5
 GEN_QUEUE_CANCELLATION_POLL_INTERVAL_MS=可选，取消状态轮询间隔，默认 300
 GEN_QUEUE_MAX_INTERNAL_WAIT_MS=可选，后台队列单次自动等待下次重试的最长时间，默认 45000
+GEN_QUEUE_STALE_PROCESSING_MS=可选，执行器中断后允许其他实例恢复任务的等待时间，默认 360000（6 分钟）
 R2_ENDPOINT=https://<accountid>.r2.cloudflarestorage.com
 R2_BUCKET=bucket 名称
 R2_ACCESS_KEY_ID=R2 S3 API access key
@@ -100,9 +100,10 @@ R2 中每次二维码分享会保存为一个可浏览前缀，并按“批次�
 本项目包含 `vercel.json`：
 
 - Build Command: `npm run build`
-- Output Directory: `dist`
-- `/api/*` 保留给 Vercel Functions，其它路径回落到 Vite SPA
-- `api/gen/export.js` 已配置 `maxDuration: 300`，用于练习包生成
+- Nitro 统一输出网页、API 与 SPA 路由
+- Vercel Workflow 的 Queue 触发器在构建时自动生成，不需要配置 Cron
+- Hobby 当前包含每月 50,000 个 Workflow events 和 1 GB Workflow data written；已完成运行记录保留 1 天
+- Workflow 总运行时长不设上限，但每个 step 仍受 Vercel Function 单次执行时限约束；本项目会把进度、缓存和成品持续写入 R2，step 中断后可恢复，Workflow 运行记录过期也不会删除 R2 任务数据
 
 推送到 GitHub 后在 Vercel 导入仓库即可，或使用：
 
@@ -116,8 +117,9 @@ npx vercel
 - `src/TtsWorkspace.jsx`：受保护的单词朗读工作台
 - `src/GenWorkspace.jsx`：受保护的练习生成工作台
 - `src/MobileListenPage.jsx`：手机播放页面
-- `api/`：Vercel Functions，包含认证、Azure TTS、Edge-TTS 和 R2 分享签名
-- `server/`：Vercel Functions 复用的认证、TTS、R2 工具
+- `workflows/`：服务端练习生成 Workflow
+- `api/`：Nitro API handlers，包含认证、Azure TTS、Edge-TTS 和 R2 分享签名
+- `server/`：API 与 Workflow 复用的认证、生成、TTS、R2 工具
 - `src/pdf.js`：使用 `pdf-lib` 生成 PDF
 - `src/utils.js`：单元格读取、列号转换、文本换行等工具
 - `public/example.xlsx`：内置示例文件

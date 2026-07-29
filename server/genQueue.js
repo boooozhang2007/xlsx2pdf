@@ -1,7 +1,6 @@
 import crypto from 'node:crypto'
-import { waitUntil } from '@vercel/functions'
 import { generateWorksheetArchive, getDefaultLlmModel, getLlmJobRuntime } from './genEngine.js'
-import { deleteObject, getObjectBuffer, getObjectJson, listObjects, putObject } from './r2.js'
+import { deleteObject, getObjectBuffer, getObjectJson, getObjectJsonWithMetadata, listObjects, putObject } from './r2.js'
 import {
   GENERATION_MODE_FIXED_TEST_PAPER,
   GENERATION_MODE_LEGACY_ZIP,
@@ -11,7 +10,7 @@ import {
 } from '../shared/generationModes.js'
 
 const JOB_PREFIX = 'worksheet-jobs'
-const STALE_PROCESSING_MS = 1000 * 60 * 8
+const STALE_PROCESSING_MS = Math.max(60_000, Number.parseInt(process.env.GEN_QUEUE_STALE_PROCESSING_MS || '360000', 10) || 360_000)
 const MAX_LIST_JOBS = 40
 const PROGRESS_WRITE_INTERVAL_MS = Math.max(200, Number.parseInt(process.env.GEN_QUEUE_PROGRESS_WRITE_INTERVAL_MS || '700', 10) || 700)
 const PROGRESS_WRITE_WORD_DELTA = Math.max(1, Number.parseInt(process.env.GEN_QUEUE_PROGRESS_WRITE_WORD_DELTA || '5', 10) || 5)
@@ -34,10 +33,8 @@ const MAX_VALIDATION_REQUEUES = Math.max(
 )
 const CANCELABLE_STATUSES = new Set(['queued', 'processing', 'canceling'])
 const TERMINAL_STATUSES = new Set(['completed', 'failed', 'canceled'])
-let queueLoopPromise = null
 
 const now = () => Date.now()
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 const jobPrefix = (jobId) => `${JOB_PREFIX}/${jobId}`
 const jobStateKey = (jobId) => `${jobPrefix(jobId)}/job.json`
 const jobPayloadKey = (jobId) => `${jobPrefix(jobId)}/payload.json`
@@ -75,10 +72,12 @@ const summarizeJob = (job) => ({
   downloadSize: job.downloadSize || 0,
 })
 
-const writeJsonObject = async ({ key, value }) => putObject({
+const writeJsonObject = async ({ key, value, ifMatch, ifNoneMatch }) => putObject({
   key,
   body: Buffer.from(JSON.stringify(value), 'utf8'),
   contentType: 'application/json; charset=utf-8',
+  ifMatch,
+  ifNoneMatch,
 })
 
 const createProgress = (totalSteps, totalWords = 0) => ({
@@ -92,6 +91,7 @@ const createProgress = (totalSteps, totalWords = 0) => ({
   stageWordTotal: 0,
   stageWordCompleted: 0,
   currentQuestionType: '',
+  completedStepKeys: [],
 })
 
 const resetJobProgress = (job, overrides = {}) => ({
@@ -156,8 +156,13 @@ const progressFromMessage = (job, message) => {
 
 const progressFromEvent = (job, event) => {
   if (!event || typeof event === 'string') return progressFromMessage(job, String(event || ''))
+  const previousProgress = job.progress || createProgress(
+    buildTotalSteps(job.questionTypes || [], job.wordCount || 0, job.generationMode),
+    job.wordCount || 0,
+  )
   const progress = {
-    ...(job.progress || createProgress(buildTotalSteps(job.questionTypes || [], job.wordCount || 0, job.generationMode), job.wordCount || 0)),
+    ...previousProgress,
+    completedStepKeys: Array.isArray(previousProgress.completedStepKeys) ? [...previousProgress.completedStepKeys] : [],
   }
 
   if (typeof event.message === 'string') progress.message = event.message
@@ -167,20 +172,32 @@ const progressFromEvent = (job, event) => {
   if (Number.isFinite(event.totalWords)) progress.totalWords = Math.max(0, Number(event.totalWords) || 0)
   if (Number.isFinite(event.stageWordTotal)) progress.stageWordTotal = Math.max(0, Number(event.stageWordTotal) || 0)
   if (Number.isFinite(event.stageWordCompleted)) {
-    progress.stageWordCompleted = Math.max(0, Number(event.stageWordCompleted) || 0)
+    const nextCompleted = Math.max(0, Number(event.stageWordCompleted) || 0)
+    const sameStage = (
+      (!event.stageLabel || event.stageLabel === previousProgress.stageLabel)
+      && (!event.currentStep || event.currentStep === previousProgress.currentStep)
+    )
+    progress.stageWordCompleted = sameStage
+      ? Math.max(Number(progress.stageWordCompleted || 0), nextCompleted)
+      : nextCompleted
   }
   if (Number.isFinite(event.totalSteps)) progress.totalSteps = Math.max(0, Number(event.totalSteps) || 0)
   if (Number.isFinite(event.completedSteps)) {
     progress.completedSteps = Math.max(0, Math.min(progress.totalSteps || Number(event.completedSteps), Number(event.completedSteps) || 0))
   }
   if (Number.isFinite(event.stepDelta)) {
-    progress.completedSteps = Math.min(progress.totalSteps, progress.completedSteps + (Number(event.stepDelta) || 0))
+    const stepKey = String(event.stepKey || '').trim()
+    if (!stepKey || !progress.completedStepKeys.includes(stepKey)) {
+      progress.completedSteps = Math.min(progress.totalSteps, progress.completedSteps + (Number(event.stepDelta) || 0))
+      if (stepKey) progress.completedStepKeys.push(stepKey)
+    }
   }
   progress.percent = Number.isFinite(event.percent) ? clampPercent(event.percent) : percentFromSteps(progress)
   return progress
 }
 
 const readJob = async (jobId) => getObjectJson({ key: jobStateKey(jobId) })
+const readJobWithMetadata = async (jobId) => getObjectJsonWithMetadata({ key: jobStateKey(jobId) })
 const readJobPayload = async (jobId) => getObjectJson({ key: jobPayloadKey(jobId) })
 
 const writeJob = async (job) => {
@@ -190,6 +207,31 @@ const writeJob = async (job) => {
   }
   await writeJsonObject({ key: jobStateKey(job.id), value: nextJob })
   return nextJob
+}
+
+const writeOwnedJob = async (job, etag) => {
+  if (!etag) throw new Error('R2 未返回任务状态 ETag，无法安全接管任务。')
+  const nextJob = {
+    ...job,
+    updatedAt: now(),
+  }
+  try {
+    const response = await writeJsonObject({
+      key: jobStateKey(job.id),
+      value: nextJob,
+      ifMatch: etag,
+    })
+    if (!response.ETag) throw new Error('R2 条件写入未返回 ETag，已停止执行以避免重复任务。')
+    return { job: nextJob, etag: response.ETag }
+  } catch (cause) {
+    if (cause?.$metadata?.httpStatusCode === 412 || cause?.name === 'PreconditionFailed') {
+      const error = new Error('任务已由其他执行器或取消操作接管。')
+      error.code = 'JOB_OWNERSHIP_LOST'
+      error.cause = cause
+      throw error
+    }
+    throw cause
+  }
 }
 
 const readLatestJobState = async (jobId) => readJob(jobId).catch(() => null)
@@ -328,43 +370,36 @@ const listJobStates = async () => {
     .slice(0, MAX_LIST_JOBS)
 }
 
-const findNextProcessableJob = async () => {
-  const jobs = await listJobStates()
-  const currentTime = now()
-  const candidate = jobs
-    .filter((job) => (
-      (job.status === 'queued' && currentTime >= Number(job.nextAttemptAt || 0))
-      || (job.status === 'processing' && currentTime - Number(job.updatedAt || 0) > STALE_PROCESSING_MS)
-    ))
-    .sort((left, right) => (left.createdAt || 0) - (right.createdAt || 0))[0]
-  if (candidate) return { job: candidate, waitMs: 0 }
-
-  const nextDelayedJob = jobs
-    .filter((job) => job.status === 'queued' && Number(job.nextAttemptAt || 0) > currentTime)
-    .sort((left, right) => Number(left.nextAttemptAt || 0) - Number(right.nextAttemptAt || 0))[0]
-  return {
-    job: null,
-    waitMs: nextDelayedJob ? Math.max(0, Number(nextDelayedJob.nextAttemptAt || 0) - currentTime) : 0,
-  }
-}
-
 const processSingleJob = async (job) => {
   if (!job || TERMINAL_STATUSES.has(job.status) || job.status === 'canceling') return
-  const latestJob = await readLatestJobState(job.id)
+  const snapshot = await readJobWithMetadata(job.id).catch(() => null)
+  const latestJob = snapshot?.value
   if (!latestJob || TERMINAL_STATUSES.has(latestJob.status) || latestJob.status === 'canceling') return
   const payload = await readJobPayload(job.id).catch(() => null)
   if (!payload) return
-  let liveJob = await writeJob({
-    ...latestJob,
-    status: 'processing',
-    startedAt: latestJob.startedAt || now(),
-    nextAttemptAt: 0,
-    error: '',
-    progress: resetJobProgress(latestJob, {
-      currentStep: '准备处理',
-      message: '服务器正在处理任务…',
-    }),
-  })
+  let ownershipEtag = snapshot.etag
+  let liveJob
+  try {
+    const claimed = await writeOwnedJob({
+      ...latestJob,
+      status: 'processing',
+      startedAt: latestJob.startedAt || now(),
+      nextAttemptAt: 0,
+      error: '',
+      progress: {
+        ...(latestJob.progress || resetJobProgress(latestJob)),
+        currentStep: latestJob.progress?.currentStep || '准备处理',
+        message: latestJob.status === 'processing'
+          ? '服务器正在从已保存的进度恢复任务…'
+          : '服务器正在处理任务…',
+      },
+    }, ownershipEtag)
+    liveJob = claimed.job
+    ownershipEtag = claimed.etag
+  } catch (error) {
+    if (error?.code === 'JOB_OWNERSHIP_LOST') return
+    throw error
+  }
   let lastPersistedProgress = liveJob.progress || null
   let lastProgressWriteAt = now()
   let cancelKnown = false
@@ -411,9 +446,17 @@ const processSingleJob = async (job) => {
       Number(nextProgress?.percent || 0) >= 100
 
     if (!shouldFlush) return
-    liveJob = await writeJob(liveJob)
+    const written = await writeOwnedJob(liveJob, ownershipEtag)
+    liveJob = written.job
+    ownershipEtag = written.etag
     lastPersistedProgress = liveJob.progress || nextProgress
     lastProgressWriteAt = now()
+  }
+
+  let progressChain = Promise.resolve()
+  const handleProgress = (event) => {
+    progressChain = progressChain.then(() => persistProgress(progressFromEvent(liveJob, event)))
+    return progressChain
   }
 
   try {
@@ -431,9 +474,7 @@ const processSingleJob = async (job) => {
       legacyQuestionCount: payload.legacyQuestionCount || latestJob.legacyQuestionCount,
       testPaperGroupSizes: payload.testPaperGroupSizes || latestJob.testPaperGroupSizes,
       withChineseTranslation: normalizeWithChineseTranslation(payload.withChineseTranslation ?? latestJob.withChineseTranslation),
-      onProgress: async (event) => {
-        await persistProgress(progressFromEvent(liveJob, event))
-      },
+      onProgress: handleProgress,
       onShouldCancel: shouldCancel,
       initialCache,
       onCacheCheckpoint: async (cache) => {
@@ -449,7 +490,7 @@ const processSingleJob = async (job) => {
       contentType: 'application/zip',
     })
 
-    await writeJob({
+    const completed = await writeOwnedJob({
       ...liveJob,
       status: 'completed',
       completedAt: now(),
@@ -468,10 +509,13 @@ const processSingleJob = async (job) => {
         stageWordTotal: latestJob.wordCount || result.wordCount || 0,
         stageWordCompleted: latestJob.wordCount || result.wordCount || 0,
       },
-    })
+    }, ownershipEtag)
+    liveJob = completed.job
+    ownershipEtag = completed.etag
     // Job finished — keep the LLM cache so this job can be re-exported with
     // new rendering rules without re-running LLM calls.
   } catch (error) {
+    if (error?.code === 'JOB_OWNERSHIP_LOST') return
     if (error?.code === 'JOB_CANCELED') {
       const latestJob = await readLatestJobState(job.id)
       await writeJob({
@@ -529,11 +573,12 @@ const processSingleJob = async (job) => {
           llmFallbackModels: runtimeUpdate.llmFallbackModels,
           llmValidationRetries: retryCount + 1,
           nextAttemptAt,
-          progress: resetJobProgress(retryBaseJob, {
+          progress: {
+            ...(retryBaseJob.progress || resetJobProgress(retryBaseJob)),
             currentStep: '等待题面补跑',
             stageLabel: '等待题面补跑',
             message: waitingMessage,
-          }),
+          },
         })
         await writeJsonObject({
           key: jobPayloadKey(job.id),
@@ -607,11 +652,12 @@ const processSingleJob = async (job) => {
         llmFallbackModels: runtimeUpdate.llmFallbackModels,
         llmRateLimitRetries: retryCount + 1,
         nextAttemptAt,
-        progress: resetJobProgress(retryBaseJob, {
+        progress: {
+          ...(retryBaseJob.progress || resetJobProgress(retryBaseJob)),
           currentStep: '等待限流恢复',
           stageLabel: '等待限流恢复',
           message: waitingMessage,
-        }),
+        },
       })
       await writeJsonObject({
         key: jobPayloadKey(job.id),
@@ -645,28 +691,60 @@ const processSingleJob = async (job) => {
   }
 }
 
-const processQueueLoop = async () => {
-  while (true) {
-    const { job: nextJob, waitMs } = await findNextProcessableJob()
-    if (!nextJob) {
-      if (!waitMs || waitMs > MAX_INTERNAL_QUEUE_WAIT_MS) return
-      await sleep(waitMs)
-      continue
-    }
-    await processSingleJob(nextJob)
+export const processWorksheetJobAttempt = async (jobId) => {
+  let job = await readJob(jobId)
+  if (!job) {
+    const error = new Error('未找到对应任务。')
+    error.statusCode = 404
+    throw error
   }
+
+  const currentTime = now()
+  if (job.status === 'canceling' && currentTime - Number(job.updatedAt || 0) > STALE_PROCESSING_MS) {
+    job = await writeJob({
+      ...job,
+      status: 'canceled',
+      canceledAt: job.canceledAt || currentTime,
+      nextAttemptAt: 0,
+      error: '',
+      progress: {
+        ...(job.progress || resetJobProgress(job)),
+        currentStep: '已取消',
+        message: '任务已取消。',
+      },
+    })
+  }
+
+  if (TERMINAL_STATUSES.has(job.status)) return { ...summarizeJob(job), resumeAt: 0 }
+
+  const resumeAt = job.status === 'processing' || job.status === 'canceling'
+    ? Number(job.updatedAt || currentTime) + STALE_PROCESSING_MS
+    : Number(job.nextAttemptAt || 0)
+  if (resumeAt > currentTime) return { ...summarizeJob(job), resumeAt }
+
+  await processSingleJob(job)
+  job = await readJob(jobId)
+  const nextResumeAt = job.status === 'processing' || job.status === 'canceling'
+    ? Number(job.updatedAt || now()) + STALE_PROCESSING_MS
+    : Number(job.nextAttemptAt || 0)
+  return { ...summarizeJob(job), resumeAt: nextResumeAt }
 }
 
-export const kickWorksheetJobQueue = async () => {
-  if (queueLoopPromise) return queueLoopPromise
-  queueLoopPromise = processQueueLoop().finally(() => {
-    queueLoopPromise = null
-  })
-  return queueLoopPromise
-}
-
-export const scheduleWorksheetJobQueue = () => {
-  waitUntil(kickWorksheetJobQueue())
+export const failWorksheetJobStart = async (jobId, message) => {
+  const job = await readJob(jobId).catch(() => null)
+  if (!job || job.status !== 'queued') return job ? summarizeJob(job) : null
+  return summarizeJob(await writeJob({
+    ...job,
+    status: 'failed',
+    failedAt: now(),
+    nextAttemptAt: 0,
+    error: message || 'Workflow 启动失败。',
+    progress: {
+      ...(job.progress || resetJobProgress(job)),
+      currentStep: 'Workflow 启动失败',
+      message: message || 'Workflow 启动失败。',
+    },
+  }))
 }
 
 export const submitWorksheetJob = async ({ rows, fileName, questionTypes, generationMode, llmModel, legacyQuestionCount, testPaperGroupSizes, withChineseTranslation }) => {

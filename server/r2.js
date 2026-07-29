@@ -43,12 +43,14 @@ export const createGetUrl = async ({ key, expiresIn = 60 * 60 * 24 }) => getSign
   { expiresIn },
 )
 
-export const putObject = async ({ key, body, contentType = 'application/octet-stream' }) => getR2Client().send(
+export const putObject = async ({ key, body, contentType = 'application/octet-stream', ifMatch, ifNoneMatch }) => getR2Client().send(
   new PutObjectCommand({
     Bucket: getEnv('R2_BUCKET'),
     Key: key,
     Body: body,
     ContentType: contentType,
+    ...(ifMatch ? { IfMatch: ifMatch } : {}),
+    ...(ifNoneMatch ? { IfNoneMatch: ifNoneMatch } : {}),
   }),
 )
 
@@ -74,6 +76,19 @@ export const getObjectBuffer = async ({ key }) => {
 
 export const getObjectText = async ({ key }) => (await getObjectBuffer({ key })).toString('utf8')
 export const getObjectJson = async ({ key }) => JSON.parse(await getObjectText({ key }))
+
+export const getObjectJsonWithMetadata = async ({ key }) => {
+  const response = await getR2Client().send(
+    new GetObjectCommand({
+      Bucket: getEnv('R2_BUCKET'),
+      Key: key,
+    }),
+  )
+  return {
+    value: JSON.parse((await readBodyToBuffer(response.Body)).toString('utf8')),
+    etag: response.ETag || '',
+  }
+}
 
 export const deleteObject = async ({ key }) => getR2Client().send(
   new DeleteObjectCommand({

@@ -10,3 +10,5 @@ dist
 analysis_pdf/
 __pycache__/
 *.pyc
+/.swc
+/.output
