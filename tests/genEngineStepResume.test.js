@@ -413,6 +413,24 @@ test('request retry count resets after meaningful progress', async () => {
   assert.equal(advanced.progressMark, '0:warmup:220')
 })
 
+test('rate limit retry count resets after meaningful progress', async () => {
+  const { getLlmRateLimitRetryState } = await import('../server/genQueue.js')
+  const stalled = getLlmRateLimitRetryState({
+    llmRateLimitRetries: 6,
+    llmRateLimitRetryProgressMark: '0:warmup:913',
+    progress: { completedSteps: 0, currentStep: 'warmup', stageWordCompleted: 913 },
+  })
+  const advanced = getLlmRateLimitRetryState({
+    llmRateLimitRetries: 6,
+    llmRateLimitRetryProgressMark: '0:warmup:913',
+    progress: { completedSteps: 0, currentStep: 'warmup', stageWordCompleted: 922 },
+  })
+
+  assert.equal(stalled.retryCount, 6)
+  assert.equal(advanced.retryCount, 0)
+  assert.equal(advanced.progressMark, '0:warmup:922')
+})
+
 test('degraded LLM runtimes cap each Workflow step by request rounds', async () => {
   const { getLlmEntryLimitForRuntime } = await import('../server/genQueue.js')
 
