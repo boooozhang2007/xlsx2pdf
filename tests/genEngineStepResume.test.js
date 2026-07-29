@@ -325,3 +325,21 @@ test('batch copies use independent numbered archive names', async () => {
   assert.equal(result.fileName, '批量测试 练习包 第01份.zip')
   assert.ok(result.buffer.length > 0)
 })
+
+test('request retry count resets after meaningful progress', async () => {
+  const { getLlmRequestRetryState } = await import('../server/genQueue.js')
+  const stalled = getLlmRequestRetryState({
+    llmRequestRetries: 3,
+    llmRequestRetryProgressMark: '0:warmup:200',
+    progress: { completedSteps: 0, currentStep: 'warmup', stageWordCompleted: 200 },
+  })
+  const advanced = getLlmRequestRetryState({
+    llmRequestRetries: 7,
+    llmRequestRetryProgressMark: '0:warmup:200',
+    progress: { completedSteps: 0, currentStep: 'warmup', stageWordCompleted: 220 },
+  })
+
+  assert.equal(stalled.retryCount, 3)
+  assert.equal(advanced.retryCount, 0)
+  assert.equal(advanced.progressMark, '0:warmup:220')
+})

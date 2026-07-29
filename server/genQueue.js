@@ -277,6 +277,20 @@ const writeOwnedJob = async (job, etag) => {
 
 const readLatestJobState = async (jobId) => readJob(jobId).catch(() => null)
 
+export const getLlmRequestRetryState = (job = {}) => {
+  const progress = job.progress || {}
+  const progressMark = [
+    Number(progress.completedSteps || 0),
+    String(progress.currentStep || ''),
+    Number(progress.stageWordCompleted || 0),
+  ].join(':')
+  const madeProgress = progressMark !== String(job.llmRequestRetryProgressMark || '')
+  return {
+    progressMark,
+    retryCount: madeProgress ? 0 : Math.max(0, Number(job.llmRequestRetries || 0)),
+  }
+}
+
 const buildLlmRuntimeForJob = (job = {}) => {
   const runtime = getLlmJobRuntime(job.llmModel || getDefaultLlmModel(), {
     batchSize: job.llmBatchSize,
@@ -610,6 +624,9 @@ const processSingleJob = async (job) => {
         const queued = await writeOwnedJob({
           ...liveJob,
           status: 'queued',
+          llmRequestRetries: 0,
+          llmRequestRetryProgressMark: '',
+          llmRateLimitRetries: 0,
           nextAttemptAt: now() + 1000,
           error: '',
           progress: {
@@ -685,7 +702,7 @@ const processSingleJob = async (job) => {
         questionTypes: (latestJobForRetry && latestJobForRetry.questionTypes) || liveJob.questionTypes || job.questionTypes || [],
         wordCount: (latestJobForRetry && latestJobForRetry.wordCount) || liveJob.wordCount || job.wordCount || 0,
       }
-      const retryCount = Math.max(0, Number(retryBaseJob.llmRequestRetries || 0))
+      const { progressMark, retryCount } = getLlmRequestRetryState(retryBaseJob)
       if (retryCount < MAX_REQUEST_REQUEUES) {
         const runtimeUpdate = tuneLlmRuntimeAfterRequestFailure(retryBaseJob)
         const delayMs = Math.min(MAX_INTERNAL_QUEUE_WAIT_MS, 3000 * (retryCount + 1))
@@ -700,6 +717,7 @@ const processSingleJob = async (job) => {
           llmConcurrency: runtimeUpdate.llmConcurrency,
           llmFallbackModels: runtimeUpdate.llmFallbackModels,
           llmRequestRetries: retryCount + 1,
+          llmRequestRetryProgressMark: progressMark,
           nextAttemptAt,
           progress: {
             ...(retryBaseJob.progress || resetJobProgress(retryBaseJob)),
@@ -1020,6 +1038,7 @@ export const submitWorksheetJob = async ({
     llmRateLimitRetries: 0,
     llmValidationRetries: 0,
     llmRequestRetries: 0,
+    llmRequestRetryProgressMark: '',
     nextAttemptAt: 0,
     createdAt: submittedAt,
     submittedAt,
