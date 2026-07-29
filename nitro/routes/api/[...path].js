@@ -2,6 +2,7 @@ import authHandler from '../../../server/handlers/auth/index.js'
 import genExportHandler from '../../../server/handlers/gen/export.js'
 import genJobsHandler from '../../../server/handlers/gen/jobs.js'
 import genDownloadHandler from '../../../server/handlers/gen/jobs/download.js'
+import genRecoverHandler from '../../../server/handlers/gen/jobs/recover.js'
 import shareHandler from '../../../server/handlers/share/index.js'
 import shareStartHandler from '../../../server/handlers/share/start.js'
 import shareUploadHandler from '../../../server/handlers/share/upload.js'
@@ -16,6 +17,7 @@ const handlers = new Map([
   ['/api/gen/export', genExportHandler],
   ['/api/gen/jobs', genJobsHandler],
   ['/api/gen/jobs/download', genDownloadHandler],
+  ['/api/gen/jobs/recover', genRecoverHandler],
   ['/api/share', shareHandler],
   ['/api/share/start', shareStartHandler],
   ['/api/share/upload', shareUploadHandler],

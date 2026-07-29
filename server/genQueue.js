@@ -1098,6 +1098,72 @@ export const listWorksheetJobs = async () => {
   return jobs.map(summarizeJob)
 }
 
+export const prepareWorksheetBatchWorkflowMigration = async (batchId) => {
+  const normalizedBatchId = String(batchId || '').trim()
+  if (!normalizedBatchId) {
+    const error = new Error('缺少批次 id。')
+    error.statusCode = 400
+    throw error
+  }
+
+  const batchJobs = (await listJobStates())
+    .filter((job) => job.batchId === normalizedBatchId)
+    .sort((left, right) => Number(left.copyIndex || 0) - Number(right.copyIndex || 0))
+  if (!batchJobs.length) {
+    const error = new Error('未找到对应批次。')
+    error.statusCode = 404
+    throw error
+  }
+
+  const expectedCount = Math.max(...batchJobs.map((job) => Number(job.copyCount || 1)))
+  if (batchJobs.length !== expectedCount) {
+    const error = new Error(`批次任务记录不完整：找到 ${batchJobs.length}/${expectedCount} 份，已停止迁移。`)
+    error.statusCode = 409
+    throw error
+  }
+  const unsafeJob = batchJobs.find((job) => ['failed', 'canceled', 'canceling'].includes(job.status))
+  if (unsafeJob) {
+    const error = new Error(`第 ${unsafeJob.copyIndex || '?'} 份处于 ${unsafeJob.status} 状态，无法迁移 Workflow。`)
+    error.statusCode = 409
+    throw error
+  }
+
+  const migratedJobs = []
+  for (const job of batchJobs) {
+    if (job.status !== 'processing') {
+      migratedJobs.push(job)
+      continue
+    }
+    const snapshot = await readJobWithMetadata(job.id)
+    const latestJob = snapshot?.value
+    if (!latestJob) {
+      const error = new Error(`找不到第 ${job.copyIndex || '?'} 份任务状态。`)
+      error.statusCode = 404
+      throw error
+    }
+    if (latestJob.status !== 'processing') {
+      migratedJobs.push(latestJob)
+      continue
+    }
+    const migrated = await writeOwnedJob({
+      ...latestJob,
+      status: 'queued',
+      nextAttemptAt: now(),
+      error: '',
+      progress: {
+        ...(latestJob.progress || resetJobProgress(latestJob)),
+        currentStep: '迁移到最新 Workflow',
+        message: '已保留服务器缓存，正在迁移到最新 Workflow 继续处理…',
+      },
+    }, snapshot.etag)
+    migratedJobs.push(migrated.job)
+  }
+
+  return migratedJobs
+    .sort((left, right) => Number(left.copyIndex || 0) - Number(right.copyIndex || 0))
+    .map(summarizeJob)
+}
+
 export const getWorksheetJob = async (jobId) => summarizeJob(await readJob(jobId))
 
 export const cancelWorksheetJob = async (jobId) => {
