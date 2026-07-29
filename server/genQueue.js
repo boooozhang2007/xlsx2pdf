@@ -286,13 +286,15 @@ const writeOwnedJob = async (job, etag) => {
 
 const readLatestJobState = async (jobId) => readJob(jobId).catch(() => null)
 
-const getLlmRetryProgressMark = (job = {}) => {
+const getLlmRetryProgressMark = (job = {}, { includeStage = false } = {}) => {
   const progress = job.progress || {}
-  return [
+  const mark = [
     Number(progress.completedSteps || 0),
-    String(progress.currentStep || ''),
+    Array.isArray(progress.completedStepKeys) ? progress.completedStepKeys.length : 0,
     Number(progress.stageWordCompleted || 0),
-  ].join(':')
+  ]
+  if (includeStage) mark.push(String(progress.stageLabel || progress.currentStep || ''))
+  return mark.join(':')
 }
 
 export const getLlmRequestRetryState = (job = {}) => {
@@ -314,7 +316,7 @@ export const getLlmRateLimitRetryState = (job = {}) => {
 }
 
 export const getLlmValidationRetryState = (job = {}) => {
-  const progressMark = getLlmRetryProgressMark(job)
+  const progressMark = getLlmRetryProgressMark(job, { includeStage: true })
   const madeProgress = progressMark !== String(job.llmValidationRetryProgressMark || '')
   return {
     progressMark,
