@@ -1156,11 +1156,11 @@ export const getMissingBatchCopyIndexes = (jobs = [], expectedCount = 0) => {
     .filter((copyIndex) => !existingIndexes.has(copyIndex))
 }
 
-export const getWorksheetRecoveryRuntime = (savedCache) => (
-  savedCache ? null : getLlmJobRuntime(getDefaultLlmModel())
+export const getWorksheetRecoveryRuntime = (savedCache, { forceReset = false } = {}) => (
+  savedCache && !forceReset ? null : getLlmJobRuntime(getDefaultLlmModel())
 )
 
-export const prepareWorksheetBatchWorkflowMigration = async (batchId) => {
+export const prepareWorksheetBatchWorkflowMigration = async (batchId, { resetRuntime = false } = {}) => {
   const normalizedBatchId = String(batchId || '').trim()
   if (!normalizedBatchId) {
     const error = new Error('缺少批次 id。')
@@ -1238,7 +1238,7 @@ export const prepareWorksheetBatchWorkflowMigration = async (batchId) => {
       continue
     }
     const savedCache = await getObjectJson({ key: jobCacheKey(job.id) }).catch(() => null)
-    const recoveryRuntime = getWorksheetRecoveryRuntime(savedCache)
+    const recoveryRuntime = getWorksheetRecoveryRuntime(savedCache, { forceReset: resetRuntime })
     const recoveryProgress = savedCache
       ? (latestJob.progress || resetJobProgress(latestJob))
       : resetJobProgress(latestJob)

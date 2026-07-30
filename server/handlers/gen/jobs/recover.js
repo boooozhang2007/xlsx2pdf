@@ -27,7 +27,9 @@ export default async function handler(req, res) {
       }
     }
 
-    const jobs = await prepareWorksheetBatchWorkflowMigration(batchId)
+    const jobs = await prepareWorksheetBatchWorkflowMigration(batchId, {
+      resetRuntime: body.resetRuntime === true,
+    })
     const run = await start(
       worksheetJobBatchWorkflow,
       [jobs.map((job) => job.id)],

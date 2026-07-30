@@ -536,6 +536,7 @@ test('batch recovery resets degraded runtime only when no cache remains', async 
   const { getWorksheetRecoveryRuntime } = await import('../server/genQueue.js')
 
   assert.equal(getWorksheetRecoveryRuntime({ lexical: {} }), null)
+  assert.ok(getWorksheetRecoveryRuntime({ lexical: {} }, { forceReset: true })?.model)
   const resetRuntime = getWorksheetRecoveryRuntime(null)
   assert.ok(resetRuntime?.model)
   assert.ok(resetRuntime?.batchSize >= 1)
