@@ -1272,11 +1272,11 @@ export const seedWorksheetJobCache = async (sourceJobId, targetJobId) => (
   seedWorksheetJobCaches([sourceJobId], targetJobId)
 )
 
-export const shouldRewriteWorksheetJobForMigration = (status, { resetRuntime = false } = {}) => (
-  ['processing', 'failed'].includes(status) || (resetRuntime && status === 'queued')
+export const shouldRewriteWorksheetJobForMigration = (status, { resetRuntime = false, forceRewrite = false } = {}) => (
+  forceRewrite || ['processing', 'failed'].includes(status) || (resetRuntime && status === 'queued')
 )
 
-export const prepareWorksheetBatchWorkflowMigration = async (batchId, { resetRuntime = false } = {}) => {
+export const prepareWorksheetBatchWorkflowMigration = async (batchId, { resetRuntime = false, rebuildJobIds = [] } = {}) => {
   const normalizedBatchId = String(batchId || '').trim()
   if (!normalizedBatchId) {
     const error = new Error('缺少批次 id。')
@@ -1337,8 +1337,10 @@ export const prepareWorksheetBatchWorkflowMigration = async (batchId, { resetRun
   }
 
   const migratedJobs = []
+  const rebuildIds = new Set((rebuildJobIds || []).map((value) => String(value || '').trim()).filter(Boolean))
   for (const job of batchJobs) {
-    if (!shouldRewriteWorksheetJobForMigration(job.status, { resetRuntime })) {
+    const forceRewrite = rebuildIds.has(job.id)
+    if (!shouldRewriteWorksheetJobForMigration(job.status, { resetRuntime, forceRewrite })) {
       migratedJobs.push(job)
       continue
     }
@@ -1349,7 +1351,7 @@ export const prepareWorksheetBatchWorkflowMigration = async (batchId, { resetRun
       error.statusCode = 404
       throw error
     }
-    if (!shouldRewriteWorksheetJobForMigration(latestJob.status, { resetRuntime })) {
+    if (!shouldRewriteWorksheetJobForMigration(latestJob.status, { resetRuntime, forceRewrite })) {
       migratedJobs.push(latestJob)
       continue
     }
@@ -1362,7 +1364,11 @@ export const prepareWorksheetBatchWorkflowMigration = async (batchId, { resetRun
       ...latestJob,
       status: 'queued',
       startedAt: savedCache ? latestJob.startedAt : 0,
+      completedAt: forceRewrite ? 0 : latestJob.completedAt,
       failedAt: 0,
+      artifactKey: forceRewrite ? '' : latestJob.artifactKey,
+      exportFileName: forceRewrite ? '' : latestJob.exportFileName,
+      downloadSize: forceRewrite ? 0 : latestJob.downloadSize,
       executionLeaseId: '',
       llmModel: recoveryRuntime?.model || latestJob.llmModel,
       llmBatchSize: recoveryRuntime?.batchSize || latestJob.llmBatchSize,

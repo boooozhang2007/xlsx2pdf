@@ -614,6 +614,7 @@ test('explicit runtime reset also rewrites queued jobs during workflow migration
   assert.equal(shouldRewriteWorksheetJobForMigration('queued', { resetRuntime: true }), true)
   assert.equal(shouldRewriteWorksheetJobForMigration('processing'), true)
   assert.equal(shouldRewriteWorksheetJobForMigration('completed', { resetRuntime: true }), false)
+  assert.equal(shouldRewriteWorksheetJobForMigration('completed', { forceRewrite: true }), true)
 })
 
 test('cache recovery fills missing entries while preserving target results', async () => {

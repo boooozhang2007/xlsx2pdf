@@ -37,6 +37,7 @@ export default async function handler(req, res) {
     }
     const jobs = await prepareWorksheetBatchWorkflowMigration(batchId, {
       resetRuntime: body.resetRuntime === true,
+      rebuildJobIds: Array.isArray(body.rebuildJobIds) ? body.rebuildJobIds : [],
     })
     // Migration invalidates the old execution lease before the cache is
     // merged, so an in-flight canceled step cannot overwrite the recovery.
