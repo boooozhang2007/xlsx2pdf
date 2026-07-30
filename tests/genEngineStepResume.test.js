@@ -308,6 +308,21 @@ test('gateway access rejection rotates models without lowering concurrency', asy
   assert.match(update.reason, /HTTP 401/)
 })
 
+test('partial progress keeps runtime capacity when another request times out', async () => {
+  const { tuneLlmRuntimeAfterRequestFailure } = await import('../server/genQueue.js')
+  const update = tuneLlmRuntimeAfterRequestFailure({
+    llmModel: 'test-model',
+    llmBatchSize: 20,
+    llmConcurrency: 4,
+    llmFallbackModels: ['fallback-one'],
+  }, {}, { madeProgress: true })
+
+  assert.equal(update.llmModel, 'test-model')
+  assert.equal(update.llmBatchSize, 20)
+  assert.equal(update.llmConcurrency, 4)
+  assert.match(update.reason, /保持当前参数/)
+})
+
 test('automatic fallback order keeps low-capacity models at the end', async () => {
   const { orderWorksheetFallbackModels } = await import('../server/genEngine.js')
 

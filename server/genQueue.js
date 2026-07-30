@@ -418,7 +418,7 @@ const tuneLlmRuntimeAfterRateLimit = (job = {}) => {
   }
 }
 
-export const tuneLlmRuntimeAfterRequestFailure = (job = {}, error = {}) => {
+export const tuneLlmRuntimeAfterRequestFailure = (job = {}, error = {}, { madeProgress = false } = {}) => {
   const current = buildLlmRuntimeForJob(job)
   // A 400 rejects the request payload itself. Lowering concurrency only makes
   // the same invalid request arrive more slowly, so isolate it with a smaller
@@ -442,6 +442,15 @@ export const tuneLlmRuntimeAfterRequestFailure = (job = {}, error = {}) => {
       llmConcurrency: Math.max(1, Math.min(current.concurrency, nextRuntime.concurrency)),
       llmFallbackModels: [...remainingFallbacks, current.model],
       reason: `HTTP ${error.status} 访问被拒绝，切换备用模型 ${nextRuntime.model}`,
+    }
+  }
+  if (madeProgress) {
+    return {
+      llmModel: current.model,
+      llmBatchSize: current.batchSize,
+      llmConcurrency: current.concurrency,
+      llmFallbackModels: current.fallbackModels,
+      reason: '本轮已有有效进度，保持当前参数补跑超时条目',
     }
   }
   if (current.concurrency > 1) {
@@ -805,7 +814,10 @@ const processSingleJob = async (job) => {
         wordCount: (latestJobForRetry && latestJobForRetry.wordCount) || liveJob.wordCount || job.wordCount || 0,
       }
       const { progressMark, retryCount } = getLlmRequestRetryState(retryBaseJob)
-      const runtimeUpdate = tuneLlmRuntimeAfterRequestFailure(retryBaseJob, error)
+      const madeProgressThisAttempt = getLlmRetryProgressMark(retryBaseJob) !== getLlmRetryProgressMark(job)
+      const runtimeUpdate = tuneLlmRuntimeAfterRequestFailure(retryBaseJob, error, {
+        madeProgress: madeProgressThisAttempt,
+      })
       const delayMs = getLlmRequestRetryDelayMs(retryCount)
       const nextAttemptAt = now() + delayMs
       const prolongedWait = retryCount >= MAX_REQUEST_REQUEUES
