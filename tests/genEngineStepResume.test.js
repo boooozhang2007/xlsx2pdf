@@ -278,6 +278,20 @@ test('gateway 400 responses are retryable and preserve their error detail', asyn
   )
 })
 
+test('gateway 400 shrinks request batches before lowering concurrency', async () => {
+  const { tuneLlmRuntimeAfterRequestFailure } = await import('../server/genQueue.js')
+  const update = tuneLlmRuntimeAfterRequestFailure({
+    llmModel: 'gemma-4-31b-it',
+    llmBatchSize: 20,
+    llmConcurrency: 5,
+    llmFallbackModels: ['qwen3.6-27b'],
+  }, { status: 400 })
+
+  assert.equal(update.llmBatchSize, 10)
+  assert.equal(update.llmConcurrency, 5)
+  assert.match(update.reason, /HTTP 400/)
+})
+
 test('automatic fallback order keeps low-capacity models at the end', async () => {
   const { orderWorksheetFallbackModels } = await import('../server/genEngine.js')
 

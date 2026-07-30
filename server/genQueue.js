@@ -101,6 +101,7 @@ const summarizeJob = (job) => ({
   llmRateLimitRetries: job.llmRateLimitRetries || 0,
   llmValidationRetries: job.llmValidationRetries || 0,
   llmRequestRetries: job.llmRequestRetries || 0,
+  lastLlmError: job.lastLlmError || '',
   nextAttemptAt: job.nextAttemptAt || 0,
   progress: job.progress || null,
   error: job.error || '',
@@ -417,8 +418,21 @@ const tuneLlmRuntimeAfterRateLimit = (job = {}) => {
   }
 }
 
-const tuneLlmRuntimeAfterRequestFailure = (job = {}) => {
+export const tuneLlmRuntimeAfterRequestFailure = (job = {}, error = {}) => {
   const current = buildLlmRuntimeForJob(job)
+  // A 400 rejects the request payload itself. Lowering concurrency only makes
+  // the same invalid request arrive more slowly, so isolate it with a smaller
+  // batch before rotating models.
+  if (Number(error?.status) === 400 && current.batchSize > 1) {
+    const nextBatchSize = Math.max(1, Math.floor(current.batchSize / 2))
+    return {
+      llmModel: current.model,
+      llmBatchSize: nextBatchSize,
+      llmConcurrency: current.concurrency,
+      llmFallbackModels: current.fallbackModels,
+      reason: `HTTP 400，批次从 ${current.batchSize} 降到 ${nextBatchSize} 以定位被拒绝的条目`,
+    }
+  }
   if (current.concurrency > 1) {
     return {
       llmModel: current.model,
@@ -780,17 +794,19 @@ const processSingleJob = async (job) => {
         wordCount: (latestJobForRetry && latestJobForRetry.wordCount) || liveJob.wordCount || job.wordCount || 0,
       }
       const { progressMark, retryCount } = getLlmRequestRetryState(retryBaseJob)
-      const runtimeUpdate = tuneLlmRuntimeAfterRequestFailure(retryBaseJob)
+      const runtimeUpdate = tuneLlmRuntimeAfterRequestFailure(retryBaseJob, error)
       const delayMs = getLlmRequestRetryDelayMs(retryCount)
       const nextAttemptAt = now() + delayMs
       const prolongedWait = retryCount >= MAX_REQUEST_REQUEUES
+      const errorDetail = String(error?.message || '').replace(/\s+/g, ' ').trim().slice(0, 300)
       const waitingMessage = prolongedWait
         ? `LLM 网关仍不可用，任务和进度已保留，将在 ${Math.max(1, Math.ceil(delayMs / 60000))} 分钟后继续重试（连续失败 ${retryCount + 1} 轮）。`
-        : `LLM 请求暂时失败，${Math.max(1, Math.ceil(delayMs / 1000))} 秒后从已保存进度继续；${runtimeUpdate.reason}。`
+        : `LLM 请求暂时失败，${Math.max(1, Math.ceil(delayMs / 1000))} 秒后从已保存进度继续；${runtimeUpdate.reason}。${errorDetail ? ` 原因：${errorDetail}` : ''}`
       const queuedRetryJob = await writeJob({
         ...retryBaseJob,
         status: 'queued',
         error: '',
+        lastLlmError: errorDetail,
         llmModel: runtimeUpdate.llmModel,
         llmBatchSize: runtimeUpdate.llmBatchSize,
         llmConcurrency: runtimeUpdate.llmConcurrency,
