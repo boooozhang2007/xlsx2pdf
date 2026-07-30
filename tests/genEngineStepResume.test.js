@@ -278,6 +278,15 @@ test('gateway 400 responses are retryable and preserve their error detail', asyn
   )
 })
 
+test('automatic fallback order keeps low-capacity models at the end', async () => {
+  const { orderWorksheetFallbackModels } = await import('../server/genEngine.js')
+
+  assert.deepEqual(
+    orderWorksheetFallbackModels(['Qwen/Qwen3.5-4B', 'qwen3.6-27b', 'Qwen/Qwen3-8B', 'gemma-4-31b-it']),
+    ['qwen3.6-27b', 'gemma-4-31b-it', 'Qwen/Qwen3.5-4B', 'Qwen/Qwen3-8B'],
+  )
+})
+
 test('safe format variations are accepted by order and normalized', async (t) => {
   const server = http.createServer(async (request, response) => {
     const payload = JSON.parse(await readBody(request))

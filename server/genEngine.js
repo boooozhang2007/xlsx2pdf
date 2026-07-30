@@ -436,6 +436,13 @@ export const getDefaultLlmModel = () => {
   return options[0]?.id || ''
 }
 
+export const orderWorksheetFallbackModels = (models = []) => {
+  const lowCapacityPattern = /(?:^|[^0-9])(?:4b|8b)(?:[^0-9]|$)/i
+  return [...models].sort((left, right) => (
+    Number(lowCapacityPattern.test(String(left || ''))) - Number(lowCapacityPattern.test(String(right || '')))
+  ))
+}
+
 const parseFallbackModelConfig = () => {
   const raw = String(process.env.VIVI_LLM_FALLBACK_MODELS || '').trim()
   if (!raw) return { defaultChain: [], byModel: new Map() }
@@ -479,7 +486,9 @@ export const getFallbackLlmModels = (primaryModel = '') => {
   const available = parseLlmModelOptions().map((item) => item.id)
   const { defaultChain, byModel } = parseFallbackModelConfig()
   const configured = byModel.get(primary) || defaultChain
-  const candidates = configured.length ? configured : available.filter((item) => item !== primary)
+  const candidates = configured.length
+    ? configured
+    : orderWorksheetFallbackModels(available.filter((item) => item !== primary))
   const deduped = []
   const seen = new Set([primary])
   for (const candidate of candidates) {
