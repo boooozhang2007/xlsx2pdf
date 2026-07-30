@@ -566,6 +566,15 @@ test('batch recovery resets degraded runtime only when no cache remains', async 
   assert.ok(resetRuntime?.concurrency >= 1)
 })
 
+test('explicit runtime reset also rewrites queued jobs during workflow migration', async () => {
+  const { shouldRewriteWorksheetJobForMigration } = await import('../server/genQueue.js')
+
+  assert.equal(shouldRewriteWorksheetJobForMigration('queued'), false)
+  assert.equal(shouldRewriteWorksheetJobForMigration('queued', { resetRuntime: true }), true)
+  assert.equal(shouldRewriteWorksheetJobForMigration('processing'), true)
+  assert.equal(shouldRewriteWorksheetJobForMigration('completed', { resetRuntime: true }), false)
+})
+
 test('rate limit retry count resets after meaningful progress', async () => {
   const { getLlmRateLimitRetryState } = await import('../server/genQueue.js')
   const stalled = getLlmRateLimitRetryState({

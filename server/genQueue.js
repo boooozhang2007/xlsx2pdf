@@ -1176,6 +1176,10 @@ export const getWorksheetRecoveryRuntime = (savedCache, { forceReset = false } =
   savedCache && !forceReset ? null : getLlmJobRuntime(getDefaultLlmModel())
 )
 
+export const shouldRewriteWorksheetJobForMigration = (status, { resetRuntime = false } = {}) => (
+  ['processing', 'failed'].includes(status) || (resetRuntime && status === 'queued')
+)
+
 export const prepareWorksheetBatchWorkflowMigration = async (batchId, { resetRuntime = false } = {}) => {
   const normalizedBatchId = String(batchId || '').trim()
   if (!normalizedBatchId) {
@@ -1238,7 +1242,7 @@ export const prepareWorksheetBatchWorkflowMigration = async (batchId, { resetRun
 
   const migratedJobs = []
   for (const job of batchJobs) {
-    if (!['processing', 'failed'].includes(job.status)) {
+    if (!shouldRewriteWorksheetJobForMigration(job.status, { resetRuntime })) {
       migratedJobs.push(job)
       continue
     }
@@ -1249,7 +1253,7 @@ export const prepareWorksheetBatchWorkflowMigration = async (batchId, { resetRun
       error.statusCode = 404
       throw error
     }
-    if (!['processing', 'failed'].includes(latestJob.status)) {
+    if (!shouldRewriteWorksheetJobForMigration(latestJob.status, { resetRuntime })) {
       migratedJobs.push(latestJob)
       continue
     }
