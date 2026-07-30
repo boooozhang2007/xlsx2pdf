@@ -1228,22 +1228,31 @@ export const mergeWorksheetCacheValues = (source = {}, target = {}) => ({
   synonym: { ...(source?.synonym || {}), ...(target?.synonym || {}) },
 })
 
-export const seedWorksheetJobCache = async (sourceJobId, targetJobId) => {
-  const sourceId = String(sourceJobId || '').trim()
+export const seedWorksheetJobCaches = async (sourceJobIds, targetJobId) => {
+  const sourceIds = (Array.isArray(sourceJobIds) ? sourceJobIds : [sourceJobIds])
+    .map((value) => String(value || '').trim())
+    .filter(Boolean)
   const targetId = String(targetJobId || '').trim()
-  if (!sourceId || !targetId || sourceId === targetId) {
+  if (!sourceIds.length || !targetId || sourceIds.includes(targetId)) {
     const error = new Error('缓存恢复任务 id 无效。')
     error.statusCode = 400
     throw error
   }
-  const sourceCache = await getObjectJson({ key: jobCacheKey(sourceId) }).catch(() => null)
-  if (!sourceCache) {
-    const error = new Error('源任务缓存不存在。')
-    error.statusCode = 404
-    throw error
+  const sourceCaches = []
+  for (const sourceId of [...new Set(sourceIds)]) {
+    const sourceCache = await getObjectJson({ key: jobCacheKey(sourceId) }).catch(() => null)
+    if (!sourceCache) {
+      const error = new Error(`源任务缓存不存在：${sourceId}`)
+      error.statusCode = 404
+      throw error
+    }
+    sourceCaches.push(sourceCache)
   }
   const targetCache = await getObjectJson({ key: jobCacheKey(targetId) }).catch(() => null)
-  const mergedCache = mergeWorksheetCacheValues(sourceCache, targetCache || {})
+  const mergedCache = sourceCaches.reduce(
+    (merged, sourceCache) => mergeWorksheetCacheValues(sourceCache, merged),
+    targetCache || {},
+  )
   await writeJsonObject({ key: jobCacheKey(targetId), value: mergedCache })
   return {
     lexical: Object.keys(mergedCache.lexical).length,
@@ -1251,6 +1260,10 @@ export const seedWorksheetJobCache = async (sourceJobId, targetJobId) => {
     synonym: Object.keys(mergedCache.synonym).length,
   }
 }
+
+export const seedWorksheetJobCache = async (sourceJobId, targetJobId) => (
+  seedWorksheetJobCaches([sourceJobId], targetJobId)
+)
 
 export const shouldRewriteWorksheetJobForMigration = (status, { resetRuntime = false } = {}) => (
   ['processing', 'failed'].includes(status) || (resetRuntime && status === 'queued')

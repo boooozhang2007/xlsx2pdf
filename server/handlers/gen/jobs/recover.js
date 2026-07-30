@@ -1,6 +1,6 @@
 import { getRun, start } from 'workflow/api'
 import { readJsonBody, rejectMethod, requireSession, sendJson } from '../../../auth.js'
-import { prepareWorksheetBatchWorkflowMigration, seedWorksheetJobCache } from '../../../genQueue.js'
+import { prepareWorksheetBatchWorkflowMigration, seedWorksheetJobCaches } from '../../../genQueue.js'
 import { worksheetJobBatchWorkflow } from '../../../../workflows/worksheetJob.js'
 
 const TERMINAL_RUN_STATUSES = new Set(['completed', 'failed', 'cancelled'])
@@ -27,9 +27,12 @@ export default async function handler(req, res) {
       }
     }
 
-    const seedCacheFromJobId = String(body.seedCacheFromJobId || '').trim()
+    const seedCacheFromJobIds = [
+      ...(Array.isArray(body.seedCacheFromJobIds) ? body.seedCacheFromJobIds : []),
+      body.seedCacheFromJobId,
+    ].map((value) => String(value || '').trim()).filter(Boolean)
     const seedCacheToJobId = String(body.seedCacheToJobId || '').trim()
-    if (Boolean(seedCacheFromJobId) !== Boolean(seedCacheToJobId)) {
+    if (Boolean(seedCacheFromJobIds.length) !== Boolean(seedCacheToJobId)) {
       return sendJson(res, 400, { ok: false, error: '缓存恢复需要同时提供源任务和目标任务 id。' })
     }
     const jobs = await prepareWorksheetBatchWorkflowMigration(batchId, {
@@ -37,8 +40,8 @@ export default async function handler(req, res) {
     })
     // Migration invalidates the old execution lease before the cache is
     // merged, so an in-flight canceled step cannot overwrite the recovery.
-    const seededCache = seedCacheFromJobId
-      ? await seedWorksheetJobCache(seedCacheFromJobId, seedCacheToJobId)
+    const seededCache = seedCacheFromJobIds.length
+      ? await seedWorksheetJobCaches(seedCacheFromJobIds, seedCacheToJobId)
       : null
     const run = await start(
       worksheetJobBatchWorkflow,
