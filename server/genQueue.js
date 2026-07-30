@@ -1208,6 +1208,36 @@ export const getWorksheetRecoveryRuntime = (savedCache, { forceReset = false } =
   savedCache && !forceReset ? null : getLlmJobRuntime(getDefaultLlmModel())
 )
 
+export const mergeWorksheetCacheValues = (source = {}, target = {}) => ({
+  lexical: { ...(source?.lexical || {}), ...(target?.lexical || {}) },
+  basic: { ...(source?.basic || {}), ...(target?.basic || {}) },
+  synonym: { ...(source?.synonym || {}), ...(target?.synonym || {}) },
+})
+
+export const seedWorksheetJobCache = async (sourceJobId, targetJobId) => {
+  const sourceId = String(sourceJobId || '').trim()
+  const targetId = String(targetJobId || '').trim()
+  if (!sourceId || !targetId || sourceId === targetId) {
+    const error = new Error('缓存恢复任务 id 无效。')
+    error.statusCode = 400
+    throw error
+  }
+  const sourceCache = await getObjectJson({ key: jobCacheKey(sourceId) }).catch(() => null)
+  if (!sourceCache) {
+    const error = new Error('源任务缓存不存在。')
+    error.statusCode = 404
+    throw error
+  }
+  const targetCache = await getObjectJson({ key: jobCacheKey(targetId) }).catch(() => null)
+  const mergedCache = mergeWorksheetCacheValues(sourceCache, targetCache || {})
+  await writeJsonObject({ key: jobCacheKey(targetId), value: mergedCache })
+  return {
+    lexical: Object.keys(mergedCache.lexical).length,
+    basic: Object.keys(mergedCache.basic).length,
+    synonym: Object.keys(mergedCache.synonym).length,
+  }
+}
+
 export const shouldRewriteWorksheetJobForMigration = (status, { resetRuntime = false } = {}) => (
   ['processing', 'failed'].includes(status) || (resetRuntime && status === 'queued')
 )

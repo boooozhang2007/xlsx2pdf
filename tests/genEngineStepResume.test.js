@@ -616,6 +616,22 @@ test('explicit runtime reset also rewrites queued jobs during workflow migration
   assert.equal(shouldRewriteWorksheetJobForMigration('completed', { resetRuntime: true }), false)
 })
 
+test('cache recovery fills missing entries while preserving target results', async () => {
+  const { mergeWorksheetCacheValues } = await import('../server/genQueue.js')
+  const merged = mergeWorksheetCacheValues({
+    lexical: { alpha: { value: 'source-alpha' }, beta: { value: 'source-beta' } },
+    basic: { alpha: { value: 'source-basic' } },
+  }, {
+    lexical: { alpha: { value: 'target-alpha' } },
+    synonym: { gamma: { value: 'target-synonym' } },
+  })
+
+  assert.equal(merged.lexical.alpha.value, 'target-alpha')
+  assert.equal(merged.lexical.beta.value, 'source-beta')
+  assert.equal(merged.basic.alpha.value, 'source-basic')
+  assert.equal(merged.synonym.gamma.value, 'target-synonym')
+})
+
 test('rate limit retry count resets after meaningful progress', async () => {
   const { getLlmRateLimitRetryState } = await import('../server/genQueue.js')
   const stalled = getLlmRateLimitRetryState({
