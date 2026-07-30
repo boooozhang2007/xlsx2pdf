@@ -543,7 +543,20 @@ const getLlmRetryPolicy = () => ({
 
 const createLlmError = (message, options = {}) => Object.assign(new Error(message), options)
 
-const isRetryableLlmStatus = (status) => status === 408 || status === 409 || status === 425 || status === 429 || status >= 500
+const isRetryableLlmStatus = (status) => status === 400 || status === 408 || status === 409 || status === 425 || status === 429 || status >= 500
+
+const readLlmErrorDetail = async (response) => {
+  const rawText = await response.text().catch(() => '')
+  if (!rawText) return ''
+  let detail = rawText
+  try {
+    const data = JSON.parse(rawText)
+    detail = data?.error?.message || data?.error || data?.message || rawText
+  } catch {
+    // Plain-text gateway responses are useful as-is.
+  }
+  return String(detail || '').replace(/\s+/g, ' ').trim().slice(0, 300)
+}
 
 const parseRetryAfterMs = (value) => {
   const source = String(value || '').trim()
@@ -618,12 +631,14 @@ const fetchLlmArray = async (payload, kind, llmOptions = {}) => {
       if (!response.ok) {
         const retryAfterMs = parseRetryAfterMs(response.headers.get('retry-after'))
         const isRateLimited = response.status === 429
-        throw createLlmError(`${kind} 请求失败：${response.status}`, {
+        const responseDetail = await readLlmErrorDetail(response)
+        throw createLlmError(`${kind} 请求失败：${response.status}${responseDetail ? `（${responseDetail}）` : ''}`, {
           code: isRateLimited ? 'LLM_RATE_LIMITED' : 'LLM_REQUEST_FAILED',
           status: response.status,
           retryAfterMs,
           retryable: isRetryableLlmStatus(response.status) || [401, 403].includes(response.status),
           model: payload.model,
+          responseDetail,
         })
       }
       const rawText = await response.text()
@@ -673,12 +688,14 @@ const fetchLlmObject = async (payload, kind, llmOptions = {}) => {
       if (!response.ok) {
         const retryAfterMs = parseRetryAfterMs(response.headers.get('retry-after'))
         const isRateLimited = response.status === 429
-        throw createLlmError(`${kind} 请求失败：${response.status}`, {
+        const responseDetail = await readLlmErrorDetail(response)
+        throw createLlmError(`${kind} 请求失败：${response.status}${responseDetail ? `（${responseDetail}）` : ''}`, {
           code: isRateLimited ? 'LLM_RATE_LIMITED' : 'LLM_REQUEST_FAILED',
           status: response.status,
           retryAfterMs,
           retryable: isRetryableLlmStatus(response.status) || [401, 403].includes(response.status),
           model: payload.model,
+          responseDetail,
         })
       }
       const rawText = await response.text()

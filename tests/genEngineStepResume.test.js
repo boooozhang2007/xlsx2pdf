@@ -244,6 +244,40 @@ test('intermittent access rejection is retryable across workflow steps', async (
   assert.equal(requestCount, 1)
 })
 
+test('gateway 400 responses are retryable and preserve their error detail', async (t) => {
+  const server = http.createServer(async (request, response) => {
+    await readBody(request)
+    response.writeHead(400, { 'content-type': 'application/json' })
+    response.end(JSON.stringify({ error: { message: 'temporary model gateway rejection' } }))
+  })
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
+  t.after(() => server.close())
+
+  const address = server.address()
+  process.env.VIVI_LLM_BASE_URL = `http://127.0.0.1:${address.port}`
+  process.env.VIVI_LLM_MODEL = 'test-model'
+  const { generateWorksheetArchive } = await import('../server/genEngine.js')
+
+  await assert.rejects(
+    generateWorksheetArchive({
+      rows: [{ english: 'alpha', chinese: '阿尔法' }],
+      fileName: 'bad-gateway-request.xlsx',
+      questionTypes: ['一_释义匹配'],
+      generationMode: 'legacy_zip',
+      llmModel: 'test-model',
+      llmEntryLimit: 100,
+      onCacheCheckpoint: async () => {},
+    }),
+    (error) => (
+      error?.code === 'LLM_REQUEST_FAILED'
+      && error?.status === 400
+      && error?.retryable === true
+      && error?.responseDetail === 'temporary model gateway rejection'
+      && error?.message.includes('temporary model gateway rejection')
+    ),
+  )
+})
+
 test('safe format variations are accepted by order and normalized', async (t) => {
   const server = http.createServer(async (request, response) => {
     const payload = JSON.parse(await readBody(request))
