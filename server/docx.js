@@ -39,6 +39,9 @@ const buildParagraphXml = ({
   spaceBefore = 0,
   spaceAfter = 0,
   pageBreakBefore = false,
+  keepNext = false,
+  keepLines = false,
+  indentLeft = 0,
 }) => {
   const alignmentMap = {
     left: 'left',
@@ -48,8 +51,11 @@ const buildParagraphXml = ({
   }
   const paragraphProps = [
     pageBreakBefore ? '<w:pageBreakBefore/>' : '',
+    keepNext ? '<w:keepNext/>' : '',
+    keepLines ? '<w:keepLines/>' : '',
     align ? `<w:jc w:val="${alignmentMap[align] || 'left'}"/>` : '',
     tabs.length ? `<w:tabs>${tabs.map((position) => `<w:tab w:val="left" w:pos="${toTwips(position)}"/>`).join('')}</w:tabs>` : '',
+    indentLeft ? `<w:ind w:left="${toTwips(indentLeft)}"/>` : '',
     `<w:spacing w:before="${toTwips(spaceBefore)}" w:after="${toTwips(spaceAfter)}"/>`,
   ].join('')
 
@@ -75,6 +81,7 @@ const buildTableCellXml = (cell = {}) => {
   return [
     '<w:tc>',
     `<w:tcPr><w:tcW w:w="${width}" w:type="dxa"/>`,
+    value.noWrap ? '<w:noWrap/>' : '',
     '<w:tcBorders>',
     '<w:top w:val="nil"/><w:left w:val="nil"/><w:bottom w:val="nil"/><w:right w:val="nil"/>',
     '</w:tcBorders>',
@@ -84,7 +91,7 @@ const buildTableCellXml = (cell = {}) => {
   ].join('')
 }
 
-const buildTableXml = ({ rows = [], columnWidths = [] }) => {
+const buildTableXml = ({ rows = [], columnWidths = [], cantSplit = false }) => {
   const safeColumnWidths = (columnWidths.length ? columnWidths : [2800, 3600]).map((value) => Math.max(120, Math.round(Number(value) || 2400)))
   const totalWidth = safeColumnWidths.reduce((sum, value) => sum + value, 0)
   const gridXml = safeColumnWidths.map((width) => `<w:gridCol w:w="${width}"/>`).join('')
@@ -94,7 +101,7 @@ const buildTableXml = ({ rows = [], columnWidths = [] }) => {
       ...(typeof cells[index] === 'string' ? { text: cells[index] } : (cells[index] || {})),
       widthTwips: width,
     })).join('')
-    return `<w:tr>${cellXml}</w:tr>`
+    return `<w:tr>${cantSplit ? '<w:trPr><w:cantSplit/></w:trPr>' : ''}${cellXml}</w:tr>`
   }).join('')
 
   return [
@@ -116,6 +123,17 @@ const buildTableXml = ({ rows = [], columnWidths = [] }) => {
   ].join('')
 }
 
+const buildSectionPropertiesXml = ({ columns = 1, columnSpacing = 18 } = {}) => {
+  const safeColumns = Math.max(1, Math.min(4, Math.round(Number(columns) || 1)))
+  return [
+    '<w:sectPr>',
+    '<w:pgSz w:w="11906" w:h="16838" w:orient="portrait"/>',
+    '<w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/>',
+    `<w:cols w:num="${safeColumns}" w:space="${toTwips(columnSpacing)}"/>`,
+    '</w:sectPr>',
+  ].join('')
+}
+
 const buildBlockXml = (block) => {
   if (block?.kind === 'table') return buildTableXml(block)
   return buildParagraphXml(block || {})
@@ -133,7 +151,7 @@ const createStylesXml = () => `<?xml version="1.0" encoding="UTF-8" standalone="
   </w:docDefaults>
 </w:styles>`
 
-const createDocumentXml = (blocks) => `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+const createDocumentXml = (blocks, sectionOptions = {}) => `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:document
   xmlns:wpc="http://schemas.microsoft.com/office/word/2010/wordprocessingCanvas"
   xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
@@ -153,10 +171,7 @@ const createDocumentXml = (blocks) => `<?xml version="1.0" encoding="UTF-8" stan
   mc:Ignorable="w14 wp14">
   <w:body>
     ${blocks.map(buildBlockXml).join('')}
-    <w:sectPr>
-      <w:pgSz w:w="11906" w:h="16838"/>
-      <w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/>
-    </w:sectPr>
+    ${buildSectionPropertiesXml(sectionOptions)}
   </w:body>
 </w:document>`
 
@@ -210,13 +225,13 @@ const createAppXml = () => `<?xml version="1.0" encoding="UTF-8" standalone="yes
   <Application>XLSX2PDF Console</Application>
 </Properties>`
 
-export const createDocxBuffer = ({ title, paragraphs }) => {
+export const createDocxBuffer = ({ title, paragraphs, columns = 1, columnSpacing = 18 }) => {
   return createZipBuffer([
     { name: '[Content_Types].xml', data: createContentTypesXml() },
     { name: '_rels/.rels', data: createRootRelsXml() },
     { name: 'docProps/core.xml', data: createCoreXml(title) },
     { name: 'docProps/app.xml', data: createAppXml() },
-    { name: 'word/document.xml', data: createDocumentXml(paragraphs) },
+    { name: 'word/document.xml', data: createDocumentXml(paragraphs, { columns, columnSpacing }) },
     { name: 'word/styles.xml', data: createStylesXml() },
     { name: 'word/_rels/document.xml.rels', data: createDocumentRelsXml() },
     { name: 'word/settings.xml', data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:settings xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:zoom w:percent="100"/></w:settings>` },

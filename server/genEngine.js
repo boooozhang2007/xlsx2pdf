@@ -1658,12 +1658,16 @@ const paragraph = (text, options = {}) => ({
   spaceBefore: options.spaceBefore || 0,
   spaceAfter: options.spaceAfter || 0,
   pageBreakBefore: options.pageBreakBefore || false,
+  keepNext: options.keepNext || false,
+  keepLines: options.keepLines || false,
+  indentLeft: options.indentLeft || 0,
 })
 
 const table = (rows, options = {}) => ({
   kind: 'table',
   rows,
   columnWidths: options.columnWidths || [],
+  cantSplit: options.cantSplit || false,
 })
 
 const optionLine = (options) => `    ${options.map((value, index) => `${'ABCD'[index]}. ${value}`).join('  ')}`
@@ -1690,17 +1694,49 @@ const generateMatching = (questionParagraphs, answerParagraphs, group, groupInde
   const pool = group.filter((entry) => lexical.get(entry.key)?.definitionEn)
   if (!pool.length) throw new Error('释义匹配缺少可用的 LLM 释义结果。')
   const chosen = fillToCount(pool, context.questionsPerGroup, context.rng)
-  questionParagraphs.push(paragraph('一. Matching Words with Definitions 单词释义匹配题', { bold: true, size: 12, spaceBefore: 6, spaceAfter: 4 }))
-  questionParagraphs.push(paragraph('Match each definition with the correct word. 根据英文释义，从方框中选出正确单词。', { spaceAfter: 6 }))
+  questionParagraphs.push(paragraph('一. Matching Words with Definitions', {
+    bold: true,
+    size: 12,
+    spaceBefore: 6,
+    keepNext: true,
+  }))
+  questionParagraphs.push(paragraph('单词释义匹配题', {
+    bold: true,
+    size: 12,
+    spaceAfter: 4,
+    keepNext: true,
+  }))
+  questionParagraphs.push(paragraph('Match each definition with the correct word.', { keepNext: true }))
+  questionParagraphs.push(paragraph('根据英文释义，从方框中选出正确单词。', { spaceAfter: 6 }))
   const answers = []
   chosen.forEach((entry, index) => {
     const distractors = uniqueDistractors(group, entry, 3, (item) => item.cleanEnglish, context.rng)
     const options = shuffle([...distractors.map((item) => item.displayEnglish), entry.displayEnglish], context.rng).slice(0, 4)
     const definition = requireGeneratedValue(lexical.get(entry.key)?.definitionEn, '释义匹配存在缺失的 definition_en。')
     const definitionZh = requireGeneratedValue(lexical.get(entry.key)?.definitionZh, '释义匹配存在缺失的 definition_zh。')
-    const zhSuffix = context.withChineseTranslation && definitionZh ? ` (${definitionZh})` : ''
-    questionParagraphs.push(paragraph(`${index + 1}. ${definition}${zhSuffix}`))
-    questionParagraphs.push(paragraph(optionLine(options)))
+    questionParagraphs.push(paragraph(`${index + 1}. ${definition}`, {
+      size: 11,
+      keepNext: true,
+      keepLines: true,
+    }))
+    if (context.withChineseTranslation && definitionZh) {
+      questionParagraphs.push(paragraph(`（${definitionZh}）`, {
+        size: 10,
+        indentLeft: 12,
+        keepNext: true,
+        keepLines: true,
+      }))
+    }
+    const optionText = optionLine(options)
+    const optionFontSize = Math.max(7.5, Math.min(11, 430 / Math.max(1, optionText.length)))
+    questionParagraphs.push(table([[{
+      text: optionText,
+      size: optionFontSize,
+      noWrap: true,
+    }]], {
+      columnWidths: [4330],
+      cantSplit: true,
+    }))
     answers.push([index + 1, 'ABCD'[options.indexOf(entry.displayEnglish)] || 'A'])
   })
   writeAnswerBlock(answerParagraphs, `第${groupIndex + 1}组 一 释义匹配 答案`, answers, 10, groupIndex > 0)
@@ -2359,7 +2395,12 @@ const createNonTranslationFiles = async (questionKey, groups, context) => {
   return [
     {
       name: `${context.exportName}/${questionKey}/${questionKey}.docx`,
-      data: createDocxBuffer({ title: `${typeInfo.title}题目`, paragraphs: questionParagraphs }),
+      data: createDocxBuffer({
+        title: `${typeInfo.title}题目`,
+        paragraphs: questionParagraphs,
+        columns: questionKey === '一_释义匹配' ? 2 : 1,
+        columnSpacing: 18,
+      }),
     },
     {
       name: `${context.exportName}/${questionKey}/${questionKey}答案.docx`,

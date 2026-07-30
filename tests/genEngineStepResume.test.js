@@ -32,6 +32,34 @@ const findStoredZipEntry = (buffer, predicate) => {
   return null
 }
 
+const buildFixedTestPaperFixture = (count = 30) => {
+  const rows = Array.from({ length: count }, (_, index) => ({
+    english: `sampleword${String.fromCharCode(97 + Math.floor(index / 26))}${String.fromCharCode(97 + (index % 26))}`,
+    chinese: `示例词义${index + 1}`,
+  }))
+  const initialCache = { lexical: {}, basic: {}, synonym: {} }
+  rows.forEach(({ english, chinese }, index) => {
+    const key = `${english}||${chinese}`
+    initialCache.lexical[key] = {
+      definitionEn: `definition for item ${index + 1}`,
+      definitionZh: `第一题译文${index + 1}`,
+      synonym: `similar${index + 1}`,
+      antonym: `opposite${index + 1}`,
+    }
+    initialCache.basic[key] = {
+      clozeSentence: `This sentence uses ______ for item ${index + 1}.`,
+      tfTrue: `The true statement for item ${index + 1}.`,
+      tfFalse: `The false statement for item ${index + 1}.`,
+    }
+    initialCache.synonym[key] = {
+      synonym: `similar${index + 1}`,
+      synonymOriginal: `The original sentence contains ${english}.`,
+      synonymRewriteBlank: 'The rewritten sentence contains ______.',
+    }
+  })
+  return { rows, initialCache }
+}
+
 test('large LLM jobs checkpoint and resume across bounded steps', async (t) => {
   let requestCount = 0
   const server = http.createServer(async (request, response) => {
@@ -450,30 +478,7 @@ test('batch copies use independent numbered archive names', async () => {
 
 test('nine batch variation seeds produce nine unique fixed-test-paper question sets', async () => {
   const { generateWorksheetArchive } = await import('../server/genEngine.js')
-  const rows = Array.from({ length: 30 }, (_, index) => ({
-    english: `sampleword${String.fromCharCode(97 + Math.floor(index / 26))}${String.fromCharCode(97 + (index % 26))}`,
-    chinese: `示例词义${index + 1}`,
-  }))
-  const initialCache = { lexical: {}, basic: {}, synonym: {} }
-  rows.forEach(({ english, chinese }, index) => {
-    const key = `${english}||${chinese}`
-    initialCache.lexical[key] = {
-      definitionEn: `definition for item ${index + 1}`,
-      definitionZh: `释义${index + 1}`,
-      synonym: `similar${index + 1}`,
-      antonym: `opposite${index + 1}`,
-    }
-    initialCache.basic[key] = {
-      clozeSentence: `This sentence uses ______ for item ${index + 1}.`,
-      tfTrue: `The true statement for item ${index + 1}.`,
-      tfFalse: `The false statement for item ${index + 1}.`,
-    }
-    initialCache.synonym[key] = {
-      synonym: `similar${index + 1}`,
-      synonymOriginal: `The original sentence contains ${english}.`,
-      synonymRewriteBlank: `The rewritten sentence contains ______.`,
-    }
-  })
+  const { rows, initialCache } = buildFixedTestPaperFixture()
 
   const generateCopy = (variationSeed) => generateWorksheetArchive({
     rows,
@@ -496,6 +501,61 @@ test('nine batch variation seeds produce nine unique fixed-test-paper question s
     return questionXml.toString('utf8')
   })
   assert.equal(new Set(questionSets).size, 9)
+  assert.match(questionSets[0], /<w:cols w:num="1"/)
+  assert.doesNotMatch(questionSets[0], /<w:cols w:num="2"/)
+})
+
+test('legacy matching worksheet is portrait two-column with single-row options and optional Chinese', async () => {
+  const { generateWorksheetArchive } = await import('../server/genEngine.js')
+  const { rows, initialCache } = buildFixedTestPaperFixture(12)
+  const generate = (withChineseTranslation) => generateWorksheetArchive({
+    rows,
+    fileName: '双栏释义匹配测试.xlsx',
+    generationMode: 'legacy_zip',
+    questionTypes: ['一_释义匹配'],
+    legacyQuestionCount: 12,
+    withChineseTranslation,
+    initialCache,
+  })
+
+  const [withChinese, withoutChinese] = await Promise.all([generate(true), generate(false)])
+  const readQuestionXml = (result) => {
+    const docx = findStoredZipEntry(result.buffer, (name) => name.endsWith('/一_释义匹配.docx'))
+    assert.ok(docx)
+    const xml = findStoredZipEntry(docx, (name) => name === 'word/document.xml')
+    assert.ok(xml)
+    return xml.toString('utf8')
+  }
+  const withChineseXml = readQuestionXml(withChinese)
+  const withoutChineseXml = readQuestionXml(withoutChinese)
+
+  assert.match(withChineseXml, /<w:pgSz w:w="11906" w:h="16838" w:orient="portrait"\/>/)
+  assert.match(withChineseXml, /<w:cols w:num="2" w:space="360"\/>/)
+
+  const optionTables = withChineseXml.match(/<w:tbl>[\s\S]*?<\/w:tbl>/g) || []
+  assert.equal(optionTables.length, 12)
+  optionTables.forEach((optionTable) => {
+    assert.equal((optionTable.match(/<w:tr>/g) || []).length, 1)
+    assert.equal((optionTable.match(/<w:tc>/g) || []).length, 1)
+    assert.match(optionTable, /<w:cantSplit\/>/)
+    assert.match(optionTable, /<w:noWrap\/>/)
+    ;['A. ', 'B. ', 'C. ', 'D. '].forEach((label) => assert.ok(optionTable.includes(label)))
+  })
+
+  const englishStart = withChineseXml.search(/definition for item \d+/)
+  assert.ok(englishStart >= 0)
+  const englishEnd = withChineseXml.indexOf('</w:p>', englishStart)
+  const translationStart = withChineseXml.indexOf('<w:p>', englishEnd)
+  const translationEnd = withChineseXml.indexOf('</w:p>', translationStart)
+  const optionTableStart = withChineseXml.indexOf('<w:tbl>', englishEnd)
+  assert.match(withChineseXml.slice(translationStart, translationEnd), /第一题译文\d+/)
+  assert.ok(translationEnd < optionTableStart)
+  assert.doesNotMatch(withoutChineseXml, /第一题译文\d+/)
+
+  const englishInstruction = withChineseXml.indexOf('Match each definition with the correct word.')
+  const chineseInstruction = withChineseXml.indexOf('根据英文释义，从方框中选出正确单词。')
+  assert.ok(englishInstruction >= 0 && chineseInstruction > englishInstruction)
+  assert.ok(withChineseXml.indexOf('</w:p>', englishInstruction) < chineseInstruction)
 })
 
 test('request retry count resets after meaningful progress', async () => {

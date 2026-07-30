@@ -686,7 +686,7 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
                         {job.generationMode === GENERATION_MODE_FIXED_TEST_PAPER
                           ? `模板·${(job.testPaperGroupSizes || [100]).map((size) => size || '全部').join('/')}`
                           : `ZIP·每组${job.legacyQuestionCount || DEFAULT_LEGACY_QUESTION_COUNT}题`}
-                        {job.withChineseTranslation === false ? '·无中文' : ''}
+                        {job.withChineseTranslation === false ? '·第一题无中文' : ''}
                       </span>
                     </div>
                     <span className="genQueueTime">{formatTime(job.updatedAt || job.createdAt)}</span>
@@ -875,7 +875,7 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
                   </div>
                 ))}
               </div>
-              <p className="genQueueEmpty">按模板固定生成 8 个题段，所选规格共享同一批模型题面，仅在导出时分别分组。当前预计生成 {paperCount} 份 docx{withChineseTranslation ? '' : '（不含中文翻译）'}。</p>
+              <p className="genQueueEmpty">按模板固定生成 8 个题段，所选规格共享同一批模型题面，仅在导出时分别分组。当前预计生成 {paperCount} 份 docx{withChineseTranslation ? '' : '（第一题不含中文翻译）'}。</p>
             </>
           ) : (
             <>
@@ -910,7 +910,7 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
                   )
                 })}
               </div>
-              <p className="genQueueEmpty">会按原来的多题型结构打包成 ZIP。当前已勾选 {selectedTypes.length} 个题型，每组生成 {normalizeLegacyQuestionCount(legacyQuestionCount)} 题{withChineseTranslation ? '' : '（不含中文翻译）'}。</p>
+              <p className="genQueueEmpty">会按原来的多题型结构打包成 ZIP，第一题文档使用 A4 竖版双栏。当前已勾选 {selectedTypes.length} 个题型，每组生成 {normalizeLegacyQuestionCount(legacyQuestionCount)} 题{withChineseTranslation ? '' : '（第一题不含中文翻译）'}。</p>
             </>
           )}
           <label className="genToggleRow">
@@ -920,8 +920,8 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
               onChange={(event) => setWithChineseTranslation(event.target.checked)}
             />
             <span className="genToggleText">
-              <strong>带中文翻译</strong>
-              <em>关闭后题面中的中文释义/提示将省略</em>
+              <strong>第一题添加中文翻译</strong>
+              <em>开启后，中文释义会换行显示在英文释义下面</em>
             </span>
           </label>
         </div>
