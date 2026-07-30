@@ -1156,6 +1156,10 @@ export const getMissingBatchCopyIndexes = (jobs = [], expectedCount = 0) => {
     .filter((copyIndex) => !existingIndexes.has(copyIndex))
 }
 
+export const getWorksheetRecoveryRuntime = (savedCache) => (
+  savedCache ? null : getLlmJobRuntime(getDefaultLlmModel())
+)
+
 export const prepareWorksheetBatchWorkflowMigration = async (batchId) => {
   const normalizedBatchId = String(batchId || '').trim()
   if (!normalizedBatchId) {
@@ -1234,6 +1238,7 @@ export const prepareWorksheetBatchWorkflowMigration = async (batchId) => {
       continue
     }
     const savedCache = await getObjectJson({ key: jobCacheKey(job.id) }).catch(() => null)
+    const recoveryRuntime = getWorksheetRecoveryRuntime(savedCache)
     const recoveryProgress = savedCache
       ? (latestJob.progress || resetJobProgress(latestJob))
       : resetJobProgress(latestJob)
@@ -1242,6 +1247,10 @@ export const prepareWorksheetBatchWorkflowMigration = async (batchId) => {
       status: 'queued',
       startedAt: savedCache ? latestJob.startedAt : 0,
       failedAt: 0,
+      llmModel: recoveryRuntime?.model || latestJob.llmModel,
+      llmBatchSize: recoveryRuntime?.batchSize || latestJob.llmBatchSize,
+      llmConcurrency: recoveryRuntime?.concurrency || latestJob.llmConcurrency,
+      llmFallbackModels: recoveryRuntime?.fallbackModels || latestJob.llmFallbackModels,
       llmRequestRetries: 0,
       llmRequestRetryProgressMark: '',
       llmRateLimitRetries: 0,
@@ -1258,6 +1267,21 @@ export const prepareWorksheetBatchWorkflowMigration = async (batchId) => {
           : '旧任务缓存不存在，正在由服务器重新生成这一份…',
       },
     }, snapshot.etag)
+    if (recoveryRuntime) {
+      const latestPayload = await readJobPayload(job.id).catch(() => null)
+      if (latestPayload) {
+        await writeJsonObject({
+          key: jobPayloadKey(job.id),
+          value: {
+            ...latestPayload,
+            llmModel: recoveryRuntime.model,
+            llmBatchSize: recoveryRuntime.batchSize,
+            llmConcurrency: recoveryRuntime.concurrency,
+            llmFallbackModels: recoveryRuntime.fallbackModels,
+          },
+        })
+      }
+    }
     migratedJobs.push(migrated.job)
   }
 

@@ -532,6 +532,16 @@ test('batch recovery identifies deleted copy records for reconstruction', async 
   )
 })
 
+test('batch recovery resets degraded runtime only when no cache remains', async () => {
+  const { getWorksheetRecoveryRuntime } = await import('../server/genQueue.js')
+
+  assert.equal(getWorksheetRecoveryRuntime({ lexical: {} }), null)
+  const resetRuntime = getWorksheetRecoveryRuntime(null)
+  assert.ok(resetRuntime?.model)
+  assert.ok(resetRuntime?.batchSize >= 1)
+  assert.ok(resetRuntime?.concurrency >= 1)
+})
+
 test('rate limit retry count resets after meaningful progress', async () => {
   const { getLlmRateLimitRetryState } = await import('../server/genQueue.js')
   const stalled = getLlmRateLimitRetryState({
