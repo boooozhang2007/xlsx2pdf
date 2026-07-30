@@ -632,6 +632,14 @@ test('cache recovery fills missing entries while preserving target results', asy
   assert.equal(merged.synonym.gamma.value, 'target-synonym')
 })
 
+test('cache checkpoints require the active worksheet execution lease', async () => {
+  const { hasWorksheetExecutionLease } = await import('../server/genQueue.js')
+
+  assert.equal(hasWorksheetExecutionLease({ executionLeaseId: 'new-lease' }, 'new-lease'), true)
+  assert.equal(hasWorksheetExecutionLease({ executionLeaseId: 'old-lease' }, 'new-lease'), false)
+  assert.equal(hasWorksheetExecutionLease({}, ''), false)
+})
+
 test('rate limit retry count resets after meaningful progress', async () => {
   const { getLlmRateLimitRetryState } = await import('../server/genQueue.js')
   const stalled = getLlmRateLimitRetryState({

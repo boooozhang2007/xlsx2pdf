@@ -363,6 +363,10 @@ export const getLlmValidationRetryDelayMs = (retryCount = 0) => {
   return Math.min(MAX_INTERNAL_QUEUE_WAIT_MS, 15_000 * (2 ** Math.min(2, recoveryRound)))
 }
 
+export const hasWorksheetExecutionLease = (job = {}, leaseId = '') => (
+  Boolean(leaseId) && String(job?.executionLeaseId || '') === String(leaseId)
+)
+
 const buildLlmRuntimeForJob = (job = {}) => {
   const runtime = getLlmJobRuntime(job.llmModel || getDefaultLlmModel(), {
     batchSize: job.llmBatchSize,
@@ -580,6 +584,7 @@ const processSingleJob = async (job) => {
   if (!payload) return
   let ownershipEtag = snapshot.etag
   let liveJob
+  const executionLeaseId = crypto.randomUUID()
   try {
     const claimed = await writeOwnedJob({
       ...latestJob,
@@ -587,6 +592,7 @@ const processSingleJob = async (job) => {
       startedAt: latestJob.startedAt || now(),
       nextAttemptAt: 0,
       error: '',
+      executionLeaseId,
       progress: {
         ...(latestJob.progress || resetJobProgress(latestJob)),
         currentStep: latestJob.progress?.currentStep || '准备处理',
@@ -671,7 +677,15 @@ const processSingleJob = async (job) => {
     return progressChain
   }
   const checkpointCache = (cache) => {
-    cacheChain = cacheChain.then(() => writeJsonObject({ key: jobCacheKey(job.id), value: cache }))
+    cacheChain = cacheChain.then(async () => {
+      const currentJob = await readLatestJobState(job.id)
+      if (!hasWorksheetExecutionLease(currentJob, executionLeaseId)) {
+        const error = new Error('任务缓存已由新的服务器执行器接管。')
+        error.code = 'JOB_OWNERSHIP_LOST'
+        throw error
+      }
+      return writeJsonObject({ key: jobCacheKey(job.id), value: cache })
+    })
     return cacheChain
   }
 
@@ -1329,6 +1343,7 @@ export const prepareWorksheetBatchWorkflowMigration = async (batchId, { resetRun
       status: 'queued',
       startedAt: savedCache ? latestJob.startedAt : 0,
       failedAt: 0,
+      executionLeaseId: '',
       llmModel: recoveryRuntime?.model || latestJob.llmModel,
       llmBatchSize: recoveryRuntime?.batchSize || latestJob.llmBatchSize,
       llmConcurrency: recoveryRuntime?.concurrency || latestJob.llmConcurrency,

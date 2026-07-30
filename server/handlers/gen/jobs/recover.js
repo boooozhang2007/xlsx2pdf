@@ -32,13 +32,14 @@ export default async function handler(req, res) {
     if (Boolean(seedCacheFromJobId) !== Boolean(seedCacheToJobId)) {
       return sendJson(res, 400, { ok: false, error: '缓存恢复需要同时提供源任务和目标任务 id。' })
     }
-    const seededCache = seedCacheFromJobId
-      ? await seedWorksheetJobCache(seedCacheFromJobId, seedCacheToJobId)
-      : null
-
     const jobs = await prepareWorksheetBatchWorkflowMigration(batchId, {
       resetRuntime: body.resetRuntime === true,
     })
+    // Migration invalidates the old execution lease before the cache is
+    // merged, so an in-flight canceled step cannot overwrite the recovery.
+    const seededCache = seedCacheFromJobId
+      ? await seedWorksheetJobCache(seedCacheFromJobId, seedCacheToJobId)
+      : null
     const run = await start(
       worksheetJobBatchWorkflow,
       [jobs.map((job) => job.id)],
