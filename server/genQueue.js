@@ -354,6 +354,15 @@ export const getLlmRequestRetryDelayMs = (retryCount = 0) => {
   )
 }
 
+export const getLlmValidationRetryDelayMs = (retryCount = 0) => {
+  const normalizedRetryCount = Math.max(0, Number(retryCount) || 0)
+  if (normalizedRetryCount < MAX_VALIDATION_REQUEUES) {
+    return Math.min(MAX_INTERNAL_QUEUE_WAIT_MS, VALIDATION_RETRY_DELAY_MS * (normalizedRetryCount + 1))
+  }
+  const recoveryRound = normalizedRetryCount - MAX_VALIDATION_REQUEUES
+  return Math.min(MAX_INTERNAL_QUEUE_WAIT_MS, 15_000 * (2 ** Math.min(2, recoveryRound)))
+}
+
 const buildLlmRuntimeForJob = (job = {}) => {
   const runtime = getLlmJobRuntime(job.llmModel || getDefaultLlmModel(), {
     batchSize: job.llmBatchSize,
@@ -880,45 +889,45 @@ const processSingleJob = async (job) => {
         wordCount: (latestJobForRetry && latestJobForRetry.wordCount) || liveJob.wordCount || job.wordCount || 0,
       }
       const { progressMark, retryCount } = getLlmValidationRetryState(retryBaseJob)
-      if (retryCount < MAX_VALIDATION_REQUEUES) {
-        const runtimeUpdate = tuneLlmRuntimeAfterValidationFailure(retryBaseJob)
-        const delayMs = Math.min(MAX_INTERNAL_QUEUE_WAIT_MS, VALIDATION_RETRY_DELAY_MS * (retryCount + 1))
-        const nextAttemptAt = now() + delayMs
-        const waitingMessage = `LLM 返回内容未通过校验，${Math.max(1, Math.ceil(delayMs / 1000))} 秒后自动补跑未完成条目；${runtimeUpdate.reason}。`
-        const queuedRetryJob = await writeJob({
-          ...retryBaseJob,
-          status: 'queued',
-          error: '',
-          llmModel: runtimeUpdate.llmModel,
-          llmBatchSize: runtimeUpdate.llmBatchSize,
-          llmConcurrency: runtimeUpdate.llmConcurrency,
-          llmFallbackModels: runtimeUpdate.llmFallbackModels,
-          llmValidationRetries: retryCount + 1,
-          llmValidationRetryProgressMark: progressMark,
-          nextAttemptAt,
-          progress: {
-            ...(retryBaseJob.progress || resetJobProgress(retryBaseJob)),
-            currentStep: '等待题面补跑',
-            message: waitingMessage,
-          },
-        })
-        await writeJsonObject({
-          key: jobPayloadKey(job.id),
-          value: {
-            ...(payload || {}),
-            rows: payload?.rows || [],
-            fileName: payload?.fileName || queuedRetryJob.fileName,
-            questionTypes: payload?.questionTypes || queuedRetryJob.questionTypes,
-            generationMode: payload?.generationMode || queuedRetryJob.generationMode || GENERATION_MODE_FIXED_TEST_PAPER,
-            withChineseTranslation: normalizeWithChineseTranslation(payload?.withChineseTranslation ?? queuedRetryJob.withChineseTranslation),
-            llmModel: queuedRetryJob.llmModel,
-            llmBatchSize: queuedRetryJob.llmBatchSize,
-            llmConcurrency: queuedRetryJob.llmConcurrency,
-            llmFallbackModels: queuedRetryJob.llmFallbackModels || [],
-          },
-        })
-        return
-      }
+      const runtimeUpdate = tuneLlmRuntimeAfterValidationFailure(retryBaseJob)
+      const delayMs = getLlmValidationRetryDelayMs(retryCount)
+      const nextAttemptAt = now() + delayMs
+      const waitingMessage = retryCount >= MAX_VALIDATION_REQUEUES
+        ? `LLM 仍有条目未通过校验，缓存和进度已保留，${Math.max(1, Math.ceil(delayMs / 1000))} 秒后继续补跑（连续 ${retryCount + 1} 轮）；${runtimeUpdate.reason}。`
+        : `LLM 返回内容未通过校验，${Math.max(1, Math.ceil(delayMs / 1000))} 秒后自动补跑未完成条目；${runtimeUpdate.reason}。`
+      const queuedRetryJob = await writeJob({
+        ...retryBaseJob,
+        status: 'queued',
+        error: '',
+        llmModel: runtimeUpdate.llmModel,
+        llmBatchSize: runtimeUpdate.llmBatchSize,
+        llmConcurrency: runtimeUpdate.llmConcurrency,
+        llmFallbackModels: runtimeUpdate.llmFallbackModels,
+        llmValidationRetries: retryCount + 1,
+        llmValidationRetryProgressMark: progressMark,
+        nextAttemptAt,
+        progress: {
+          ...(retryBaseJob.progress || resetJobProgress(retryBaseJob)),
+          currentStep: '等待题面补跑',
+          message: waitingMessage,
+        },
+      })
+      await writeJsonObject({
+        key: jobPayloadKey(job.id),
+        value: {
+          ...(payload || {}),
+          rows: payload?.rows || [],
+          fileName: payload?.fileName || queuedRetryJob.fileName,
+          questionTypes: payload?.questionTypes || queuedRetryJob.questionTypes,
+          generationMode: payload?.generationMode || queuedRetryJob.generationMode || GENERATION_MODE_FIXED_TEST_PAPER,
+          withChineseTranslation: normalizeWithChineseTranslation(payload?.withChineseTranslation ?? queuedRetryJob.withChineseTranslation),
+          llmModel: queuedRetryJob.llmModel,
+          llmBatchSize: queuedRetryJob.llmBatchSize,
+          llmConcurrency: queuedRetryJob.llmConcurrency,
+          llmFallbackModels: queuedRetryJob.llmFallbackModels || [],
+        },
+      })
+      return
     }
     if (error?.code === 'LLM_RATE_LIMITED') {
       const latestJobForRetry = await readLatestJobState(job.id)

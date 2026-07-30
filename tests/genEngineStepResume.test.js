@@ -572,6 +572,16 @@ test('request failures switch to durable recovery waits instead of exhausting re
   assert.equal(getLlmRequestRetryDelayMs(100), 900000)
 })
 
+test('validation failures switch to durable recovery waits instead of exhausting retries', async () => {
+  const { getLlmValidationRetryDelayMs } = await import('../server/genQueue.js')
+
+  assert.equal(getLlmValidationRetryDelayMs(0), 3000)
+  assert.equal(getLlmValidationRetryDelayMs(1), 6000)
+  assert.equal(getLlmValidationRetryDelayMs(2), 15000)
+  assert.equal(getLlmValidationRetryDelayMs(3), 30000)
+  assert.equal(getLlmValidationRetryDelayMs(100), 45000)
+})
+
 test('batch recovery identifies deleted copy records for reconstruction', async () => {
   const { getMissingBatchCopyIndexes } = await import('../server/genQueue.js')
 
