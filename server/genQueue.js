@@ -1239,14 +1239,19 @@ export const seedWorksheetJobCaches = async (sourceJobIds, targetJobId) => {
     throw error
   }
   const sourceCaches = []
+  const missingSourceJobIds = []
   for (const sourceId of [...new Set(sourceIds)]) {
     const sourceCache = await getObjectJson({ key: jobCacheKey(sourceId) }).catch(() => null)
     if (!sourceCache) {
-      const error = new Error(`源任务缓存不存在：${sourceId}`)
-      error.statusCode = 404
-      throw error
+      missingSourceJobIds.push(sourceId)
+      continue
     }
     sourceCaches.push(sourceCache)
+  }
+  if (!sourceCaches.length) {
+    const error = new Error('提供的源任务缓存均不存在。')
+    error.statusCode = 404
+    throw error
   }
   const targetCache = await getObjectJson({ key: jobCacheKey(targetId) }).catch(() => null)
   const mergedCache = sourceCaches.reduce(
@@ -1258,6 +1263,8 @@ export const seedWorksheetJobCaches = async (sourceJobIds, targetJobId) => {
     lexical: Object.keys(mergedCache.lexical).length,
     basic: Object.keys(mergedCache.basic).length,
     synonym: Object.keys(mergedCache.synonym).length,
+    sourceCount: sourceCaches.length,
+    missingSourceJobIds,
   }
 }
 
