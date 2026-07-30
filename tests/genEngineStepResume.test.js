@@ -292,6 +292,22 @@ test('gateway 400 shrinks request batches before lowering concurrency', async ()
   assert.match(update.reason, /HTTP 400/)
 })
 
+test('gateway access rejection rotates models without lowering concurrency', async () => {
+  const { tuneLlmRuntimeAfterRequestFailure } = await import('../server/genQueue.js')
+  const update = tuneLlmRuntimeAfterRequestFailure({
+    llmModel: 'test-model',
+    llmBatchSize: 20,
+    llmConcurrency: 5,
+    llmFallbackModels: ['fallback-one'],
+  }, { status: 401 })
+
+  assert.equal(update.llmModel, 'fallback-one')
+  assert.equal(update.llmBatchSize, 20)
+  assert.equal(update.llmConcurrency, 5)
+  assert.deepEqual(update.llmFallbackModels, ['test-model'])
+  assert.match(update.reason, /HTTP 401/)
+})
+
 test('automatic fallback order keeps low-capacity models at the end', async () => {
   const { orderWorksheetFallbackModels } = await import('../server/genEngine.js')
 

@@ -433,6 +433,17 @@ export const tuneLlmRuntimeAfterRequestFailure = (job = {}, error = {}) => {
       reason: `HTTP 400，批次从 ${current.batchSize} 降到 ${nextBatchSize} 以定位被拒绝的条目`,
     }
   }
+  if ([400, 401, 403].includes(Number(error?.status)) && current.fallbackModels.length) {
+    const [nextModel, ...remainingFallbacks] = current.fallbackModels
+    const nextRuntime = getLlmJobRuntime(nextModel)
+    return {
+      llmModel: nextRuntime.model,
+      llmBatchSize: Math.max(1, Math.min(current.batchSize, nextRuntime.batchSize)),
+      llmConcurrency: Math.max(1, Math.min(current.concurrency, nextRuntime.concurrency)),
+      llmFallbackModels: [...remainingFallbacks, current.model],
+      reason: `HTTP ${error.status} 访问被拒绝，切换备用模型 ${nextRuntime.model}`,
+    }
+  }
   if (current.concurrency > 1) {
     return {
       llmModel: current.model,
