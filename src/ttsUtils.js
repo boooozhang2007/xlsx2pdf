@@ -1,5 +1,5 @@
 export const DEFAULT_TTS_CONFIG = {
-  provider: 'azure',
+  provider: 'edge',
   accent: 'us',
   azureVoice: 'en-US-JennyNeural',
   edgeVoice: 'en-US-JennyNeural',

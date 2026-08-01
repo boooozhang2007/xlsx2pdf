@@ -5,7 +5,6 @@ import {
   Archive,
   Headphones,
   Loader2,
-  Lock,
   LogOut,
   Pause,
   Play,
@@ -15,6 +14,7 @@ import {
   Volume2,
 } from 'lucide-react'
 import { apiJson, fetchAudioBlob } from './api'
+import AuthGate from './AuthGate'
 import { clampInt } from './utils'
 import {
   DEFAULT_TTS_CONFIG,
@@ -47,15 +47,15 @@ const readFileAsArrayBuffer = (file) =>
   })
 
 const defaultVoices = {
+  edge: [
+    { id: 'en-US-JennyNeural', name: 'Jenny · US · Female', accent: 'us', provider: 'edge' },
+    { id: 'en-GB-SoniaNeural', name: 'Sonia · UK · Female', accent: 'gb', provider: 'edge' },
+  ],
   azure: [
     { id: 'en-US-JennyNeural', name: 'Jenny · US · Female', accent: 'us', provider: 'azure' },
     { id: 'en-US-GuyNeural', name: 'Guy · US · Male', accent: 'us', provider: 'azure' },
     { id: 'en-GB-SoniaNeural', name: 'Sonia · UK · Female', accent: 'gb', provider: 'azure' },
     { id: 'en-GB-RyanNeural', name: 'Ryan · UK · Male', accent: 'gb', provider: 'azure' },
-  ],
-  edge: [
-    { id: 'en-US-JennyNeural', name: 'Jenny · US · Female', accent: 'us', provider: 'edge' },
-    { id: 'en-GB-SoniaNeural', name: 'Sonia · UK · Female', accent: 'gb', provider: 'edge' },
   ],
 }
 
@@ -75,6 +75,8 @@ const sanitizeFilePart = (value, fallback = 'word') => {
   return slug || fallback
 }
 
+const formatRangeTitle = (first, last) => (first === last ? first : `${first} → ${last}`)
+
 const buildBatchMeta = (batch, index, offset = 0) => {
   const firstWord = batch[0] || 'word'
   const lastWord = batch[batch.length - 1] || firstWord
@@ -93,7 +95,7 @@ const buildBatchMeta = (batch, index, offset = 0) => {
     lastWord,
     wordCount,
     fileStem: slug,
-    title: `B${pad3(batchNo)} · ${firstWord}${firstWord === lastWord ? '' : ` → ${lastWord}`}`,
+    title: `B${pad3(batchNo)} · ${formatRangeTitle(firstWord, lastWord)}`,
     subtitle: `${rangeText} · ${wordCount} 词`,
   }
 }
@@ -236,12 +238,10 @@ function SegmentedAudioPlayer({ item }) {
 function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
   const [authenticated, setAuthenticated] = useState(false)
   const [authChecked, setAuthChecked] = useState(false)
-  const [password, setPassword] = useState('')
-  const [loginError, setLoginError] = useState('')
   const [voices, setVoices] = useState(defaultVoices)
   const [config, setConfig] = useState(DEFAULT_TTS_CONFIG)
   const [wordText, setWordText] = useState('')
-  const [status, setStatus] = useState('输入访问密码后即可使用 Azure TTS。')
+  const [status, setStatus] = useState('输入访问密码后即可使用 Edge TTS。')
   const [audioItems, setAudioItems] = useState([])
   const [busy, setBusy] = useState(false)
   const [qrUrl, setQrUrl] = useState('')
@@ -296,7 +296,15 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
         : words.length
           ? '已就绪'
           : '等待输入'
-  const taskTone = busy ? 'running' : audioItems.length ? 'done' : words.length ? 'ready' : 'idle'
+  const taskTone = busy
+    ? 'running'
+    : audioItems.length && totalBatchCount && audioItems.length < totalBatchCount
+      ? 'partial'
+      : audioItems.length
+        ? 'done'
+        : words.length
+          ? 'ready'
+          : 'idle'
   const nextBatchMeta = totalBatchCount && completedBatchCount < totalBatchCount ? displayBatchMetas[completedBatchCount] : null
   const hasShareLink = Boolean(shareUrl)
   const qrButtonText = hasShareLink ? '二维码已生成' : busy ? '处理中…' : '生成手机二维码'
@@ -321,7 +329,7 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
     apiJson('/api/tts/voices')
       .then((data) => {
         setVoices({ azure: data.azure || defaultVoices.azure, edge: data.edge || defaultVoices.edge })
-        setStatus('已载入音色列表，Azure 为优先生成通道。')
+        setStatus('已载入音色列表，Edge-TTS 为默认生成通道。')
       })
       .catch((err) => setStatus(`音色列表读取失败，使用内置音色：${err.message}`))
   }, [authenticated])
@@ -380,6 +388,15 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
     }
     setSelectedAudioIndex((index) => Math.min(Math.max(0, index), audioItems.length - 1))
   }, [audioItems.length])
+
+  useEffect(() => {
+    if (!playlistOpen) return undefined
+    const onKeyDown = (event) => {
+      if (event.key === 'Escape') closePlaylist()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [playlistOpen])
 
   useEffect(() => {
     if (!authenticated || restoreChecked) return
@@ -572,20 +589,13 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
     }
   }
 
-  const login = async (event) => {
-    event.preventDefault()
-    setLoginError('')
-    try {
-      await apiJson('/api/auth?action=login', {
-        method: 'POST',
-        body: JSON.stringify({ password }),
-      })
-      setAuthenticated(true)
-      setPassword('')
-      setStatus('已解锁单词朗读板块。')
-    } catch (error) {
-      setLoginError(error.message || '登录失败。')
-    }
+  const login = async (password) => {
+    await apiJson('/api/auth?action=login', {
+      method: 'POST',
+      body: JSON.stringify({ password }),
+    })
+    setAuthenticated(true)
+    setStatus('已解锁单词朗读板块。')
   }
 
   const logout = async () => {
@@ -665,15 +675,21 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
     if (config.provider === 'edge') return generateEdgeBatch(batch, index)
 
     const meta = batchMetas[index] || buildBatchMeta(batch, index)
-    const blob = await fetchAudioBlob(getAudioEndpoint(config.provider), buildPayload(batch))
-    return {
-      id: `${Date.now()}-${index}`,
-      blob,
-      url: URL.createObjectURL(blob),
-      words: batch,
-      label: meta.title,
-      ...meta,
-      provider: config.provider,
+    try {
+      const blob = await fetchAudioBlob(getAudioEndpoint(config.provider), buildPayload(batch))
+      return {
+        id: `${Date.now()}-${index}`,
+        blob,
+        url: URL.createObjectURL(blob),
+        words: batch,
+        label: meta.title,
+        ...meta,
+        provider: config.provider,
+      }
+    } catch (error) {
+      // Azure 未配置或配额不足时自动回退 Edge-TTS，保证生成可用。
+      console.warn('Azure 生成失败，自动回退 Edge-TTS：', error)
+      return generateEdgeBatch(batch, index)
     }
   }
 
@@ -916,27 +932,12 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
 
   if (!authenticated) {
     return (
-      <section className="ttsGate">
-        <div className="gateCard">
-          <Lock size={34} />
-          <span className="eyebrow">Protected TTS</span>
-          <h2>单词朗读音频生成</h2>
-          <p>该板块需要访问密码。密码只在服务端环境变量中校验，登录后使用 HttpOnly 会话 Cookie 保护 API。</p>
-          <form onSubmit={login}>
-            <input
-              type="password"
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              placeholder="输入访问密码"
-              autoComplete="current-password"
-            />
-            <button className="primaryButton dark" type="submit">
-              解锁
-            </button>
-          </form>
-          {loginError ? <strong className="errorText">{loginError}</strong> : null}
-        </div>
-      </section>
+      <AuthGate
+        eyebrow="Protected TTS"
+        title="单词朗读音频生成"
+        description="该板块需要访问密码。密码只在服务端环境变量中校验，登录后使用 HttpOnly 会话 Cookie 保护 API。"
+        onSubmit={login}
+      />
     )
   }
 
@@ -984,8 +985,8 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
             <span>朗读设置</span>
           </div>
           <SelectField label="生成通道" value={config.provider} onChange={(provider) => updateTtsConfig({ provider })}>
-            <option value="azure">Azure API（优先）</option>
-            <option value="edge">Edge-TTS 后端 fallback</option>
+            <option value="edge">Edge-TTS（默认）</option>
+            <option value="azure">Azure API</option>
           </SelectField>
           <SelectField label="英/美音" value={config.accent} onChange={(accent) => updateTtsConfig({ accent })}>
             <option value="us">美音 en-US</option>
@@ -1104,7 +1105,7 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
                         <span>{pad3(selectedAudioItem.batchNo || safeSelectedAudioIndex + 1)}</span>
                       </div>
                       <div className="playerHeroCopy">
-                        <h3>{selectedAudioItem.firstWord === selectedAudioItem.lastWord ? selectedAudioItem.firstWord : `${selectedAudioItem.firstWord} → ${selectedAudioItem.lastWord}`}</h3>
+                        <h3>{formatRangeTitle(selectedAudioItem.firstWord, selectedAudioItem.lastWord)}</h3>
                         <p>{selectedAudioItem.subtitle || `${selectedAudioItem.words.length} 词`}</p>
                         <div className="playerMetaStrip">
                           <span>{config.accent === 'gb' ? '英音' : '美音'}</span>
@@ -1162,6 +1163,9 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
                           <span className="eyebrow">Playlist</span>
                           <h2>播放列表</h2>
                         </div>
+                        <button className="playlistClose" type="button" onClick={closePlaylist} aria-label="关闭播放列表">
+                          ×
+                        </button>
                       </div>
 
                       <div className="playlistItems">
@@ -1176,7 +1180,7 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
                             }}
                           >
                             <strong>{pad3(item.batchNo || index + 1)}</strong>
-                            <span>{item.firstWord === item.lastWord ? item.firstWord : `${item.firstWord} → ${item.lastWord}`}</span>
+                            <span>{formatRangeTitle(item.firstWord, item.lastWord)}</span>
                             <em>
                               {item.wordCount || item.words.length} 词
                               {item.segments?.length ? ` · ${item.segments.length} 段` : ''}
@@ -1191,6 +1195,7 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
             ) : (
               <div className="emptyAudio">
                 <Volume2 size={30} />
+                <p>还没有生成的音频。输入单词后点击“生成首段试听”或“批量生成音频”。</p>
               </div>
             )}
           </div>
@@ -1227,7 +1232,7 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
               {nextBatchMeta ? (
                 <div className="nextBatchHint">
                   <span>下一批</span>
-                  <strong>{nextBatchMeta.firstWord === nextBatchMeta.lastWord ? nextBatchMeta.firstWord : `${nextBatchMeta.firstWord} → ${nextBatchMeta.lastWord}`}</strong>
+                  <strong>{formatRangeTitle(nextBatchMeta.firstWord, nextBatchMeta.lastWord)}</strong>
                   <em>{nextBatchMeta.wordCount} 词</em>
                 </div>
               ) : null}
@@ -1245,7 +1250,7 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
                   {displayBatchMetas.slice(0, 8).map((batch) => (
                     <div className="batchChip" key={batch.fileStem} title={`${batch.firstWord} → ${batch.lastWord}`}>
                       <strong>B{pad3(batch.batchNo)}</strong>
-                      <span>{batch.firstWord === batch.lastWord ? batch.firstWord : `${batch.firstWord} → ${batch.lastWord}`}</span>
+                      <span>{formatRangeTitle(batch.firstWord, batch.lastWord)}</span>
                       <em>{batch.wordCount} 词</em>
                     </div>
                   ))}

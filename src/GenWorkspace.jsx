@@ -5,7 +5,6 @@ import {
   Clock3,
   FileText,
   Loader2,
-  Lock,
   RefreshCw,
   Square,
   Sparkles,
@@ -15,6 +14,7 @@ import {
 } from 'lucide-react'
 import { apiJson, fetchDownloadRequest } from './api'
 import { downloadNamedBlob } from './ttsUtils'
+import AuthGate from './AuthGate'
 import { ALL_QUESTION_TYPE_KEYS, FIXED_TEST_PAPER_QUESTION_KEYS, FIXED_TEST_PAPER_SECTIONS, QUESTION_TYPE_OPTIONS } from '../shared/worksheetTypes'
 import {
   DEFAULT_LEGACY_QUESTION_COUNT,
@@ -300,8 +300,6 @@ const buildPreviewModel = (typeKey, rows) => {
 function GenWorkspace({ rows, fileName, activeSheetName }) {
   const [authenticated, setAuthenticated] = useState(false)
   const [authChecked, setAuthChecked] = useState(false)
-  const [password, setPassword] = useState('')
-  const [loginError, setLoginError] = useState('')
   const [busy, setBusy] = useState(false)
   const [queueBusy, setQueueBusy] = useState(false)
   const [downloadingJobId, setDownloadingJobId] = useState('')
@@ -397,20 +395,13 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
     return () => window.clearInterval(timer)
   }, [authenticated, activeJobs.length])
 
-  const login = async (event) => {
-    event.preventDefault()
-    setLoginError('')
-    try {
-      await apiJson('/api/auth?action=login', {
-        method: 'POST',
-        body: JSON.stringify({ password }),
-      })
-      setAuthenticated(true)
-      setPassword('')
-      setStatus('')
-    } catch (error) {
-      setLoginError(error.message || '登录失败。')
-    }
+  const login = async (password) => {
+    await apiJson('/api/auth?action=login', {
+      method: 'POST',
+      body: JSON.stringify({ password }),
+    })
+    setAuthenticated(true)
+    setStatus('')
   }
 
   const toggleType = (key) => {
@@ -572,26 +563,11 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
 
   if (!authenticated) {
     return (
-      <section className="ttsGate">
-        <div className="gateCard">
-          <Lock size={34} />
-          <span className="eyebrow">Protected Worksheet</span>
-          <h2>练习生成</h2>
-          <form onSubmit={login}>
-            <input
-              type="password"
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              placeholder="输入访问密码"
-              autoComplete="current-password"
-            />
-            <button className="primaryButton dark" type="submit">
-              解锁
-            </button>
-          </form>
-          {loginError ? <strong className="errorText">{loginError}</strong> : null}
-        </div>
-      </section>
+      <AuthGate
+        eyebrow="Protected Worksheet"
+        title="练习生成"
+        onSubmit={login}
+      />
     )
   }
 
@@ -749,8 +725,6 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
             )}
           </div>
         </div>
-
-        <p className="statusLine genStatusLine">{status}</p>
       </section>
 
       <aside className="ttsControls genControls genConfigStage">
@@ -868,7 +842,7 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
               </div>
               <div className="questionTypeGrid compact">
                 {FIXED_TEST_PAPER_SECTIONS.map((item) => (
-                  <div className="questionTypeCard compact active fixed" key={item.key}>
+                  <div className="questionTypeCard compact active" key={item.key}>
                     <strong>{item.title}</strong>
                     {item.needsLlm ? <em>LLM</em> : null}
                     <span>第 {item.order} 题 · {item.countLabel}</span>
@@ -925,6 +899,7 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
             </span>
           </label>
         </div>
+        <p className="statusLine genStatusLine">{status}</p>
       </aside>
     </section>
   )

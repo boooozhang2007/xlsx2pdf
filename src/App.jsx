@@ -62,6 +62,36 @@ const InputField = ({ label, value, onChange, min = 1, max = 999, suffix, icon: 
 
 const Pill = ({ children, tone = 'neutral' }) => <span className={`pill pill-${tone}`}>{children}</span>
 
+const UploadActions = ({ isLoading, onUpload, onUseExample }) => (
+  <>
+    <button className="primaryButton" type="button" onClick={onUpload} disabled={isLoading}>
+      <UploadCloud size={18} /> 上传 XLSX
+    </button>
+    <button className="ghostButton" type="button" onClick={onUseExample} disabled={isLoading}>
+      {isLoading ? <Loader2 className="spin" size={17} /> : <FileSpreadsheet size={17} />}
+      使用 example.xlsx
+    </button>
+  </>
+)
+
+const TemplateRow = ({ row = {}, empty = false, showPracticeGrid = false }) => (
+  <>
+    <div className="templateCell indexCell">
+      {empty ? null : <span className="templateCellFit">{row.index}</span>}
+    </div>
+    <div className="templateCell englishCell">
+      {empty ? null : <span className="templateCellFit">{row.english || '—'}</span>}
+    </div>
+    <div className="templateCell writeChineseCell" />
+    <div className="templateCell chineseCell" title={empty ? '' : row.chinese || ''}>
+      {empty ? null : <span className="templateCellFit">{row.chinese || '—'}</span>}
+    </div>
+    <div className="templateCell writeEnglishCell">
+      {showPracticeGrid ? <img src="/fourline.png" alt="" /> : null}
+    </div>
+  </>
+)
+
 const getToolFromPath = (pathname) => {
   if (pathname.startsWith('/tts')) return 'tts'
   if (pathname.startsWith('/gen')) return 'gen'
@@ -262,12 +292,12 @@ function App() {
       mockRight: (row) => row.chinese || '—',
     },
     tts: {
-      pill: 'Azure TTS + 手机二维码播放',
+      pill: 'Edge TTS + 手机二维码播放',
       title: '生成单词朗读音频。',
       description: '粘贴或导入词表，选择英/美音、速度、音色和停顿，生成可试听 MP3，并用二维码在手机播放。',
       mockTitle: 'Audio batches',
       mockSubTitle: `${rows.length || 0} words`,
-      mockRight: () => '▶︎  Azure neural voice',
+      mockRight: () => '▶︎  Edge neural voice',
     },
     gen: {
       pill: '受保护的服务端练习包生成',
@@ -296,14 +326,29 @@ function App() {
             <FileSpreadsheet size={23} />
             <span>XLSX2PDF</span>
           </div>
-          <div className="toolSwitch" role="tablist" aria-label="tool switch">
-            <button className={activeTool === 'pdf' ? 'active' : ''} type="button" onClick={() => setTool('pdf')}>
+          <div className="toolSwitch" role="group" aria-label="工具切换">
+            <button
+              className={activeTool === 'pdf' ? 'active' : ''}
+              type="button"
+              aria-pressed={activeTool === 'pdf'}
+              onClick={() => setTool('pdf')}
+            >
               <FileText size={15} /> PDF
             </button>
-            <button className={activeTool === 'tts' ? 'active' : ''} type="button" onClick={() => setTool('tts')}>
+            <button
+              className={activeTool === 'tts' ? 'active' : ''}
+              type="button"
+              aria-pressed={activeTool === 'tts'}
+              onClick={() => setTool('tts')}
+            >
               <Headphones size={15} /> 单词朗读
             </button>
-            <button className={activeTool === 'gen' ? 'active' : ''} type="button" onClick={() => setTool('gen')}>
+            <button
+              className={activeTool === 'gen' ? 'active' : ''}
+              type="button"
+              aria-pressed={activeTool === 'gen'}
+              onClick={() => setTool('gen')}
+            >
               <Sparkles size={15} /> 练习生成
             </button>
           </div>
@@ -317,36 +362,11 @@ function App() {
             <h1>{heroMeta.title}</h1>
             <p>{heroMeta.description}</p>
             <div className="heroActions">
-              {activeTool === 'tts' ? (
-                <>
-                  <button className="primaryButton" onClick={() => setTool('tts')}>
-                    <Headphones size={18} /> 打开朗读板块
-                  </button>
-                  <button className="ghostButton" onClick={() => setTool('pdf')}>
-                    <FileText size={17} /> 返回 PDF
-                  </button>
-                </>
-              ) : activeTool === 'gen' ? (
-                <>
-                  <button className="primaryButton" onClick={() => fileInputRef.current?.click()}>
-                    <UploadCloud size={18} /> 上传 XLSX
-                  </button>
-                  <button className="ghostButton" onClick={loadBundledExample} disabled={isLoading}>
-                    {isLoading ? <Loader2 className="spin" size={17} /> : <FileSpreadsheet size={17} />}
-                    使用 example.xlsx
-                  </button>
-                </>
-              ) : (
-                <>
-                  <button className="primaryButton" onClick={() => fileInputRef.current?.click()}>
-                    <UploadCloud size={18} /> 上传 XLSX
-                  </button>
-                  <button className="ghostButton" onClick={loadBundledExample} disabled={isLoading}>
-                    {isLoading ? <Loader2 className="spin" size={17} /> : <FileSpreadsheet size={17} />}
-                    使用 example.xlsx
-                  </button>
-                </>
-              )}
+              <UploadActions
+                isLoading={isLoading}
+                onUpload={() => fileInputRef.current?.click()}
+                onUseExample={loadBundledExample}
+              />
             </div>
           </div>
 
@@ -377,6 +397,12 @@ function App() {
               onDragOver={(event) => event.preventDefault()}
               onDrop={handleDrop}
               onClick={() => fileInputRef.current?.click()}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                  event.preventDefault()
+                  fileInputRef.current?.click()
+                }
+              }}
               role="button"
               tabIndex={0}
             >
@@ -512,11 +538,12 @@ function App() {
                 <span className="eyebrow">实时预览</span>
                 <h2>{rows.length ? `${rows.length} 条词条` : '等待数据'}</h2>
               </div>
-              <div className="modeSwitch" role="tablist" aria-label="preview mode">
+              <div className="modeSwitch" role="group" aria-label="预览模式">
                 <button
                   className={previewMode === 'page' ? 'active' : ''}
                   onClick={() => setPreviewMode('page')}
                   type="button"
+                  aria-pressed={previewMode === 'page'}
                 >
                   页面
                 </button>
@@ -524,6 +551,7 @@ function App() {
                   className={previewMode === 'table' ? 'active' : ''}
                   onClick={() => setPreviewMode('table')}
                   type="button"
+                  aria-pressed={previewMode === 'table'}
                 >
                   数据
                 </button>
@@ -595,33 +623,11 @@ function App() {
                     <div className="templateHeader templateCell">默写英文</div>
 
                     {currentPreviewRows.map((row) => (
-                      <React.Fragment key={`${row.index}-${row.sourceRow || row.index}`}>
-                        <div className="templateCell indexCell">
-                          <span className="templateCellFit">{row.index}</span>
-                        </div>
-                        <div className="templateCell englishCell">
-                          <span className="templateCellFit">{row.english || '—'}</span>
-                        </div>
-                        <div className="templateCell writeChineseCell" />
-                        <div className="templateCell chineseCell" title={row.chinese || ''}>
-                          <span className="templateCellFit">{row.chinese || '—'}</span>
-                        </div>
-                        <div className="templateCell writeEnglishCell">
-                          {config.showPracticeGrid ? <img src="/fourline.png" alt="" /> : null}
-                        </div>
-                      </React.Fragment>
+                      <TemplateRow key={`${row.index}-${row.sourceRow || row.index}`} row={row} showPracticeGrid={Boolean(config.showPracticeGrid)} />
                     ))}
 
                     {Array.from({ length: emptyPreviewSlots }).map((_, index) => (
-                      <React.Fragment key={`empty-${index}`}>
-                        <div className="templateCell indexCell" />
-                        <div className="templateCell englishCell" />
-                        <div className="templateCell writeChineseCell" />
-                        <div className="templateCell chineseCell" />
-                        <div className="templateCell writeEnglishCell">
-                          {config.showPracticeGrid ? <img src="/fourline.png" alt="" /> : null}
-                        </div>
-                      </React.Fragment>
+                      <TemplateRow key={`empty-${index}`} empty showPracticeGrid={Boolean(config.showPracticeGrid)} />
                     ))}
                   </div>
                   <div className="templatePageNumber">{safePreviewPage}</div>

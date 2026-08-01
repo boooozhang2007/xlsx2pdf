@@ -43,7 +43,7 @@ button:disabled {
 .heroPanel {
   position: relative;
   overflow: hidden;
-  min-height: 72vh;
+  min-height: 56vh;
   padding: 28px clamp(20px, 4vw, 58px) 72px;
   color: #fff;
   background:
@@ -108,7 +108,6 @@ button:disabled {
 }
 
 .brandMark,
-.privacyNote,
 .pill {
   display: inline-flex;
   align-items: center;
@@ -121,11 +120,6 @@ button:disabled {
   letter-spacing: 0.08em;
 }
 
-.privacyNote {
-  color: rgba(255, 255, 255, 0.74);
-  font-size: 14px;
-}
-
 .heroGrid {
   position: relative;
   z-index: 2;
@@ -134,7 +128,7 @@ button:disabled {
   gap: clamp(28px, 6vw, 88px);
   align-items: center;
   max-width: 1240px;
-  margin: 76px auto 0;
+  margin: 56px auto 0;
 }
 
 .heroCopy {
@@ -160,7 +154,7 @@ button:disabled {
 .heroCopy h1 {
   max-width: 780px;
   margin: 22px 0 20px;
-  font-size: clamp(52px, 8vw, 112px);
+  font-size: clamp(46px, 6.5vw, 88px);
   line-height: 0.9;
   letter-spacing: -0.075em;
 }
@@ -229,7 +223,7 @@ button:disabled {
 
 .paperMock {
   position: relative;
-  min-height: 520px;
+  min-height: 400px;
   padding: 30px;
   color: #0f172a;
   background: rgba(255, 255, 255, 0.96);
@@ -518,21 +512,6 @@ button:disabled {
   font-weight: 700;
 }
 
-.toggleLine {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  color: #475569;
-  font-size: 14px;
-  font-weight: 700;
-}
-
-.toggleLine input {
-  width: 18px;
-  height: 18px;
-  accent-color: #2563eb;
-}
-
 .exportButton {
   width: 100%;
   min-height: 54px;
@@ -548,13 +527,6 @@ button:disabled {
   margin: 0 3px 2px;
   color: #64748b;
   font-size: 13px;
-  line-height: 1.5;
-}
-
-.panelNote {
-  margin: 0 0 12px;
-  color: #64748b;
-  font-size: 12px;
   line-height: 1.5;
 }
 
@@ -694,16 +666,6 @@ button:disabled {
 
 .qrPopoverCard.empty {
   min-height: 158px;
-}
-
-.qrPopoverIcon {
-  display: grid;
-  width: 48px;
-  height: 48px;
-  place-items: center;
-  border-radius: 16px;
-  background: #eff6ff;
-  color: #2563eb;
 }
 
 .qrPlaceholder {
@@ -872,8 +834,17 @@ button:disabled {
 
 .gateCard form {
   display: flex;
+  flex-wrap: wrap;
   gap: 10px;
   margin-top: 22px;
+}
+
+.gatePasswordLabel {
+  flex: 1 1 100%;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
 }
 
 .gateCard input {
@@ -935,6 +906,15 @@ button:disabled {
 
 .genWorkspace {
   grid-template-columns: minmax(312px, 360px) minmax(0, 1fr);
+}
+
+/* 与 PDF / TTS 一致：配置面板在左窄列，队列主区在右宽列（DOM 中队列在前，用 order 调整放置）。 */
+.genWorkspace .genConfigStage {
+  order: 1;
+}
+
+.genWorkspace .genStatusStage {
+  order: 2;
 }
 
 .genControls {
@@ -1122,17 +1102,6 @@ button:disabled {
   color: #64748b;
 }
 
-.genQueueStageName {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: #334155;
-  font-size: 12px;
-  font-weight: 800;
-}
-
 .genQueueWordCount {
   color: #2563eb;
   font-size: 11px;
@@ -1156,40 +1125,6 @@ button:disabled {
 
 .genConfigStage {
   gap: 14px;
-}
-
-.genConfigCopy {
-  margin: 0;
-  color: #64748b;
-  font-size: 12px;
-  line-height: 1.5;
-}
-
-.genStatusHero {
-  display: grid;
-  gap: 16px;
-  border: 1px solid rgba(15, 23, 42, 0.08);
-  border-radius: 28px;
-  background:
-    radial-gradient(circle at 100% 0%, rgba(56, 189, 248, 0.10), transparent 10rem),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(248, 250, 252, 0.96));
-  padding: 22px 22px 18px;
-  box-shadow: 0 18px 48px rgba(15, 23, 42, 0.07);
-}
-
-.genStatusHeroHead {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.genStatusHeroHead h2 {
-  margin: 4px 0 0;
-  color: #0f172a;
-  font-size: 26px;
-  font-weight: 950;
-  letter-spacing: -0.04em;
 }
 
 .genStatusChip,
@@ -1239,44 +1174,10 @@ button:disabled {
   color: #b91c1c;
 }
 
-.genStatusHeroText {
-  margin: 0;
-  color: #334155;
-  font-size: 14px;
-  line-height: 1.6;
-  font-weight: 700;
-}
-
-.genStatusHeroMeta {
-  display: grid;
-  gap: 3px;
-}
-
-.genStatusHeroMeta span {
-  color: #64748b;
-  font-size: 11px;
-  font-weight: 850;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-
-.genStatusHeroMeta strong {
-  color: #0f172a;
-  font-size: 18px;
-  font-weight: 900;
-}
-
-.genStatusHeroMeta em {
-  color: #2563eb;
-  font-size: 13px;
-  font-style: normal;
-  font-weight: 900;
-}
-
 .genStatusHeroBar {
   position: relative;
   overflow: hidden;
-  height: 11px;
+  height: 9px;
   border-radius: 999px;
   background: rgba(148, 163, 184, 0.18);
 }
@@ -1287,33 +1188,6 @@ button:disabled {
   border-radius: inherit;
   background: linear-gradient(90deg, #38bdf8 0%, #2563eb 100%);
   transition: width 400ms cubic-bezier(0.22, 1, 0.36, 1);
-}
-
-.genStatusSummary {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px;
-}
-
-.genStatusSummary article {
-  display: grid;
-  gap: 5px;
-  border: 1px solid rgba(15, 23, 42, 0.07);
-  border-radius: 18px;
-  background: rgba(255, 255, 255, 0.86);
-  padding: 12px 13px;
-}
-
-.genStatusSummary small {
-  color: #64748b;
-  font-size: 11px;
-  font-weight: 850;
-}
-
-.genStatusSummary strong {
-  color: #0f172a;
-  font-size: 16px;
-  font-weight: 950;
 }
 
 .genMetaCompact {
@@ -1418,8 +1292,7 @@ button:disabled {
   box-shadow: inset 0 0 0 2.5px #fff;
 }
 
-.questionTypeCard strong,
-.genAnswerPanelHeader strong {
+.questionTypeCard strong {
   color: #0f172a;
   font-size: 13px;
   font-weight: 900;
@@ -1438,18 +1311,10 @@ button:disabled {
   letter-spacing: 0.02em;
 }
 
-.questionTypeCard span,
-.genStageSubtitle,
-.genAnswerPanelHeader span,
-.genAnswerList p,
-.genPreviewQuestion p {
+.questionTypeCard span {
   color: #64748b;
   font-size: 11.5px;
   line-height: 1.5;
-}
-
-.genPreviewQuestion p {
-  white-space: pre-wrap;
 }
 
 .genStatusLine {
@@ -1601,18 +1466,10 @@ button:disabled {
   gap: 6px;
 }
 
-.genQueueHead > div,
-.genQueueMeta {
+.genQueueHead > div {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-}
-
-.genQueueMeta span:not(.genQueueChip) {
-  color: #64748b;
-  font-size: 11px;
-  font-weight: 800;
-  overflow-wrap: anywhere;
 }
 
 .genQueueHead span,
@@ -1626,43 +1483,10 @@ button:disabled {
   margin: 0;
 }
 
-.genQueueMetrics {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
-  align-items: center;
-  gap: 8px;
-}
-
-.genQueueMetrics span,
-.genQueueMetrics strong,
-.genQueueMetrics em {
-  min-width: 0;
-  font-size: 11px;
-  line-height: 1.4;
-}
-
-.genQueueMetrics span {
-  overflow: hidden;
-  color: #475569;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.genQueueMetrics strong {
-  color: #0f172a;
-  font-weight: 900;
-}
-
-.genQueueMetrics em {
-  color: #2563eb;
-  font-style: normal;
-  font-weight: 900;
-}
-
 .genQueueProgressBar {
   position: relative;
   overflow: hidden;
-  height: 7px;
+  height: 9px;
   border-radius: 999px;
   background: rgba(148, 163, 184, 0.22);
 }
@@ -1697,45 +1521,23 @@ button:disabled {
   white-space: nowrap;
 }
 
-.genQueueStop {
-  background: rgba(15, 23, 42, 0.08) !important;
-  color: #334155 !important;
+.genQueueActions .genQueueStop {
+  background: rgba(15, 23, 42, 0.08);
+  color: #334155;
 }
 
-.genQueueReexport {
-  background: rgba(37, 99, 235, 0.1) !important;
-  color: #2563eb !important;
+.genQueueActions .genQueueReexport {
+  background: rgba(37, 99, 235, 0.1);
+  color: #2563eb;
 }
 
-.genQueueDelete {
-  background: rgba(239, 68, 68, 0.08) !important;
-  color: #b91c1c !important;
+.genQueueActions .genQueueDelete {
+  background: rgba(239, 68, 68, 0.08);
+  color: #b91c1c;
 }
 
 .genQueueActions button:disabled {
   opacity: 0.72;
-}
-
-.genPreviewStage {
-  display: grid;
-  gap: 18px;
-}
-
-.genStageHeader {
-  align-items: center;
-}
-
-.genStatusHeader {
-  margin-bottom: 6px;
-}
-
-.genStatusHeader h2 {
-  margin: 4px 0 0;
-}
-
-.genStageSubtitle {
-  margin: 10px 0 0;
-  max-width: 560px;
 }
 
 .genExportButton {
@@ -1770,185 +1572,6 @@ button:disabled {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
-.genStatStrip {
-  margin-bottom: 0;
-}
-
-.genQueueBanner {
-  display: inline-flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
-  width: fit-content;
-  border: 1px solid rgba(15, 23, 42, 0.08);
-  border-radius: 999px;
-  background: rgba(248, 250, 252, 0.92);
-  color: #475569;
-  padding: 8px 12px;
-  font-size: 12px;
-  font-weight: 850;
-}
-
-.genQueueBanner strong {
-  color: #0f172a;
-  font-size: 12px;
-  font-weight: 900;
-}
-
-.genPreviewRail {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.genPreviewChip {
-  border: 1px solid rgba(15, 23, 42, 0.08);
-  border-radius: 999px;
-  background: rgba(248, 250, 252, 0.92);
-  color: #475569;
-  padding: 8px 12px;
-  font-size: 12px;
-  font-weight: 850;
-  transition:
-    border-color 140ms ease,
-    background 140ms ease,
-    color 140ms ease;
-}
-
-.genPreviewChip.active {
-  border-color: rgba(37, 99, 235, 0.26);
-  background: #eff6ff;
-  color: #1d4ed8;
-}
-
-.genPreviewCanvas {
-  display: grid;
-  grid-template-columns: minmax(0, 1.15fr) minmax(250px, 0.55fr);
-  gap: 18px;
-  align-items: start;
-}
-
-.genPreviewPaper,
-.genAnswerPanel {
-  border: 1px solid rgba(15, 23, 42, 0.08);
-  background: rgba(255, 255, 255, 0.92);
-  box-shadow: 0 20px 48px rgba(15, 23, 42, 0.08);
-}
-
-.genPreviewPaper {
-  position: relative;
-  min-height: 720px;
-  border-radius: 28px;
-  padding: 26px 28px 40px;
-}
-
-.genPreviewPaper::before {
-  content: '';
-  position: absolute;
-  inset: 16px;
-  border: 1px solid rgba(15, 23, 42, 0.08);
-  border-radius: 18px;
-  pointer-events: none;
-}
-
-.genPreviewPaperHeader {
-  position: relative;
-  z-index: 1;
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 16px;
-  border-bottom: 2px solid #0f172a;
-  padding-bottom: 16px;
-  margin-bottom: 18px;
-}
-
-.genPreviewPaperHeader span {
-  color: #0f172a;
-  font-size: 24px;
-  font-weight: 900;
-  letter-spacing: -0.03em;
-}
-
-.genPreviewPaperHeader small {
-  color: #64748b;
-  font-size: 12px;
-  font-weight: 800;
-}
-
-.genPreviewPaperBody {
-  position: relative;
-  z-index: 1;
-  display: grid;
-  gap: 12px;
-}
-
-.genPreviewQuestion {
-  display: grid;
-  grid-template-columns: 24px minmax(0, 1fr);
-  gap: 12px;
-  padding: 10px 0 12px;
-  border-bottom: 1px solid rgba(15, 23, 42, 0.08);
-}
-
-.genPreviewQuestion strong {
-  color: #0f172a;
-  font-size: 14px;
-  font-weight: 900;
-  line-height: 1.4;
-}
-
-.genPreviewQuestion div {
-  display: grid;
-  gap: 5px;
-}
-
-.genPreviewQuestion p {
-  margin: 0;
-  color: #334155;
-  white-space: pre-wrap;
-}
-
-.genPreviewPageNumber {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 14px;
-  color: #475569;
-  font-size: 12px;
-  font-weight: 800;
-  text-align: center;
-}
-
-.genAnswerPanel {
-  border-radius: 24px;
-  padding: 18px;
-}
-
-.genAnswerPanelHeader {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 12px;
-  padding-bottom: 12px;
-  margin-bottom: 12px;
-  border-bottom: 1px solid rgba(15, 23, 42, 0.08);
-}
-
-.genAnswerList {
-  display: grid;
-  gap: 8px;
-}
-
-.genAnswerList p {
-  margin: 0;
-  border-radius: 14px;
-  background: #f8fafc;
-  color: #0f172a;
-  padding: 10px 12px;
-  font-weight: 800;
-}
-
 .wordInput {
   width: 100%;
   min-height: 180px;
@@ -1978,8 +1601,7 @@ button:disabled {
 .ghostAction,
 .libraryButton,
 .logoutButton,
-.qrButton,
-.audioItem button {
+.qrButton {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -2142,6 +1764,11 @@ button:disabled {
   color: #fef3c7;
 }
 
+.taskPanel.partial .taskPanelHeader strong {
+  background: rgba(251, 146, 60, 0.16);
+  color: #fed7aa;
+}
+
 .taskPanel p {
   margin: 0;
   color: rgba(226, 232, 240, 0.78);
@@ -2220,40 +1847,6 @@ button:disabled {
   color: #fff;
   font-size: 13px;
   font-weight: 950;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.ttsStats {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 1px;
-  overflow: hidden;
-  border: 1px solid rgba(15, 23, 42, 0.08);
-  border-radius: 18px;
-  margin-bottom: 24px;
-  background: rgba(15, 23, 42, 0.08);
-}
-
-.ttsStats div {
-  min-width: 0;
-  padding: 14px 16px;
-  background: rgba(255, 255, 255, 0.72);
-}
-
-.ttsStats small {
-  display: block;
-  margin-bottom: 4px;
-  color: #64748b;
-  font-size: 11px;
-  font-weight: 800;
-}
-
-.ttsStats strong {
-  display: block;
-  overflow: hidden;
-  color: #0f172a;
-  font-size: 14px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -2377,12 +1970,6 @@ button:disabled {
   font-weight: 850;
 }
 
-.audioGrid {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  align-items: start;
-}
-
 .audioList {
   grid-row: 2;
   display: grid;
@@ -2398,86 +1985,6 @@ button:disabled {
 .audioList h3 {
   margin: 0 0 14px;
   color: #0f172a;
-}
-
-.sectionHeaderCompact h3 {
-  margin-bottom: 0;
-}
-
-.audioItem {
-  display: grid;
-  gap: 10px;
-  border-top: 1px solid rgba(15, 23, 42, 0.08);
-  padding: 16px 0;
-}
-
-.audioItemHead {
-  display: grid;
-  grid-template-columns: 44px minmax(0, 1fr);
-  gap: 12px;
-  align-items: center;
-}
-
-.batchIndexBadge {
-  display: grid;
-  width: 44px;
-  height: 44px;
-  place-items: center;
-  border-radius: 15px;
-  background: #0f172a;
-  color: #fff;
-  font-size: 12px;
-  font-weight: 950;
-}
-
-.audioItem strong,
-.audioItem span {
-  display: block;
-}
-
-.batchMetaLine,
-.fileHint {
-  color: #64748b;
-  font-size: 12px;
-  font-weight: 750;
-  line-height: 1.5;
-}
-
-.wordRibbon {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.wordRibbon span {
-  border-radius: 999px;
-  background: #f1f5f9;
-  color: #334155;
-  padding: 5px 9px;
-  font-size: 12px;
-  font-weight: 800;
-}
-
-.audioItem span {
-  color: #64748b;
-  font-size: 13px;
-  line-height: 1.6;
-}
-
-.audioItem .wordRibbon span {
-  color: #334155;
-  font-size: 12px;
-  line-height: 1;
-}
-
-.audioItem audio {
-  width: 100%;
-}
-
-.audioItem button {
-  justify-self: start;
-  background: #eff6ff;
-  color: #1d4ed8;
 }
 
 .compactAudioShell {
@@ -2724,80 +2231,6 @@ button:disabled {
   font-weight: 850;
 }
 
-.compactBatchList {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
-  gap: 8px;
-  max-height: 270px;
-  overflow: auto;
-  padding-right: 4px;
-}
-
-.compactBatch {
-  display: grid;
-  grid-template-columns: 44px minmax(0, 1fr);
-  gap: 2px 10px;
-  align-items: center;
-  border: 1px solid rgba(15, 23, 42, 0.08);
-  border-radius: 16px;
-  background: rgba(255, 255, 255, 0.74);
-  color: #0f172a;
-  padding: 10px;
-  text-align: left;
-  transition:
-    border-color 150ms ease,
-    background 150ms ease,
-    transform 150ms ease;
-}
-
-.compactBatch:hover {
-  transform: translateY(-1px);
-  border-color: rgba(37, 99, 235, 0.28);
-}
-
-.compactBatch strong {
-  grid-row: 1 / 3;
-  display: grid;
-  width: 40px;
-  height: 40px;
-  place-items: center;
-  border-radius: 14px;
-  background: #eff6ff;
-  color: #1d4ed8;
-  font-size: 12px;
-  font-weight: 950;
-}
-
-.compactBatch span {
-  overflow: hidden;
-  font-size: 13px;
-  font-weight: 900;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.compactBatch em {
-  color: #64748b;
-  font-size: 11px;
-  font-style: normal;
-  font-weight: 800;
-}
-
-.compactBatch.active {
-  border-color: transparent;
-  background: #0f172a;
-  color: #fff;
-}
-
-.compactBatch.active strong {
-  background: rgba(255, 255, 255, 0.14);
-  color: #fff;
-}
-
-.compactBatch.active em {
-  color: rgba(226, 232, 240, 0.72);
-}
-
 .segmentedPlayer {
   display: grid;
   gap: 8px;
@@ -2819,60 +2252,18 @@ button:disabled {
   display: grid;
   min-height: 220px;
   place-items: center;
+  align-content: center;
+  gap: 12px;
   text-align: center;
-}
-
-.storagePreview {
-  display: grid;
-  gap: 8px;
-  width: 100%;
-  margin-top: 14px;
-  border-top: 1px solid rgba(15, 23, 42, 0.08);
-  padding-top: 14px;
-  text-align: left;
-}
-
-.storagePreview strong {
-  color: #0f172a;
-  font-size: 13px;
-}
-
-.storagePreview code {
-  display: block;
-  overflow: hidden;
-  border-radius: 12px;
-  background: #f8fafc;
-  color: #475569;
-  padding: 8px 10px;
-  font-size: 11px;
-  text-overflow: ellipsis;
-}
-
-.storageRow {
-  display: grid;
-  gap: 2px;
-  border-radius: 12px;
-  background: rgba(239, 246, 255, 0.75);
-  padding: 9px 10px;
-}
-
-.storageRow span {
-  overflow: hidden;
-  color: #1d4ed8;
-  font-size: 12px;
-  font-weight: 900;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.storageRow small,
-.storagePreview > small {
   color: #64748b;
-  font-size: 11px;
+  padding: 20px;
 }
 
-.storagePreview {
-  display: none;
+.emptyAudio p {
+  margin: 0;
+  max-width: 340px;
+  font-size: 13px;
+  line-height: 1.6;
 }
 
 .libraryOverlay {
@@ -3026,6 +2417,26 @@ button:disabled {
   font-size: 30px;
   line-height: 1;
   letter-spacing: -0.05em;
+}
+
+.playlistClose {
+  flex: 0 0 auto;
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border: 0;
+  border-radius: 12px;
+  background: #f1f5f9;
+  color: #475569;
+  font-size: 18px;
+  line-height: 1;
+  transition: background 150ms ease, color 150ms ease;
+}
+
+.playlistClose:hover {
+  background: #e2e8f0;
+  color: #0f172a;
 }
 
 .playlistItems {
@@ -3790,31 +3201,6 @@ button:disabled {
   text-align: center;
 }
 
-.pdfTop {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 20px;
-}
-
-.pdfTop h3 {
-  margin: 0;
-  color: #111827;
-  font-size: 24px;
-  letter-spacing: -0.03em;
-}
-
-.pdfTop span {
-  color: #64748b;
-  font-size: 12px;
-}
-
-.pdfDivider {
-  height: 2px;
-  margin: 18px 0 24px;
-  background: #111827;
-}
-
 .dataTableWrap {
   max-height: 720px;
   overflow: auto;
@@ -3870,9 +3256,7 @@ button:disabled {
   .heroGrid,
   .workspace,
   .ttsWorkspace,
-  .genPreviewCanvas,
   .studioBoard,
-  .audioGrid,
   .compactAudioShell,
   .desktopListenGrid {
     grid-template-columns: 1fr;
@@ -3940,10 +3324,6 @@ button:disabled {
     flex: 1;
   }
 
-  .privacyNote {
-    font-size: 12px;
-  }
-
   .heroGrid {
     margin-top: 54px;
   }
@@ -3959,8 +3339,6 @@ button:disabled {
 
   .twoCols,
   .statStrip,
-  .genStatusSummary,
-  .ttsStats,
   .genMetaGrid,
   .questionTypeGrid.compact,
   .tinyActions,
@@ -3969,12 +3347,14 @@ button:disabled {
     grid-template-columns: 1fr;
   }
 
-  .sectionHeaderCompact {
-    flex-direction: column;
+  /* 覆盖 .genConfigStage 下的高特异性两列/三列规则，保证移动端单列布局生效。 */
+  .genConfigStage .genMetaCompact,
+  .genConfigStage .questionTypeGrid.compact {
+    grid-template-columns: 1fr;
   }
 
-  .compactBatchList {
-    max-height: 320px;
+  .sectionHeaderCompact {
+    flex-direction: column;
   }
 
   .previewStage,
@@ -3983,15 +3363,6 @@ button:disabled {
   .ttsControls,
   .gateCard {
     border-radius: 24px;
-  }
-
-  .genPreviewPaper {
-    min-height: auto;
-    padding: 20px 20px 36px;
-  }
-
-  .genPreviewPaper::before {
-    inset: 12px;
   }
 
   .libraryOverlay {
