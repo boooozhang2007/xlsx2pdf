@@ -1663,15 +1663,67 @@ const paragraph = (text, options = {}) => ({
   indentLeft: options.indentLeft || 0,
 })
 
-const table = (rows, options = {}) => ({
-  kind: 'table',
-  rows,
-  columnWidths: options.columnWidths || [],
-  cantSplit: options.cantSplit || false,
-})
+// 练习包两栏题目文档的每栏可用宽度(pt)：按 docx.js 实际页面参数计算，
+// A4 页宽 11906 twips - 左右边距 1440*2 - 栏距 720(36pt)，除以 2 得每栏约 207.65pt。
+const LEGACY_COLUMN_WIDTH_PT = (11906 - 1440 * 2 - 720) / 2 / 20
+// Times-Roman 平均字宽约 0.48em；无真实字体测宽时用 0.5 近似判断选项行是否放得下。
+const AVG_GLYPH_WIDTH_RATIO = 0.5
+
+const estimateTextWidthPt = (text, sizePt) => {
+  const chars = String(text ?? '').split('')
+  const widths = chars.map((ch) => (
+    /[\u4e00-\u9fff]/.test(ch) ? sizePt : sizePt * AVG_GLYPH_WIDTH_RATIO
+  ))
+  return widths.reduce((sum, width) => sum + width, 0)
+}
 
 const optionLine = (options) => `    ${options.map((value, index) => `${'ABCD'[index]}. ${value}`).join('  ')}`
-const answerLine = (answers) => answers.map(([num, value]) => `${num}.${value}`).join('    ')
+
+// 生成选项行段落：4 个选项一行放得下则单行；否则拆成 A、B / C、D 两行；
+// 个别超长段自动缩字号（最小 6pt）保证同一排不换行。返回段落对象列表。
+const buildOptionLines = (options, size = 12) => {
+  const line = optionLine(options)
+  if (estimateTextWidthPt(line, size) <= LEGACY_COLUMN_WIDTH_PT) {
+    return [paragraph(line, { size })]
+  }
+  const inner = line.trim()
+  const parts = inner.split(/\s{2,}(?=[A-D]\.)/)
+  const ab = `    ${parts.slice(0, 2).join('  ')}`
+  const cd = `    ${parts.slice(2, 4).join('  ')}`
+  return [ab, cd].map((seg) => {
+    let pt = size
+    while (pt >= 6.0 && estimateTextWidthPt(seg, pt) > LEGACY_COLUMN_WIDTH_PT) pt -= 0.5
+    return paragraph(seg, { size: pt })
+  })
+}
+
+// 题干段 + 选项段用 keepNext 串链，保证同一道题的题目与选项在同一栏内不跨栏不跨页。
+// middleLines: 题干与选项之间的补充行（如中文译文），同样参与 keepNext 串链。
+const pushQuestionWithOptions = (questionParagraphs, stemText, options, {
+  size = 12,
+  middleLines = [],
+} = {}) => {
+  const stem = paragraph(stemText, { size, keepNext: true, keepLines: true })
+  questionParagraphs.push(stem)
+  middleLines.forEach((line) => {
+    questionParagraphs.push(paragraph(line, {
+      size,
+      indentLeft: 12,
+      keepNext: true,
+      keepLines: true,
+    }))
+  })
+  const optionLines = buildOptionLines(options, size)
+  optionLines.forEach((line, index) => {
+    questionParagraphs.push({
+      ...line,
+      keepNext: index < optionLines.length - 1,
+      keepLines: true,
+    })
+  })
+}
+
+const answerLine = (answers) => answers.map(([num, value]) => `${num}.${value}`).join('\t')
 const requireGeneratedValue = (value, message) => {
   if (!value) throw new Error(message)
   return value
@@ -1714,29 +1766,10 @@ const generateMatching = (questionParagraphs, answerParagraphs, group, groupInde
     const options = shuffle([...distractors.map((item) => item.displayEnglish), entry.displayEnglish], context.rng).slice(0, 4)
     const definition = requireGeneratedValue(lexical.get(entry.key)?.definitionEn, '释义匹配存在缺失的 definition_en。')
     const definitionZh = requireGeneratedValue(lexical.get(entry.key)?.definitionZh, '释义匹配存在缺失的 definition_zh。')
-    questionParagraphs.push(paragraph(`${index + 1}. ${definition}`, {
+    pushQuestionWithOptions(questionParagraphs, `${index + 1}. ${definition}`, options, {
       size: 11,
-      keepNext: true,
-      keepLines: true,
-    }))
-    if (context.withChineseTranslation && definitionZh) {
-      questionParagraphs.push(paragraph(`（${definitionZh}）`, {
-        size: 10,
-        indentLeft: 12,
-        keepNext: true,
-        keepLines: true,
-      }))
-    }
-    const optionText = optionLine(options)
-    const optionFontSize = Math.max(7.5, Math.min(11, 430 / Math.max(1, optionText.length)))
-    questionParagraphs.push(table([[{
-      text: optionText,
-      size: optionFontSize,
-      noWrap: true,
-    }]], {
-      columnWidths: [4330],
-      cantSplit: true,
-    }))
+      middleLines: context.withChineseTranslation && definitionZh ? [`（${definitionZh}）`] : [],
+    })
     answers.push([index + 1, 'ABCD'[options.indexOf(entry.displayEnglish)] || 'A'])
   })
   writeAnswerBlock(answerParagraphs, `第${groupIndex + 1}组 一 释义匹配 答案`, answers, 10, groupIndex > 0)
@@ -1752,8 +1785,7 @@ const generateMultipleChoice = (questionParagraphs, answerParagraphs, group, gro
     const options = shuffle([...distractors.map((item) => item.displayEnglish), entry.displayEnglish], context.rng).slice(0, 4)
     const material = context.basicMaterialCache.get(entry.key)
     const clozeSentence = requireGeneratedValue(material?.clozeSentence, '选择题缺少 LLM 题面材料。')
-    questionParagraphs.push(paragraph(`${index + 1}. ${clozeSentence}`))
-    questionParagraphs.push(paragraph(optionLine(options)))
+    pushQuestionWithOptions(questionParagraphs, `${index + 1}. ${clozeSentence}`, options)
     answers.push([index + 1, 'ABCD'[options.indexOf(entry.displayEnglish)] || 'A'])
   })
   writeAnswerBlock(answerParagraphs, `第${groupIndex + 1}组 二 选择题 答案`, answers, 10, groupIndex > 0)
@@ -1775,8 +1807,7 @@ const generateSynonymReplacement = (questionParagraphs, answerParagraphs, group,
     const synonymOriginal = requireGeneratedValue(material.synonymOriginal, '同义替换缺少原句。')
     const synonymRewriteBlank = requireGeneratedValue(material.synonymRewriteBlank, '同义替换缺少改写句。')
     questionParagraphs.push(paragraph(`${index + 1}. ${synonymOriginal}`))
-    questionParagraphs.push(paragraph(synonymRewriteBlank))
-    questionParagraphs.push(paragraph(optionLine(shuffled)))
+    pushQuestionWithOptions(questionParagraphs, synonymRewriteBlank, shuffled)
     answers.push([index + 1, 'ABCD'[shuffled.indexOf(synonym)] || 'A'])
   })
   writeAnswerBlock(answerParagraphs, `第${groupIndex + 1}组 三 同义替换 答案`, answers, 10, groupIndex > 0)
@@ -1870,15 +1901,18 @@ const generateMatchBlocks = (questionParagraphs, answerParagraphs, group, groupI
     }
     if (!block.length) break
     const rightWords = shuffle(block.map((pair) => pair[1]), context.rng)
-    const tableRows = block.map((pair, index) => {
-      const displayNumber = questionNumber + index + 1
-      return [
-        { text: `${displayNumber}. ${pair[0].displayEnglish}`, size: 12 },
-        { text: `${'abcde'[index] || 'a'}. ${rightWords[index]}`, size: 12 },
-      ]
-    })
-    questionParagraphs.push(table(tableRows, { columnWidths: [2500, 4100] }))
+    // 整组 5 行配对以段落呈现（Python 参考格式），并用空段 + keepNext 串链绑定在同一栏
+    const groupStartIndex = questionParagraphs.length
     questionParagraphs.push(paragraph('', { spaceAfter: 0 }))
+    block.forEach((pair, index) => {
+      const displayNumber = questionNumber + index + 1
+      questionParagraphs.push(paragraph(`${displayNumber}. ${pair[0].displayEnglish}    ${'abcde'[index] || 'a'}. ${rightWords[index]}`))
+    })
+    const groupParagraphs = questionParagraphs.slice(groupStartIndex)
+    groupParagraphs.forEach((groupParagraph, index) => {
+      groupParagraph.keepNext = index < groupParagraphs.length - 1
+      groupParagraph.keepLines = true
+    })
     block.forEach((pair, index) => {
       const letter = 'abcde'[rightWords.indexOf(pair[1])] || 'a'
       const displayNumber = questionNumber + index + 1
@@ -2392,14 +2426,16 @@ const createNonTranslationFiles = async (questionKey, groups, context) => {
 
   await context.checkForCancellation()
 
+  // 题目文档：默认两栏；五(缺字母填空)/九(判断正误)按参考引擎保持单栏
+  const useColumns = questionKey !== '五_缺字母填空' && questionKey !== '九_判断正误' ? 2 : 1
   return [
     {
       name: `${context.exportName}/${questionKey}/${questionKey}.docx`,
       data: createDocxBuffer({
         title: `${typeInfo.title}题目`,
         paragraphs: questionParagraphs,
-        columns: questionKey === '一_释义匹配' ? 2 : 1,
-        columnSpacing: 18,
+        columns: useColumns,
+        columnSpacing: 36,
       }),
     },
     {

@@ -530,16 +530,15 @@ test('legacy matching worksheet is portrait two-column with single-row options a
   const withoutChineseXml = readQuestionXml(withoutChinese)
 
   assert.match(withChineseXml, /<w:pgSz w:w="11906" w:h="16838" w:orient="portrait"\/>/)
-  assert.match(withChineseXml, /<w:cols w:num="2" w:space="360"\/>/)
+  assert.match(withChineseXml, /<w:cols w:num="2" w:space="720"\/>/)
 
+  // 选项以段落呈现（Python 参考格式），不再使用单行表格
   const optionTables = withChineseXml.match(/<w:tbl>[\s\S]*?<\/w:tbl>/g) || []
-  assert.equal(optionTables.length, 12)
-  optionTables.forEach((optionTable) => {
-    assert.equal((optionTable.match(/<w:tr>/g) || []).length, 1)
-    assert.equal((optionTable.match(/<w:tc>/g) || []).length, 1)
-    assert.match(optionTable, /<w:cantSplit\/>/)
-    assert.match(optionTable, /<w:noWrap\/>/)
-    ;['A. ', 'B. ', 'C. ', 'D. '].forEach((label) => assert.ok(optionTable.includes(label)))
+  assert.equal(optionTables.length, 0)
+  const optionSegments = withChineseXml.match(/    A\. [^<]+  B\. [^<]+<\/w:t>[\s\S]*?    C\. [^<]+  D\. [^<]+/g) || []
+  assert.equal(optionSegments.length, 12)
+  optionSegments.forEach((segment) => {
+    ;['A. ', 'B. ', 'C. ', 'D. '].forEach((label) => assert.ok(segment.includes(label)))
   })
 
   const englishStart = withChineseXml.search(/definition for item \d+/)
@@ -547,9 +546,9 @@ test('legacy matching worksheet is portrait two-column with single-row options a
   const englishEnd = withChineseXml.indexOf('</w:p>', englishStart)
   const translationStart = withChineseXml.indexOf('<w:p>', englishEnd)
   const translationEnd = withChineseXml.indexOf('</w:p>', translationStart)
-  const optionTableStart = withChineseXml.indexOf('<w:tbl>', englishEnd)
+  const firstOptionStart = withChineseXml.indexOf('    A. ', translationEnd)
   assert.match(withChineseXml.slice(translationStart, translationEnd), /第一题译文\d+/)
-  assert.ok(translationEnd < optionTableStart)
+  assert.ok(translationEnd < firstOptionStart)
   assert.doesNotMatch(withoutChineseXml, /第一题译文\d+/)
 
   const englishInstruction = withChineseXml.indexOf('Match each definition with the correct word.')
