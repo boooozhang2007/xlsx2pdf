@@ -1333,11 +1333,8 @@ export const prepareWorksheetJobWorkflowMigration = async (jobId, { resetRuntime
     throw error
   }
 
-  // Read the larger cache first so the ownership snapshot remains fresh for
-  // the conditional write while an older executor is still reporting progress.
   const savedCache = await getObjectJson({ key: jobCacheKey(normalizedJobId) }).catch(() => null)
-  const snapshot = await readJobWithMetadata(normalizedJobId)
-  const job = snapshot?.value
+  const job = await readJob(normalizedJobId).catch(() => null)
   if (!job) {
     const error = new Error('未找到对应任务。')
     error.statusCode = 404
@@ -1351,7 +1348,9 @@ export const prepareWorksheetJobWorkflowMigration = async (jobId, { resetRuntime
 
   const recoveryRuntime = getWorksheetRecoveryRuntime(savedCache, { forceReset: resetRuntime })
   const recoveryProgress = savedCache ? (job.progress || resetJobProgress(job)) : resetJobProgress(job)
-  const migrated = await writeOwnedJob({
+  // This endpoint is an explicit operator takeover.  An in-flight legacy
+  // executor must be invalidated even if it keeps updating the old ETag.
+  const migrated = await writeJob({
     ...job,
     status: 'queued',
     startedAt: savedCache ? job.startedAt : 0,
@@ -1376,7 +1375,7 @@ export const prepareWorksheetJobWorkflowMigration = async (jobId, { resetRuntime
         ? '已保留服务器缓存，正在迁移到最新 Workflow 继续处理…'
         : '旧任务缓存不存在，正在由服务器重新生成…',
     },
-  }, snapshot.etag)
+  })
 
   if (recoveryRuntime) {
     const payload = await readJobPayload(normalizedJobId).catch(() => null)
@@ -1394,7 +1393,7 @@ export const prepareWorksheetJobWorkflowMigration = async (jobId, { resetRuntime
     }
   }
 
-  return summarizeJob(migrated.job)
+  return summarizeJob(migrated)
 }
 
 export const prepareWorksheetBatchWorkflowMigration = async (batchId, { resetRuntime = false, rebuildJobIds = [] } = {}) => {
