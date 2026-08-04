@@ -2603,6 +2603,7 @@ export const generateWorksheetArchive = async ({
   rowLimit = MAX_EXPORT_ROWS,
   onProgress,
   onShouldCancel,
+  onRenderStart,
   llmModel,
   llmBatchSize,
   llmConcurrency,
@@ -2883,6 +2884,8 @@ export const generateWorksheetArchive = async ({
       stepKey: 'warmup:synonym',
     })
   }
+
+  if (typeof onRenderStart === 'function') await onRenderStart()
 
   let files = []
   if (normalizedMode === GENERATION_MODE_FIXED_TEST_PAPER) {

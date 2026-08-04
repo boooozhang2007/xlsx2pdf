@@ -14,6 +14,8 @@ const STALE_PROCESSING_MS = Math.max(60_000, Number.parseInt(process.env.GEN_QUE
 const MAX_LIST_JOBS = 40
 const PROGRESS_WRITE_INTERVAL_MS = Math.max(200, Number.parseInt(process.env.GEN_QUEUE_PROGRESS_WRITE_INTERVAL_MS || '700', 10) || 700)
 const PROGRESS_WRITE_WORD_DELTA = Math.max(1, Number.parseInt(process.env.GEN_QUEUE_PROGRESS_WRITE_WORD_DELTA || '5', 10) || 5)
+const RENDER_PROGRESS_WRITE_INTERVAL_MS = Math.max(PROGRESS_WRITE_INTERVAL_MS, 5000)
+const RENDER_PROGRESS_WRITE_WORD_DELTA = Math.max(PROGRESS_WRITE_WORD_DELTA, 200)
 const CANCELLATION_POLL_INTERVAL_MS = Math.max(150, Number.parseInt(process.env.GEN_QUEUE_CANCELLATION_POLL_INTERVAL_MS || '300', 10) || 300)
 const LLM_ENTRIES_PER_STEP = Math.max(1, Number.parseInt(process.env.GEN_QUEUE_LLM_ENTRIES_PER_STEP || '100', 10) || 100)
 const LLM_BATCH_ROUNDS_PER_STEP = Math.max(1, Number.parseInt(process.env.GEN_QUEUE_LLM_BATCH_ROUNDS_PER_STEP || '3', 10) || 3)
@@ -342,6 +344,13 @@ export const hasWorksheetStepTimeBudget = (startedAt, currentTime = now(), limit
   Math.max(0, Number(currentTime) - Number(startedAt || 0)) < Math.max(1, Number(limitMs) || WORKFLOW_STEP_SOFT_LIMIT_MS)
 )
 
+export const shouldYieldWorksheetStep = (
+  renderingStarted,
+  startedAt,
+  currentTime = now(),
+  limitMs = WORKFLOW_STEP_SOFT_LIMIT_MS,
+) => !renderingStarted && !hasWorksheetStepTimeBudget(startedAt, currentTime, limitMs)
+
 export const getLlmRequestRetryDelayMs = (retryCount = 0) => {
   const normalizedRetryCount = Math.max(0, Number(retryCount) || 0)
   if (normalizedRetryCount < MAX_REQUEST_REQUEUES) {
@@ -612,6 +621,7 @@ const processSingleJob = async (job) => {
   let lastProgressWriteAt = now()
   let cancelKnown = false
   let lastCancelCheckAt = 0
+  let renderingStarted = false
 
   const shouldCancel = async (force = false) => {
     if (cancelKnown) return true
@@ -632,7 +642,7 @@ const processSingleJob = async (job) => {
   }
 
   const shouldCancelOrYield = async () => {
-    if (!hasWorksheetStepTimeBudget(stepStartedAt)) {
+    if (shouldYieldWorksheetStep(renderingStarted, stepStartedAt)) {
       const error = new Error('本轮服务器运行时间已到，进度已保存。')
       error.code = 'JOB_STEP_YIELDED'
       throw error
@@ -652,12 +662,14 @@ const processSingleJob = async (job) => {
       (nextProgress?.currentQuestionType || '') !== (previous.currentQuestionType || '')
     const stageWordDelta = Math.abs(Number(nextProgress?.stageWordCompleted || 0) - Number(previous.stageWordCompleted || 0))
     const completedStepDelta = Math.abs(Number(nextProgress?.completedSteps || 0) - Number(previous.completedSteps || 0))
-    const intervalElapsed = now() - lastProgressWriteAt >= PROGRESS_WRITE_INTERVAL_MS
+    const writeIntervalMs = renderingStarted ? RENDER_PROGRESS_WRITE_INTERVAL_MS : PROGRESS_WRITE_INTERVAL_MS
+    const writeWordDelta = renderingStarted ? RENDER_PROGRESS_WRITE_WORD_DELTA : PROGRESS_WRITE_WORD_DELTA
+    const intervalElapsed = now() - lastProgressWriteAt >= writeIntervalMs
     const shouldFlush =
       force ||
       !lastPersistedProgress ||
       stageChanged ||
-      stageWordDelta >= PROGRESS_WRITE_WORD_DELTA ||
+      stageWordDelta >= writeWordDelta ||
       completedStepDelta >= 1 ||
       intervalElapsed ||
       Number(nextProgress?.percent || 0) >= 100
@@ -711,6 +723,9 @@ const processSingleJob = async (job) => {
       withChineseTranslation: normalizeWithChineseTranslation(payload.withChineseTranslation ?? latestJob.withChineseTranslation),
       onProgress: handleProgress,
       onShouldCancel: shouldCancelOrYield,
+      onRenderStart: () => {
+        renderingStarted = true
+      },
       initialCache,
       onCacheCheckpoint: checkpointCache,
     })

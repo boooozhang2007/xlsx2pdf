@@ -746,8 +746,36 @@ test('degraded LLM runtimes cap each Workflow step by request rounds', async () 
 })
 
 test('workflow steps yield before the serverless function hard timeout', async () => {
-  const { hasWorksheetStepTimeBudget } = await import('../server/genQueue.js')
+  const { hasWorksheetStepTimeBudget, shouldYieldWorksheetStep } = await import('../server/genQueue.js')
 
   assert.equal(hasWorksheetStepTimeBudget(1_000, 180_999, 180_000), true)
   assert.equal(hasWorksheetStepTimeBudget(1_000, 181_000, 180_000), false)
+  assert.equal(shouldYieldWorksheetStep(false, 1_000, 181_000, 180_000), true)
+  assert.equal(shouldYieldWorksheetStep(true, 1_000, 181_000, 180_000), false)
+})
+
+test('rendering starts only after cached LLM preparation has completed', async () => {
+  const { rows, initialCache } = buildFixedTestPaperFixture(30)
+  const { generateWorksheetArchive } = await import('../server/genEngine.js')
+  const events = []
+
+  const result = await generateWorksheetArchive({
+    rows,
+    fileName: 'render-phase-test.xlsx',
+    generationMode: 'fixed_test_paper',
+    testPaperGroupSizes: [30],
+    initialCache,
+    onProgress: async (progress) => {
+      events.push(progress.currentStep)
+    },
+    onRenderStart: async () => {
+      events.push('render-start')
+    },
+  })
+
+  const renderStartIndex = events.indexOf('render-start')
+  assert.ok(renderStartIndex > 0)
+  assert.ok(events.slice(0, renderStartIndex).some((step) => String(step).startsWith('预热 LLM')))
+  assert.equal(events[renderStartIndex + 1], '生成测试卷')
+  assert.ok(result.buffer.length > 0)
 })
