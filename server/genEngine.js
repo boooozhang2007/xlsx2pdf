@@ -62,17 +62,7 @@ let cjkFontBytesPromise = null
 
 const loadCjkFontBytes = async () => {
   if (!cjkFontBytesPromise) {
-    cjkFontBytesPromise = (async () => {
-      try {
-        // 生产构建：字体打包为 Nitro server asset，随函数包部署，Vercel 上可读
-        const { useStorage } = await import('nitro/storage')
-        const bytes = await useStorage('assets/server').getItemRaw('STSong.ttf')
-        if (bytes) return bytes
-      } catch {
-        // 非 Nitro 运行时（如单元测试）或未打包时，回退到文件系统
-      }
-      return fs.readFile(path.join(__dirname, '..', 'assets', 'STSong.ttf'))
-    })()
+    cjkFontBytesPromise = fs.readFile(path.join(__dirname, '..', 'public', 'STSong.ttf'))
   }
   return cjkFontBytesPromise
 }
