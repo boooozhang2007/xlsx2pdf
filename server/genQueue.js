@@ -1333,6 +1333,9 @@ export const prepareWorksheetJobWorkflowMigration = async (jobId, { resetRuntime
     throw error
   }
 
+  // Read the larger cache first so the ownership snapshot remains fresh for
+  // the conditional write while an older executor is still reporting progress.
+  const savedCache = await getObjectJson({ key: jobCacheKey(normalizedJobId) }).catch(() => null)
   const snapshot = await readJobWithMetadata(normalizedJobId)
   const job = snapshot?.value
   if (!job) {
@@ -1346,7 +1349,6 @@ export const prepareWorksheetJobWorkflowMigration = async (jobId, { resetRuntime
     throw error
   }
 
-  const savedCache = await getObjectJson({ key: jobCacheKey(normalizedJobId) }).catch(() => null)
   const recoveryRuntime = getWorksheetRecoveryRuntime(savedCache, { forceReset: resetRuntime })
   const recoveryProgress = savedCache ? (job.progress || resetJobProgress(job)) : resetJobProgress(job)
   const migrated = await writeOwnedJob({
