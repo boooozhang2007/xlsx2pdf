@@ -676,6 +676,13 @@ test('explicit runtime reset also rewrites queued jobs during workflow migration
   assert.equal(shouldRewriteWorksheetJobForMigration('completed', { forceRewrite: true }), true)
 })
 
+test('single jobs can be selected for migration without a batch id', async () => {
+  const { shouldRewriteWorksheetJobForMigration } = await import('../server/genQueue.js')
+
+  assert.equal(shouldRewriteWorksheetJobForMigration('processing', { forceRewrite: true }), true)
+  assert.equal(shouldRewriteWorksheetJobForMigration('queued', { forceRewrite: true }), true)
+})
+
 test('cache recovery fills missing entries while preserving target results', async () => {
   const { mergeWorksheetCacheValues } = await import('../server/genQueue.js')
   const merged = mergeWorksheetCacheValues({

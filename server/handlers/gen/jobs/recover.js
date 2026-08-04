@@ -1,7 +1,7 @@
 import { getRun, start } from 'workflow/api'
 import { readJsonBody, rejectMethod, requireSession, sendJson } from '../../../auth.js'
-import { prepareWorksheetBatchWorkflowMigration, seedWorksheetJobCaches } from '../../../genQueue.js'
-import { worksheetJobBatchWorkflow } from '../../../../workflows/worksheetJob.js'
+import { prepareWorksheetBatchWorkflowMigration, prepareWorksheetJobWorkflowMigration, seedWorksheetJobCaches } from '../../../genQueue.js'
+import { worksheetJobBatchWorkflow, worksheetJobWorkflow } from '../../../../workflows/worksheetJob.js'
 
 const TERMINAL_RUN_STATUSES = new Set(['completed', 'failed', 'cancelled'])
 
@@ -12,9 +12,13 @@ export default async function handler(req, res) {
   try {
     const body = await readJsonBody(req)
     const batchId = String(body.batchId || '').trim()
+    const jobId = String(body.jobId || '').trim()
     const previousRunId = String(body.runId || '').trim()
-    if (!batchId) {
-      return sendJson(res, 400, { ok: false, error: '缺少 batchId。' })
+    if (!batchId && !jobId) {
+      return sendJson(res, 400, { ok: false, error: '缺少 batchId 或 jobId。' })
+    }
+    if (batchId && jobId) {
+      return sendJson(res, 400, { ok: false, error: 'batchId 和 jobId 不能同时提供。' })
     }
 
     let previousRunStatus = 'not_provided'
@@ -35,20 +39,20 @@ export default async function handler(req, res) {
     if (Boolean(seedCacheFromJobIds.length) !== Boolean(seedCacheToJobId)) {
       return sendJson(res, 400, { ok: false, error: '缓存恢复需要同时提供源任务和目标任务 id。' })
     }
-    const jobs = await prepareWorksheetBatchWorkflowMigration(batchId, {
-      resetRuntime: body.resetRuntime === true,
-      rebuildJobIds: Array.isArray(body.rebuildJobIds) ? body.rebuildJobIds : [],
-    })
+    const jobs = jobId
+      ? [await prepareWorksheetJobWorkflowMigration(jobId, { resetRuntime: body.resetRuntime === true })]
+      : await prepareWorksheetBatchWorkflowMigration(batchId, {
+        resetRuntime: body.resetRuntime === true,
+        rebuildJobIds: Array.isArray(body.rebuildJobIds) ? body.rebuildJobIds : [],
+      })
     // Migration invalidates the old execution lease before the cache is
     // merged, so an in-flight canceled step cannot overwrite the recovery.
     const seededCache = seedCacheFromJobIds.length
       ? await seedWorksheetJobCaches(seedCacheFromJobIds, seedCacheToJobId)
       : null
-    const run = await start(
-      worksheetJobBatchWorkflow,
-      [jobs.map((job) => job.id)],
-      { deploymentId: 'latest' },
-    )
+    const run = jobId
+      ? await start(worksheetJobWorkflow, [jobId], { deploymentId: 'latest' })
+      : await start(worksheetJobBatchWorkflow, [jobs.map((job) => job.id)], { deploymentId: 'latest' })
     return sendJson(res, 200, {
       ok: true,
       batchId,

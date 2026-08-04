@@ -1325,6 +1325,76 @@ export const shouldRewriteWorksheetJobForMigration = (status, { resetRuntime = f
   forceRewrite || ['processing', 'failed'].includes(status) || (resetRuntime && status === 'queued')
 )
 
+export const prepareWorksheetJobWorkflowMigration = async (jobId, { resetRuntime = false } = {}) => {
+  const normalizedJobId = String(jobId || '').trim()
+  if (!normalizedJobId) {
+    const error = new Error('缺少任务 id。')
+    error.statusCode = 400
+    throw error
+  }
+
+  const snapshot = await readJobWithMetadata(normalizedJobId)
+  const job = snapshot?.value
+  if (!job) {
+    const error = new Error('未找到对应任务。')
+    error.statusCode = 404
+    throw error
+  }
+  if (['completed', 'canceled', 'canceling'].includes(job.status)) {
+    const error = new Error(`任务处于 ${job.status} 状态，无法迁移 Workflow。`)
+    error.statusCode = 409
+    throw error
+  }
+
+  const savedCache = await getObjectJson({ key: jobCacheKey(normalizedJobId) }).catch(() => null)
+  const recoveryRuntime = getWorksheetRecoveryRuntime(savedCache, { forceReset: resetRuntime })
+  const recoveryProgress = savedCache ? (job.progress || resetJobProgress(job)) : resetJobProgress(job)
+  const migrated = await writeOwnedJob({
+    ...job,
+    status: 'queued',
+    startedAt: savedCache ? job.startedAt : 0,
+    failedAt: 0,
+    executionLeaseId: '',
+    llmModel: recoveryRuntime?.model || job.llmModel,
+    llmBatchSize: recoveryRuntime?.batchSize || job.llmBatchSize,
+    llmConcurrency: recoveryRuntime?.concurrency || job.llmConcurrency,
+    llmFallbackModels: recoveryRuntime?.fallbackModels || job.llmFallbackModels,
+    llmRequestRetries: 0,
+    llmRequestRetryProgressMark: '',
+    llmRateLimitRetries: 0,
+    llmRateLimitRetryProgressMark: '',
+    llmValidationRetries: 0,
+    llmValidationRetryProgressMark: '',
+    nextAttemptAt: now(),
+    error: '',
+    progress: {
+      ...recoveryProgress,
+      currentStep: '迁移到最新 Workflow',
+      message: savedCache
+        ? '已保留服务器缓存，正在迁移到最新 Workflow 继续处理…'
+        : '旧任务缓存不存在，正在由服务器重新生成…',
+    },
+  }, snapshot.etag)
+
+  if (recoveryRuntime) {
+    const payload = await readJobPayload(normalizedJobId).catch(() => null)
+    if (payload) {
+      await writeJsonObject({
+        key: jobPayloadKey(normalizedJobId),
+        value: {
+          ...payload,
+          llmModel: recoveryRuntime.model,
+          llmBatchSize: recoveryRuntime.batchSize,
+          llmConcurrency: recoveryRuntime.concurrency,
+          llmFallbackModels: recoveryRuntime.fallbackModels,
+        },
+      })
+    }
+  }
+
+  return summarizeJob(migrated.job)
+}
+
 export const prepareWorksheetBatchWorkflowMigration = async (batchId, { resetRuntime = false, rebuildJobIds = [] } = {}) => {
   const normalizedBatchId = String(batchId || '').trim()
   if (!normalizedBatchId) {
