@@ -1018,7 +1018,6 @@ const processSingleJob = async (job) => {
         message: error.message || '生成失败。',
       },
     })
-    await deleteObject({ key: jobCacheKey(job.id) }).catch(() => {})
   }
 }
 
@@ -1205,6 +1204,41 @@ export const submitWorksheetJob = async ({
   ])
 
   return { job: summarizeJob(job), created: true }
+}
+
+export const retryWorksheetJob = async (jobId) => {
+  const sourceJob = await readJob(jobId)
+  if (sourceJob.status !== 'failed') {
+    const error = new Error('只有失败任务可以重新生成。')
+    error.statusCode = 409
+    throw error
+  }
+  const payload = await readJobPayload(jobId).catch(() => null)
+  if (!payload || !Array.isArray(payload.rows)) {
+    const error = new Error('找不到失败任务的原始词表数据。')
+    error.statusCode = 404
+    throw error
+  }
+  const submission = await submitWorksheetJob({
+    rows: payload.rows,
+    fileName: payload.fileName || sourceJob.fileName,
+    questionTypes: payload.questionTypes || sourceJob.questionTypes,
+    generationMode: payload.generationMode || sourceJob.generationMode,
+    llmModel: payload.llmModel || sourceJob.llmModel,
+    legacyQuestionCount: payload.legacyQuestionCount ?? sourceJob.legacyQuestionCount,
+    testPaperGroupSizes: payload.testPaperGroupSizes || sourceJob.testPaperGroupSizes,
+    withChineseTranslation: payload.withChineseTranslation ?? sourceJob.withChineseTranslation,
+    batchId: sourceJob.batchId || '',
+    copyIndex: sourceJob.copyIndex || 0,
+    copyCount: sourceJob.copyCount || 1,
+    variationSeed: payload.variationSeed || sourceJob.variationSeed || '',
+    exportSuffix: payload.exportSuffix || sourceJob.exportSuffix || '',
+  })
+  if (submission.created) {
+    const sourceCache = await getObjectJson({ key: jobCacheKey(jobId) }).catch(() => null)
+    if (sourceCache) await writeJsonObject({ key: jobCacheKey(submission.job.id), value: sourceCache })
+  }
+  return submission
 }
 
 export const listWorksheetJobs = async () => {

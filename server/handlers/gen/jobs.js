@@ -1,7 +1,7 @@
 import { readJsonBody, rejectMethod, requireSession, sendJson } from '../../auth.js'
 import crypto from 'node:crypto'
 import { start } from 'workflow/api'
-import { cancelWorksheetJob, deleteWorksheetJob, failWorksheetJobStart, listWorksheetJobs, submitWorksheetJob } from '../../genQueue.js'
+import { cancelWorksheetJob, deleteWorksheetJob, failWorksheetJobStart, listWorksheetJobs, retryWorksheetJob, submitWorksheetJob } from '../../genQueue.js'
 import { getAvailableLlmModels, getDefaultLlmModel } from '../../genEngine.js'
 import { ALL_QUESTION_TYPE_KEYS, FIXED_TEST_PAPER_QUESTION_KEYS } from '../../../shared/worksheetTypes.js'
 import { GENERATION_MODE_FIXED_TEST_PAPER, GENERATION_MODE_LEGACY_ZIP, normalizeWithChineseTranslation } from '../../../shared/generationModes.js'
@@ -39,6 +39,20 @@ export default async function handler(req, res) {
     }
 
     const body = await readJsonBody(req)
+    const retryJobId = String(body.retryJobId || '').trim()
+    if (retryJobId) {
+      const submission = await retryWorksheetJob(retryJobId)
+      if (!submission.created) {
+        return sendJson(res, 200, { ok: true, job: submission.job, jobs: [submission.job], deduplicated: true })
+      }
+      try {
+        const run = await start(worksheetJobWorkflow, [submission.job.id])
+        return sendJson(res, 200, { ok: true, job: submission.job, jobs: [submission.job], workflowRunId: run.runId })
+      } catch (error) {
+        await failWorksheetJobStart(submission.job.id, error.message || 'Workflow 启动失败。').catch(() => {})
+        throw error
+      }
+    }
     const rows = Array.isArray(body.rows) ? body.rows : null
     if (!rows) {
       return sendJson(res, 400, { ok: false, error: 'rows 必须是数组。' })

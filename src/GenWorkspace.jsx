@@ -304,6 +304,7 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
   const [queueBusy, setQueueBusy] = useState(false)
   const [downloadingJobId, setDownloadingJobId] = useState('')
   const [reexportingJobId, setReexportingJobId] = useState('')
+  const [retryingJobId, setRetryingJobId] = useState('')
   const [cancelingJobId, setCancelingJobId] = useState('')
   const [deletingJobId, setDeletingJobId] = useState('')
   const [status, setStatus] = useState('')
@@ -508,6 +509,27 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
     }
   }
 
+  const retryJob = async (job) => {
+    if (!job?.id) return
+    setRetryingJobId(job.id)
+    setStatus('正在从失败任务恢复原始词表并重新生成…')
+    try {
+      const data = await apiJson('/api/gen/jobs', {
+        method: 'POST',
+        body: JSON.stringify({ retryJobId: job.id }),
+      })
+      if (data?.job) {
+        setJobs((current) => [data.job, ...current.filter((item) => item.id !== data.job.id)])
+      }
+      setStatus(data.deduplicated ? '相同任务已在服务器处理中。' : '失败任务已重新提交。')
+      loadJobs(true)
+    } catch (error) {
+      setStatus(error.message || '重新生成失败。')
+    } finally {
+      setRetryingJobId('')
+    }
+  }
+
   const cancelJob = async (job) => {
     if (!job?.id || ['completed', 'failed', 'canceled'].includes(job.status)) return
     setCancelingJobId(job.id)
@@ -704,7 +726,13 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
                           删除
                         </button>
                       ) : null}
-                      {['completed', 'failed'].includes(job.status) ? (
+                      {job.status === 'failed' ? (
+                        <button className="genQueueReexport" type="button" onClick={() => retryJob(job)} disabled={retryingJobId === job.id}>
+                          {retryingJobId === job.id ? <Loader2 className="spin" size={13} /> : <RefreshCw size={13} />}
+                          重新生成
+                        </button>
+                      ) : null}
+                      {job.status === 'completed' ? (
                         <>
                           <button className="genQueueReexport" type="button" onClick={() => reexportJob(job)} disabled={reexportingJobId === job.id}>
                             {reexportingJobId === job.id ? <Loader2 className="spin" size={13} /> : <RefreshCw size={13} />}
