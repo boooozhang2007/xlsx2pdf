@@ -704,7 +704,7 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
                           删除
                         </button>
                       ) : null}
-                      {job.status === 'completed' ? (
+                      {['completed', 'failed'].includes(job.status) ? (
                         <>
                           <button className="genQueueReexport" type="button" onClick={() => reexportJob(job)} disabled={reexportingJobId === job.id}>
                             {reexportingJobId === job.id ? <Loader2 className="spin" size={13} /> : <RefreshCw size={13} />}

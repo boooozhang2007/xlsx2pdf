@@ -1484,8 +1484,8 @@ export const getWorksheetJobDownload = async (jobId) => {
 
 export const reexportWorksheetJob = async (jobId) => {
   const job = await readJob(jobId)
-  if (job.status !== 'completed') {
-    const error = new Error('该任务尚未生成完成，无法重新导出。')
+  if (!['completed', 'failed'].includes(job.status)) {
+    const error = new Error('该任务仍在处理中，暂时无法重新导出。')
     error.statusCode = 409
     throw error
   }

@@ -60,9 +60,57 @@ const normalizeGenerationMode = (mode) => (mode === GENERATION_MODE_LEGACY_ZIP ?
 
 let cjkFontBytesPromise = null
 
+const getCjkFontUrlCandidates = (env = process.env) => {
+  const candidates = []
+  const explicitUrl = String(env.CJK_FONT_URL || '').trim()
+  if (explicitUrl) candidates.push(explicitUrl)
+
+  for (const host of [env.VERCEL_URL, env.VERCEL_PROJECT_PRODUCTION_URL]) {
+    const value = String(host || '').trim()
+    if (!value) continue
+    candidates.push(/^https?:\/\//i.test(value) ? `${value.replace(/\/$/, '')}/STSong.ttf` : `https://${value}/STSong.ttf`)
+  }
+
+  // Keep the current public deployment as a last-resort source when Vercel's
+  // system environment variables are not exposed to Workflow step functions.
+  candidates.push('https://xlsx.070320.xyz/STSong.ttf')
+  return [...new Set(candidates)]
+}
+
+const readCjkFontFromUrl = async (url) => {
+  const response = await fetch(url, { redirect: 'follow', signal: AbortSignal.timeout(30_000) })
+  if (!response.ok) throw new Error(`HTTP ${response.status}`)
+  const bytes = Buffer.from(await response.arrayBuffer())
+  const signature = bytes.subarray(0, 4).toString('hex')
+  if (!['00010000', '4f54544f', '74746366'].includes(signature)) throw new Error('响应不是有效字体')
+  return bytes
+}
+
 const loadCjkFontBytes = async () => {
   if (!cjkFontBytesPromise) {
-    cjkFontBytesPromise = fs.readFile(path.join(__dirname, '..', 'public', 'STSong.ttf'))
+    cjkFontBytesPromise = (async () => {
+      let fileError = null
+      try {
+        return await fs.readFile(path.join(__dirname, '..', 'public', 'STSong.ttf'))
+      } catch (error) {
+        fileError = error
+      }
+
+      let lastError = fileError
+      for (const url of getCjkFontUrlCandidates()) {
+        try {
+          return await readCjkFontFromUrl(url)
+        } catch (error) {
+          lastError = error
+        }
+      }
+
+      throw new Error(`无法加载中文字体 STSong.ttf：${lastError?.message || '未知错误'}`)
+    })()
+    cjkFontBytesPromise = cjkFontBytesPromise.catch((error) => {
+      cjkFontBytesPromise = null
+      throw error
+    })
   }
   return cjkFontBytesPromise
 }
