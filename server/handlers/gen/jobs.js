@@ -41,7 +41,12 @@ export default async function handler(req, res) {
     const body = await readJsonBody(req)
     const retryJobId = String(body.retryJobId || '').trim()
     if (retryJobId) {
-      const submission = await retryWorksheetJob(retryJobId)
+      const retryQuestionTypes = Array.isArray(body.questionTypes)
+        ? body.questionTypes.filter((key) => ALL_QUESTION_TYPE_KEYS.includes(key))
+        : undefined
+      const submission = await retryWorksheetJob(retryJobId, {
+        questionTypes: retryQuestionTypes?.length ? retryQuestionTypes : undefined,
+      })
       if (!submission.created) {
         return sendJson(res, 200, { ok: true, job: submission.job, jobs: [submission.job], deduplicated: true })
       }

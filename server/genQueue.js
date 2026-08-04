@@ -1206,7 +1206,7 @@ export const submitWorksheetJob = async ({
   return { job: summarizeJob(job), created: true }
 }
 
-export const retryWorksheetJob = async (jobId) => {
+export const retryWorksheetJob = async (jobId, { questionTypes } = {}) => {
   const sourceJob = await readJob(jobId)
   if (sourceJob.status !== 'failed') {
     const error = new Error('只有失败任务可以重新生成。')
@@ -1222,7 +1222,7 @@ export const retryWorksheetJob = async (jobId) => {
   const submission = await submitWorksheetJob({
     rows: payload.rows,
     fileName: payload.fileName || sourceJob.fileName,
-    questionTypes: payload.questionTypes || sourceJob.questionTypes,
+    questionTypes: questionTypes || payload.questionTypes || sourceJob.questionTypes,
     generationMode: payload.generationMode || sourceJob.generationMode,
     llmModel: payload.llmModel || sourceJob.llmModel,
     legacyQuestionCount: payload.legacyQuestionCount ?? sourceJob.legacyQuestionCount,
