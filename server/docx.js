@@ -77,6 +77,10 @@ const buildTableCellXml = (cell = {}) => {
     align: value.align || 'left',
     spaceBefore: value.spaceBefore || 0,
     spaceAfter: value.spaceAfter || 0,
+    keepNext: Boolean(value.keepNext),
+    keepLines: Boolean(value.keepLines),
+    tabs: value.tabs || [],
+    indentLeft: value.indentLeft || 0,
   })
   return [
     '<w:tc>',
@@ -91,9 +95,24 @@ const buildTableCellXml = (cell = {}) => {
   ].join('')
 }
 
-const buildTableXml = ({ rows = [], columnWidths = [], cantSplit = false }) => {
+const buildTableXml = ({
+  rows = [],
+  columnWidths = [],
+  cantSplit = false,
+  fixedLayout = false,
+  cellMargins = {},
+}) => {
   const safeColumnWidths = (columnWidths.length ? columnWidths : [2800, 3600]).map((value) => Math.max(120, Math.round(Number(value) || 2400)))
   const totalWidth = safeColumnWidths.reduce((sum, value) => sum + value, 0)
+  const normalizeMargin = (value, fallback) => (
+    value == null ? fallback : Math.max(0, Math.round(Number(value) || 0))
+  )
+  const safeCellMargins = {
+    top: normalizeMargin(cellMargins.top, 24),
+    right: normalizeMargin(cellMargins.right, 36),
+    bottom: normalizeMargin(cellMargins.bottom, 24),
+    left: normalizeMargin(cellMargins.left, 36),
+  }
   const gridXml = safeColumnWidths.map((width) => `<w:gridCol w:w="${width}"/>`).join('')
   const rowsXml = rows.map((row) => {
     const cells = Array.isArray(row) ? row : []
@@ -109,12 +128,13 @@ const buildTableXml = ({ rows = [], columnWidths = [], cantSplit = false }) => {
     '<w:tblPr>',
     '<w:tblStyle w:val="TableGrid"/>',
     `<w:tblW w:w="${totalWidth}" w:type="dxa"/>`,
+    fixedLayout ? '<w:tblLayout w:type="fixed"/>' : '',
     '<w:tblBorders>',
     '<w:top w:val="nil"/><w:left w:val="nil"/><w:bottom w:val="nil"/><w:right w:val="nil"/>',
     '<w:insideH w:val="nil"/><w:insideV w:val="nil"/>',
     '</w:tblBorders>',
     '<w:tblCellMar>',
-    '<w:top w:w="24" w:type="dxa"/><w:left w:w="36" w:type="dxa"/><w:bottom w:w="24" w:type="dxa"/><w:right w:w="36" w:type="dxa"/>',
+    `<w:top w:w="${safeCellMargins.top}" w:type="dxa"/><w:left w:w="${safeCellMargins.left}" w:type="dxa"/><w:bottom w:w="${safeCellMargins.bottom}" w:type="dxa"/><w:right w:w="${safeCellMargins.right}" w:type="dxa"/>`,
     '</w:tblCellMar>',
     '</w:tblPr>',
     `<w:tblGrid>${gridXml}</w:tblGrid>`,

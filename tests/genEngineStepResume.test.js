@@ -505,7 +505,7 @@ test('nine batch variation seeds produce nine unique fixed-test-paper question s
   assert.doesNotMatch(questionSets[0], /<w:cols w:num="2"/)
 })
 
-test('legacy matching worksheet is portrait two-column with single-row options and optional Chinese', async () => {
+test('legacy matching worksheet aligns two-row options and keeps optional Chinese', async () => {
   const { generateWorksheetArchive } = await import('../server/genEngine.js')
   const { rows, initialCache } = buildFixedTestPaperFixture(12)
   const generate = (withChineseTranslation) => generateWorksheetArchive({
@@ -530,15 +530,23 @@ test('legacy matching worksheet is portrait two-column with single-row options a
   const withoutChineseXml = readQuestionXml(withoutChinese)
 
   assert.match(withChineseXml, /<w:pgSz w:w="11906" w:h="16838" w:orient="portrait"\/>/)
-  assert.match(withChineseXml, /<w:cols w:num="2" w:space="720"\/>/)
+  assert.match(withChineseXml, /<w:cols w:num="2" w:space="360"\/>/)
 
-  // 选项以段落呈现（Python 参考格式），不再使用单行表格
+  // 长选项使用 AB / CD 两行，并共享第二列制表位以保证 A/C、B/D 对齐。
   const optionTables = withChineseXml.match(/<w:tbl>[\s\S]*?<\/w:tbl>/g) || []
   assert.equal(optionTables.length, 0)
-  const optionSegments = withChineseXml.match(/    A\. [^<]+  B\. [^<]+<\/w:t>[\s\S]*?    C\. [^<]+  D\. [^<]+/g) || []
-  assert.equal(optionSegments.length, 12)
-  optionSegments.forEach((segment) => {
-    ;['A. ', 'B. ', 'C. ', 'D. '].forEach((label) => assert.ok(segment.includes(label)))
+  const paragraphs = withChineseXml.match(/<w:p>[\s\S]*?<\/w:p>/g) || []
+  const abRows = paragraphs.filter((item) => item.includes('A. sampleword') && item.includes('B. sampleword'))
+  const cdRows = paragraphs.filter((item) => item.includes('C. sampleword') && item.includes('D. sampleword'))
+  assert.equal(abRows.length, 12)
+  assert.equal(cdRows.length, 12)
+  abRows.forEach((row, index) => {
+    const abPosition = row.match(/<w:tab w:val="left" w:pos="(\d+)"\/>/)?.[1]
+    const cdPosition = cdRows[index].match(/<w:tab w:val="left" w:pos="(\d+)"\/>/)?.[1]
+    assert.ok(abPosition)
+    assert.equal(abPosition, cdPosition)
+    assert.match(row, /<w:tab\/>/)
+    assert.match(cdRows[index], /<w:tab\/>/)
   })
 
   const englishStart = withChineseXml.search(/definition for item \d+/)
@@ -546,7 +554,7 @@ test('legacy matching worksheet is portrait two-column with single-row options a
   const englishEnd = withChineseXml.indexOf('</w:p>', englishStart)
   const translationStart = withChineseXml.indexOf('<w:p>', englishEnd)
   const translationEnd = withChineseXml.indexOf('</w:p>', translationStart)
-  const firstOptionStart = withChineseXml.indexOf('    A. ', translationEnd)
+  const firstOptionStart = withChineseXml.indexOf('A. sampleword', translationEnd)
   assert.match(withChineseXml.slice(translationStart, translationEnd), /第一题译文\d+/)
   assert.ok(translationEnd < firstOptionStart)
   assert.doesNotMatch(withoutChineseXml, /第一题译文\d+/)
@@ -555,6 +563,100 @@ test('legacy matching worksheet is portrait two-column with single-row options a
   const chineseInstruction = withChineseXml.indexOf('根据英文释义，从方框中选出正确单词。')
   assert.ok(englishInstruction >= 0 && chineseInstruction > englishInstruction)
   assert.ok(withChineseXml.indexOf('</w:p>', englishInstruction) < chineseInstruction)
+})
+
+test('legacy short options stay on one aligned row', async () => {
+  process.env.VIVI_LLM_MODEL ||= 'test-model'
+  const { generateWorksheetArchive } = await import('../server/genEngine.js')
+  const words = ['cat', 'dog', 'sun', 'sky']
+  const rows = words.map((english, index) => ({ english, chinese: `词义${index + 1}` }))
+  const initialCache = { lexical: {} }
+  rows.forEach(({ english, chinese }, index) => {
+    initialCache.lexical[`${english}||${chinese}`] = {
+      definitionEn: `short definition ${index + 1}`,
+      definitionZh: `短释义${index + 1}`,
+      synonym: `similar${index + 1}`,
+      antonym: `opposite${index + 1}`,
+    }
+  })
+
+  const result = await generateWorksheetArchive({
+    rows,
+    fileName: '短选项测试.xlsx',
+    generationMode: 'legacy_zip',
+    questionTypes: ['一_释义匹配'],
+    legacyQuestionCount: 4,
+    initialCache,
+  })
+  const docx = findStoredZipEntry(result.buffer, (name) => name.endsWith('/一_释义匹配.docx'))
+  const xml = findStoredZipEntry(docx, (name) => name === 'word/document.xml').toString('utf8')
+  const optionRows = (xml.match(/<w:p>[\s\S]*?<\/w:p>/g) || [])
+    .filter((item) => item.includes('A. ') && item.includes('D. '))
+
+  assert.equal(optionRows.length, 4)
+  optionRows.forEach((row) => {
+    assert.equal((row.match(/<w:tab\/>/g) || []).length, 3)
+    assert.equal((row.match(/<w:tab w:val="left"/g) || []).length, 3)
+  })
+})
+
+test('legacy answers flow between groups in aligned ten-column rows', async () => {
+  process.env.VIVI_LLM_MODEL ||= 'test-model'
+  const { generateWorksheetArchive } = await import('../server/genEngine.js')
+  const { rows, initialCache } = buildFixedTestPaperFixture(55)
+  const result = await generateWorksheetArchive({
+    rows,
+    fileName: '答案连续排版测试.xlsx',
+    generationMode: 'legacy_zip',
+    questionTypes: ['六_同义反义辨析'],
+    legacyQuestionCount: 12,
+    initialCache,
+  })
+  const docx = findStoredZipEntry(result.buffer, (name) => name.endsWith('/六_同义反义辨析答案.docx'))
+  const xml = findStoredZipEntry(docx, (name) => name === 'word/document.xml').toString('utf8')
+  const answerTables = xml.match(/<w:tbl>[\s\S]*?<\/w:tbl>/g) || []
+
+  assert.match(xml, /第1组 五 同义反义辨析 答案/)
+  assert.match(xml, /第2组 五 同义反义辨析 答案/)
+  assert.doesNotMatch(xml, /<w:pageBreakBefore\/>/)
+  assert.equal(answerTables.length, 2)
+  answerTables.forEach((answerTable) => {
+    const grid = answerTable.match(/<w:tblGrid>([\s\S]*?)<\/w:tblGrid>/)?.[1] || ''
+    assert.equal((grid.match(/<w:gridCol /g) || []).length, 10)
+    assert.match(answerTable, /<w:tblLayout w:type="fixed"\/>/)
+  })
+})
+
+test('legacy question types six through eight use aligned single-column layouts', async () => {
+  process.env.VIVI_LLM_MODEL ||= 'test-model'
+  const { generateWorksheetArchive } = await import('../server/genEngine.js')
+  const { rows, initialCache } = buildFixedTestPaperFixture(20)
+  const questionTypes = ['六_同义反义辨析', '七_同义词匹配', '八_反义词匹配']
+  const result = await generateWorksheetArchive({
+    rows,
+    fileName: '单栏匹配测试.xlsx',
+    generationMode: 'legacy_zip',
+    questionTypes,
+    legacyQuestionCount: 10,
+    initialCache,
+  })
+
+  questionTypes.forEach((questionKey) => {
+    const docx = findStoredZipEntry(result.buffer, (name) => name.endsWith(`/${questionKey}.docx`))
+    const xml = findStoredZipEntry(docx, (name) => name === 'word/document.xml').toString('utf8')
+    assert.match(xml, /<w:cols w:num="1"/)
+
+    if (questionKey.startsWith('七_') || questionKey.startsWith('八_')) {
+      const matchingTables = xml.match(/<w:tbl>[\s\S]*?<\/w:tbl>/g) || []
+      assert.ok(matchingTables.length > 0)
+      matchingTables.forEach((matchingTable) => {
+        const grid = matchingTable.match(/<w:tblGrid>([\s\S]*?)<\/w:tblGrid>/)?.[1] || ''
+        assert.equal((grid.match(/<w:gridCol /g) || []).length, 4)
+        assert.match(matchingTable, /<w:jc w:val="right"\/>/)
+        assert.match(matchingTable, /<w:tblLayout w:type="fixed"\/>/)
+      })
+    }
+  })
 })
 
 test('request retry count resets after meaningful progress', async () => {

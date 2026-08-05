@@ -1711,38 +1711,86 @@ const paragraph = (text, options = {}) => ({
   indentLeft: options.indentLeft || 0,
 })
 
-// 练习包两栏题目文档的每栏可用宽度(pt)：按 docx.js 实际页面参数计算，
-// A4 页宽 11906 twips - 左右边距 1440*2 - 栏距 720(36pt)，除以 2 得每栏约 207.65pt。
-const LEGACY_COLUMN_WIDTH_PT = (11906 - 1440 * 2 - 720) / 2 / 20
-// Times-Roman 平均字宽约 0.48em；无真实字体测宽时用 0.5 近似判断选项行是否放得下。
-const AVG_GLYPH_WIDTH_RATIO = 0.5
+const table = (rows, options = {}) => ({
+  kind: 'table',
+  rows,
+  columnWidths: options.columnWidths || [],
+  cantSplit: options.cantSplit || false,
+  fixedLayout: options.fixedLayout || false,
+  cellMargins: options.cellMargins || {},
+})
+
+const DOCX_PAGE_WIDTH_TWIPS = 11906
+const DOCX_HORIZONTAL_MARGIN_TWIPS = 1440
+const DOCX_CONTENT_WIDTH_TWIPS = DOCX_PAGE_WIDTH_TWIPS - DOCX_HORIZONTAL_MARGIN_TWIPS * 2
+const DOCX_CONTENT_WIDTH_PT = DOCX_CONTENT_WIDTH_TWIPS / 20
+const LEGACY_TWO_COLUMN_SPACING_PT = 18
+const LEGACY_COLUMN_WIDTH_PT = (
+  DOCX_CONTENT_WIDTH_TWIPS - LEGACY_TWO_COLUMN_SPACING_PT * 20
+) / 2 / 20
+const OPTION_INDENT_PT = 8
+const OPTION_GAP_PT = 7
 
 const estimateTextWidthPt = (text, sizePt) => {
-  const chars = String(text ?? '').split('')
-  const widths = chars.map((ch) => (
-    /[\u4e00-\u9fff]/.test(ch) ? sizePt : sizePt * AVG_GLYPH_WIDTH_RATIO
-  ))
-  return widths.reduce((sum, width) => sum + width, 0)
+  return String(text ?? '').split('').reduce((sum, ch) => {
+    if (/[\u4e00-\u9fff]/.test(ch)) return sum + sizePt
+    if (/[ilI1'`.,:;!| ]/.test(ch)) return sum + sizePt * 0.28
+    if (/[mwMW@%&]/.test(ch)) return sum + sizePt * 0.78
+    return sum + sizePt * 0.52
+  }, 0)
 }
 
-const optionLine = (options) => `    ${options.map((value, index) => `${'ABCD'[index]}. ${value}`).join('  ')}`
-
 // 生成选项行段落：4 个选项一行放得下则单行；否则拆成 A、B / C、D 两行；
-// 个别超长段自动缩字号（最小 6pt）保证同一排不换行。返回段落对象列表。
+// 制表位在两行中保持一致，因此 A/C、B/D 始终上下对齐。
 const buildOptionLines = (options, size = 12) => {
-  const line = optionLine(options)
-  if (estimateTextWidthPt(line, size) <= LEGACY_COLUMN_WIDTH_PT) {
-    return [paragraph(line, { size })]
+  const labeledOptions = Array.from({ length: 4 }, (_, index) => (
+    `${'ABCD'[index]}. ${String(options[index] || '').trim()}`
+  ))
+  const usableWidth = LEGACY_COLUMN_WIDTH_PT - OPTION_INDENT_PT
+  const oneLineWidths = labeledOptions.map((value) => estimateTextWidthPt(value, size))
+  if (oneLineWidths.reduce((sum, width) => sum + width, 0) + OPTION_GAP_PT * 3 <= usableWidth) {
+    const tabs = []
+    let cursor = OPTION_INDENT_PT + oneLineWidths[0] + OPTION_GAP_PT
+    for (let index = 1; index < labeledOptions.length; index += 1) {
+      tabs.push(cursor)
+      cursor += oneLineWidths[index] + OPTION_GAP_PT
+    }
+    return [paragraph(labeledOptions.join('\t'), {
+      size,
+      tabs,
+      indentLeft: OPTION_INDENT_PT,
+    })]
   }
-  const inner = line.trim()
-  const parts = inner.split(/\s{2,}(?=[A-D]\.)/)
-  const ab = `    ${parts.slice(0, 2).join('  ')}`
-  const cd = `    ${parts.slice(2, 4).join('  ')}`
-  return [ab, cd].map((seg) => {
-    let pt = size
-    while (pt >= 6.0 && estimateTextWidthPt(seg, pt) > LEGACY_COLUMN_WIDTH_PT) pt -= 0.5
-    return paragraph(seg, { size: pt })
-  })
+
+  let actualSize = size
+  let leftWidth = 0
+  let rightWidth = 0
+  while (actualSize > 7.5) {
+    leftWidth = Math.max(
+      estimateTextWidthPt(labeledOptions[0], actualSize),
+      estimateTextWidthPt(labeledOptions[2], actualSize),
+    )
+    rightWidth = Math.max(
+      estimateTextWidthPt(labeledOptions[1], actualSize),
+      estimateTextWidthPt(labeledOptions[3], actualSize),
+    )
+    if (leftWidth + OPTION_GAP_PT + rightWidth <= usableWidth) break
+    actualSize -= 0.5
+  }
+  leftWidth = Math.max(
+    estimateTextWidthPt(labeledOptions[0], actualSize),
+    estimateTextWidthPt(labeledOptions[2], actualSize),
+  )
+  rightWidth = Math.max(
+    estimateTextWidthPt(labeledOptions[1], actualSize),
+    estimateTextWidthPt(labeledOptions[3], actualSize),
+  )
+  const secondColumnStart = OPTION_INDENT_PT + leftWidth + OPTION_GAP_PT
+  const lineOptions = { size: actualSize, tabs: [secondColumnStart], indentLeft: OPTION_INDENT_PT }
+  return [
+    paragraph(`${labeledOptions[0]}\t${labeledOptions[1]}`, lineOptions),
+    paragraph(`${labeledOptions[2]}\t${labeledOptions[3]}`, lineOptions),
+  ]
 }
 
 // 题干段 + 选项段用 keepNext 串链，保证同一道题的题目与选项在同一栏内不跨栏不跨页。
@@ -1767,6 +1815,7 @@ const pushQuestionWithOptions = (questionParagraphs, stemText, options, {
       ...line,
       keepNext: index < optionLines.length - 1,
       keepLines: true,
+      spaceAfter: index === optionLines.length - 1 ? 3 : 0,
     })
   })
 }
@@ -1777,11 +1826,52 @@ const requireGeneratedValue = (value, message) => {
   return value
 }
 
-const writeAnswerBlock = (paragraphs, title, answers, perLine = 10, pageBreakBefore = false) => {
-  paragraphs.push(paragraph(title, { size: 16, bold: true, spaceBefore: 8, spaceAfter: 4, pageBreakBefore }))
-  for (let index = 0; index < answers.length; index += perLine) {
-    paragraphs.push(paragraph(answerLine(answers.slice(index, index + perLine)), { size: 12, spaceAfter: 2 }))
+const buildAnswerTable = (answers, perLine = 10) => {
+  const answerTexts = answers.map(([num, value]) => `${num}.${value}`)
+  const rows = []
+  for (let index = 0; index < answerTexts.length; index += perLine) {
+    rows.push(answerTexts.slice(index, index + perLine))
   }
+
+  let fontSize = 10.5
+  const calculateDesiredWidths = () => Array.from({ length: perLine }, (_, columnIndex) => {
+    const longest = Math.max(0, ...rows.map((row) => estimateTextWidthPt(row[columnIndex] || '', fontSize)))
+    return Math.max(20, longest + 5)
+  })
+  let desiredWidths = calculateDesiredWidths()
+  while (fontSize > 6.5 && desiredWidths.reduce((sum, width) => sum + width, 0) > DOCX_CONTENT_WIDTH_PT) {
+    fontSize -= 0.5
+    desiredWidths = calculateDesiredWidths()
+  }
+
+  const desiredTotal = desiredWidths.reduce((sum, width) => sum + width, 0)
+  const widthScale = Math.min(1, DOCX_CONTENT_WIDTH_PT / desiredTotal)
+  const scaledWidths = desiredWidths.map((width) => width * widthScale)
+  const spareWidth = Math.max(0, DOCX_CONTENT_WIDTH_PT - scaledWidths.reduce((sum, width) => sum + width, 0))
+  const columnWidths = scaledWidths.map((width) => Math.round((width + spareWidth / perLine) * 20))
+  columnWidths[columnWidths.length - 1] += DOCX_CONTENT_WIDTH_TWIPS - columnWidths.reduce((sum, width) => sum + width, 0)
+
+  return table(rows.map((row) => Array.from({ length: perLine }, (_, columnIndex) => ({
+    text: row[columnIndex] || '',
+    size: fontSize,
+    noWrap: true,
+  }))), {
+    columnWidths,
+    cantSplit: true,
+    fixedLayout: true,
+    cellMargins: { top: 12, right: 16, bottom: 12, left: 16 },
+  })
+}
+
+const writeAnswerBlock = (paragraphs, title, answers, perLine = 10) => {
+  paragraphs.push(paragraph(title, {
+    size: 14,
+    bold: true,
+    spaceBefore: 6,
+    spaceAfter: 2,
+    keepNext: true,
+  }))
+  paragraphs.push(buildAnswerTable(answers, perLine))
 }
 
 const groupRange = (groupIndex, group, groupSize = GROUP_SIZE) => {
@@ -1820,7 +1910,7 @@ const generateMatching = (questionParagraphs, answerParagraphs, group, groupInde
     })
     answers.push([index + 1, 'ABCD'[options.indexOf(entry.displayEnglish)] || 'A'])
   })
-  writeAnswerBlock(answerParagraphs, `第${groupIndex + 1}组 一 释义匹配 答案`, answers, 10, groupIndex > 0)
+  writeAnswerBlock(answerParagraphs, `第${groupIndex + 1}组 一 释义匹配 答案`, answers)
 }
 
 const generateMultipleChoice = (questionParagraphs, answerParagraphs, group, groupIndex, context) => {
@@ -1836,7 +1926,7 @@ const generateMultipleChoice = (questionParagraphs, answerParagraphs, group, gro
     pushQuestionWithOptions(questionParagraphs, `${index + 1}. ${clozeSentence}`, options)
     answers.push([index + 1, 'ABCD'[options.indexOf(entry.displayEnglish)] || 'A'])
   })
-  writeAnswerBlock(answerParagraphs, `第${groupIndex + 1}组 二 选择题 答案`, answers, 10, groupIndex > 0)
+  writeAnswerBlock(answerParagraphs, `第${groupIndex + 1}组 二 选择题 答案`, answers)
 }
 
 const generateSynonymReplacement = (questionParagraphs, answerParagraphs, group, groupIndex, context) => {
@@ -1858,7 +1948,7 @@ const generateSynonymReplacement = (questionParagraphs, answerParagraphs, group,
     pushQuestionWithOptions(questionParagraphs, synonymRewriteBlank, shuffled)
     answers.push([index + 1, 'ABCD'[shuffled.indexOf(synonym)] || 'A'])
   })
-  writeAnswerBlock(answerParagraphs, `第${groupIndex + 1}组 三 同义替换 答案`, answers, 10, groupIndex > 0)
+  writeAnswerBlock(answerParagraphs, `第${groupIndex + 1}组 三 同义替换 答案`, answers)
 }
 
 
@@ -1881,7 +1971,7 @@ const generateMissingLetters = (questionParagraphs, answerParagraphs, group, gro
     questionParagraphs.push(paragraph(`${index + 1}. ${chars.join(' ')}${meaningSuffix}`))
     answers.push([index + 1, entry.displayEnglish])
   })
-  writeAnswerBlock(answerParagraphs, `第${groupIndex + 1}组 四 缺字母填空 答案`, answers, 5, groupIndex > 0)
+  writeAnswerBlock(answerParagraphs, `第${groupIndex + 1}组 四 缺字母填空 答案`, answers)
 }
 
 const generateSynAntJudge = (questionParagraphs, answerParagraphs, group, groupIndex, context) => {
@@ -1907,14 +1997,49 @@ const generateSynAntJudge = (questionParagraphs, answerParagraphs, group, groupI
     questionParagraphs.push(paragraph(`${index + 1}. ${pair[0]} & ${pair[1]} (    )`))
     answers.push([index + 1, pair[2]])
   })
-  writeAnswerBlock(answerParagraphs, `第${groupIndex + 1}组 五 同义反义辨析 答案`, answers, 10, groupIndex > 0)
+  writeAnswerBlock(answerParagraphs, `第${groupIndex + 1}组 五 同义反义辨析 答案`, answers)
+}
+
+const buildMatchingTable = (pairs, rightWords, startNumber) => {
+  const numberWidthTwips = 520
+  const letterWidthTwips = 420
+  const wordWidthPt = (DOCX_CONTENT_WIDTH_TWIPS - numberWidthTwips - letterWidthTwips) / 20
+  const leftNaturalWidth = Math.max(...pairs.map((pair) => estimateTextWidthPt(pair[0].displayEnglish, 11))) + 8
+  const rightNaturalWidth = Math.max(...rightWords.map((word) => estimateTextWidthPt(word, 11))) + 8
+  const naturalTotal = Math.max(1, leftNaturalWidth + rightNaturalWidth)
+  const leftRatio = Math.min(0.65, Math.max(0.35, leftNaturalWidth / naturalTotal))
+  const leftWidthPt = wordWidthPt * leftRatio
+  const rightWidthPt = wordWidthPt - leftWidthPt
+  const fontSize = Math.max(8, Math.min(
+    11,
+    11 * leftWidthPt / leftNaturalWidth,
+    11 * rightWidthPt / rightNaturalWidth,
+  ))
+  const leftWidthTwips = Math.round(leftWidthPt * 20)
+  const rightWidthTwips = DOCX_CONTENT_WIDTH_TWIPS - numberWidthTwips - letterWidthTwips - leftWidthTwips
+
+  const rows = pairs.map((pair, index) => {
+    const keepNext = index < pairs.length - 1
+    return [
+      { text: `${startNumber + index}. `, size: fontSize, align: 'right', noWrap: true, keepNext, keepLines: true },
+      { text: pair[0].displayEnglish, size: fontSize, noWrap: true, keepNext, keepLines: true },
+      { text: `${'abcde'[index] || 'a'}. `, size: fontSize, align: 'right', noWrap: true, keepNext, keepLines: true },
+      { text: rightWords[index], size: fontSize, noWrap: true, keepNext, keepLines: true },
+    ]
+  })
+  return table(rows, {
+    columnWidths: [numberWidthTwips, leftWidthTwips, letterWidthTwips, rightWidthTwips],
+    cantSplit: true,
+    fixedLayout: true,
+    cellMargins: { top: 12, right: 24, bottom: 12, left: 24 },
+  })
 }
 
 const generateMatchBlocks = (questionParagraphs, answerParagraphs, group, groupIndex, context, relationKey, sectionTitle, answerTitle) => {
-  questionParagraphs.push(paragraph(sectionTitle, { bold: true, size: 12, spaceBefore: 6, spaceAfter: 4 }))
+  questionParagraphs.push(paragraph(sectionTitle, { bold: true, size: 12, spaceBefore: 6, spaceAfter: 4, keepNext: true }))
   questionParagraphs.push(paragraph(relationKey === 'synonym'
     ? 'Match each word with its synonym on the right. 将左侧单词与右侧同义词连线匹配。'
-    : 'Match each word with its antonym on the right. 将左侧单词与右侧反义词连线匹配。', { spaceAfter: 6 }))
+    : 'Match each word with its antonym on the right. 将左侧单词与右侧反义词连线匹配。', { spaceAfter: 4, keepNext: true }))
   const pairs = group
     .map((entry) => {
       const lexical = context.lexicalCache.get(entry.key) || {}
@@ -1949,18 +2074,7 @@ const generateMatchBlocks = (questionParagraphs, answerParagraphs, group, groupI
     }
     if (!block.length) break
     const rightWords = shuffle(block.map((pair) => pair[1]), context.rng)
-    // 整组 5 行配对以段落呈现（Python 参考格式），并用空段 + keepNext 串链绑定在同一栏
-    const groupStartIndex = questionParagraphs.length
-    questionParagraphs.push(paragraph('', { spaceAfter: 0 }))
-    block.forEach((pair, index) => {
-      const displayNumber = questionNumber + index + 1
-      questionParagraphs.push(paragraph(`${displayNumber}. ${pair[0].displayEnglish}    ${'abcde'[index] || 'a'}. ${rightWords[index]}`))
-    })
-    const groupParagraphs = questionParagraphs.slice(groupStartIndex)
-    groupParagraphs.forEach((groupParagraph, index) => {
-      groupParagraph.keepNext = index < groupParagraphs.length - 1
-      groupParagraph.keepLines = true
-    })
+    questionParagraphs.push(buildMatchingTable(block, rightWords, questionNumber + 1))
     block.forEach((pair, index) => {
       const letter = 'abcde'[rightWords.indexOf(pair[1])] || 'a'
       const displayNumber = questionNumber + index + 1
@@ -1968,7 +2082,7 @@ const generateMatchBlocks = (questionParagraphs, answerParagraphs, group, groupI
     })
     questionNumber += block.length
   }
-  writeAnswerBlock(answerParagraphs, `第${groupIndex + 1}组 ${answerTitle} 答案`, answers, 10, groupIndex > 0)
+  writeAnswerBlock(answerParagraphs, `第${groupIndex + 1}组 ${answerTitle} 答案`, answers)
 }
 
 const generateTrueFalse = (questionParagraphs, answerParagraphs, group, groupIndex, context) => {
@@ -1984,7 +2098,7 @@ const generateTrueFalse = (questionParagraphs, answerParagraphs, group, groupInd
     questionParagraphs.push(paragraph(`${index + 1}. (    ) ${isTrue ? tfTrue : tfFalse}`))
     answers.push([index + 1, isTrue ? 'T' : 'F'])
   })
-  writeAnswerBlock(answerParagraphs, `第${groupIndex + 1}组 八 判断正误 答案`, answers, 10, groupIndex > 0)
+  writeAnswerBlock(answerParagraphs, `第${groupIndex + 1}组 八 判断正误 答案`, answers)
 }
 
 const createDocxParagraphs = (title) => [paragraph(title, { size: 16, bold: true, align: 'center', spaceAfter: 8 })]
@@ -2474,8 +2588,15 @@ const createNonTranslationFiles = async (questionKey, groups, context) => {
 
   await context.checkForCancellation()
 
-  // 题目文档：默认两栏；五(缺字母填空)/九(判断正误)按参考引擎保持单栏
-  const useColumns = questionKey !== '五_缺字母填空' && questionKey !== '九_判断正误' ? 2 : 1
+  // 第一至三题保留紧凑双栏；第六至八题和原有长文本题型使用单栏。
+  const singleColumnQuestionKeys = new Set([
+    '五_缺字母填空',
+    '六_同义反义辨析',
+    '七_同义词匹配',
+    '八_反义词匹配',
+    '九_判断正误',
+  ])
+  const useColumns = singleColumnQuestionKeys.has(questionKey) ? 1 : 2
   return [
     {
       name: `${context.exportName}/${questionKey}/${questionKey}.docx`,
@@ -2483,7 +2604,7 @@ const createNonTranslationFiles = async (questionKey, groups, context) => {
         title: `${typeInfo.title}题目`,
         paragraphs: questionParagraphs,
         columns: useColumns,
-        columnSpacing: 36,
+        columnSpacing: LEGACY_TWO_COLUMN_SPACING_PT,
       }),
     },
     {
