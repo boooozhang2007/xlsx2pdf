@@ -43,6 +43,7 @@ const buildParagraphXml = ({
   spaceBefore = 0,
   spaceAfter = 0,
   pageBreakBefore = false,
+  columnBreakBefore = false,
   keepNext = false,
   keepLines = false,
   indentLeft = 0,
@@ -64,11 +65,11 @@ const buildParagraphXml = ({
     `<w:spacing w:before="${toTwips(spaceBefore)}" w:after="${toTwips(spaceAfter)}"${lineSpacing ? ` w:line="${Math.round(Number(lineSpacing) * 240)}" w:lineRule="auto"` : ''}/>`,
   ].join('')
 
-  if (!text) {
-    return `<w:p><w:pPr>${paragraphProps}</w:pPr></w:p>`
-  }
+  const columnBreakRun = columnBreakBefore ? '<w:r><w:br w:type="column"/></w:r>' : ''
 
-  return `<w:p><w:pPr>${paragraphProps}</w:pPr>${buildRunXml({ text, bold, size, font, eastAsiaFont })}</w:p>`
+  if (!text) return `<w:p><w:pPr>${paragraphProps}</w:pPr>${columnBreakRun}</w:p>`
+
+  return `<w:p><w:pPr>${paragraphProps}</w:pPr>${columnBreakRun}${buildRunXml({ text, bold, size, font, eastAsiaFont })}</w:p>`
 }
 
 const buildTableCellXml = (cell = {}) => {

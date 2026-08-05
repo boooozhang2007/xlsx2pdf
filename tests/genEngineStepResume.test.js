@@ -645,6 +645,7 @@ test('archive-style spelling and true-false questions use dense Letter two-colum
     assert.match(xml, /第 2 组（第51～55词）/)
     assert.match(xml, /<w:spacing w:before="0" w:after="0" w:line="240" w:lineRule="auto"\/>/)
     assert.match(xml, /<w:keepLines\/>/)
+    assert.ok((xml.match(/<w:keepNext\/>/g) || []).length >= 20)
     assert.match(styles, /w:ascii="Times New Roman"/)
     assert.match(styles, /w:eastAsia="宋体"/)
     assert.match(styles, /<w:sz w:val="24"\/>/)
@@ -731,14 +732,31 @@ test('legacy answers flow between groups in aligned ten-column rows', async () =
   })
 })
 
-test('legacy question types six through eight use aligned single-column layouts', async () => {
+test('legacy synonym-antonym judge remains a single-column worksheet', async () => {
   process.env.VIVI_LLM_MODEL ||= 'test-model'
   const { generateWorksheetArchive } = await import('../server/genEngine.js')
   const { rows, initialCache } = buildFixedTestPaperFixture(20)
-  const questionTypes = ['六_同义反义辨析', '七_同义词匹配', '八_反义词匹配']
   const result = await generateWorksheetArchive({
     rows,
     fileName: '单栏匹配测试.xlsx',
+    generationMode: 'legacy_zip',
+    questionTypes: ['六_同义反义辨析'],
+    legacyQuestionCount: 10,
+    initialCache,
+  })
+  const docx = findStoredZipEntry(result.buffer, (name) => name.endsWith('/六_同义反义辨析.docx'))
+  const xml = findStoredZipEntry(docx, (name) => name === 'word/document.xml').toString('utf8')
+  assert.match(xml, /<w:cols w:num="1"/)
+})
+
+test('legacy synonym and antonym matching follow the spaced two-column template', async () => {
+  process.env.VIVI_LLM_MODEL ||= 'test-model'
+  const { generateWorksheetArchive } = await import('../server/genEngine.js')
+  const { rows, initialCache } = buildFixedTestPaperFixture(55)
+  const questionTypes = ['七_同义词匹配', '八_反义词匹配']
+  const result = await generateWorksheetArchive({
+    rows,
+    fileName: '双栏匹配模板测试.xlsx',
     generationMode: 'legacy_zip',
     questionTypes,
     legacyQuestionCount: 10,
@@ -748,18 +766,32 @@ test('legacy question types six through eight use aligned single-column layouts'
   questionTypes.forEach((questionKey) => {
     const docx = findStoredZipEntry(result.buffer, (name) => name.endsWith(`/${questionKey}.docx`))
     const xml = findStoredZipEntry(docx, (name) => name === 'word/document.xml').toString('utf8')
-    assert.match(xml, /<w:cols w:num="1"/)
+    const styles = findStoredZipEntry(docx, (name) => name === 'word/styles.xml').toString('utf8')
+    const sectionHeading = questionKey.startsWith('七_')
+      ? '七. Synonym Matching 同义词匹配'
+      : '八. Antonym Matching 反义词匹配'
+    const instruction = questionKey.startsWith('七_')
+      ? 'Match each word with its synonym on the right.'
+      : 'Match each word with its antonym on the right.'
+    const blankBlockSpacer = /<w:p><w:pPr><w:keepNext\/><w:keepLines\/><w:jc w:val="left"\/><w:spacing w:before="0" w:after="0" w:line="240" w:lineRule="auto"\/><\/w:pPr>(?:<w:r><w:br w:type="column"\/><\/w:r>)?<\/w:p>/g
 
-    if (questionKey.startsWith('七_') || questionKey.startsWith('八_')) {
-      const matchingTables = xml.match(/<w:tbl>[\s\S]*?<\/w:tbl>/g) || []
-      assert.ok(matchingTables.length > 0)
-      matchingTables.forEach((matchingTable) => {
-        const grid = matchingTable.match(/<w:tblGrid>([\s\S]*?)<\/w:tblGrid>/)?.[1] || ''
-        assert.equal((grid.match(/<w:gridCol /g) || []).length, 4)
-        assert.match(matchingTable, /<w:jc w:val="right"\/>/)
-        assert.match(matchingTable, /<w:tblLayout w:type="fixed"\/>/)
-      })
-    }
+    assert.match(xml, /<w:pgSz w:w="12240" w:h="15840" w:orient="portrait"\/>/)
+    assert.match(xml, /<w:pgMar w:top="1440" w:right="1800" w:bottom="1440" w:left="1800" w:header="720" w:footer="720" w:gutter="0"\/>/)
+    assert.match(xml, /<w:cols w:num="2" w:space="720"\/>/)
+    assert.equal(xml.split(sectionHeading).length - 1, 1)
+    assert.equal(xml.split(instruction).length - 1, 1)
+    assert.equal((xml.match(/<w:pageBreakBefore\/>/g) || []).length, 1)
+    assert.equal((xml.match(blankBlockSpacer) || []).length, 4)
+    assert.equal((xml.match(/<w:br w:type="column"\/>/g) || []).length, 2)
+    assert.equal((xml.match(/<w:tab w:val="left" w:pos="2520"\/>/g) || []).length, 20)
+    assert.equal((xml.match(/<w:tab\/>/g) || []).length, 20)
+    assert.equal((xml.match(/<w:tbl>/g) || []).length, 0)
+    assert.match(styles, /w:ascii="Times New Roman"/)
+
+    const answerDocx = findStoredZipEntry(result.buffer, (name) => name.endsWith(`/${questionKey}答案.docx`))
+    const answerXml = findStoredZipEntry(answerDocx, (name) => name === 'word/document.xml').toString('utf8')
+    assert.equal((answerXml.match(/<w:tbl>/g) || []).length, 2)
+    assert.match(answerXml, /<w:tblLayout w:type="fixed"\/>/)
   })
 })
 

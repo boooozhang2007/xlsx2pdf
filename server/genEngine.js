@@ -1707,6 +1707,7 @@ const paragraph = (text, options = {}) => ({
   spaceBefore: options.spaceBefore || 0,
   spaceAfter: options.spaceAfter || 0,
   pageBreakBefore: options.pageBreakBefore || false,
+  columnBreakBefore: options.columnBreakBefore || false,
   keepNext: options.keepNext || false,
   keepLines: options.keepLines || false,
   indentLeft: options.indentLeft || 0,
@@ -1749,6 +1750,26 @@ const ARCHIVE_LAYOUT_QUESTION_KEYS = new Set([
   '五_缺字母填空',
   '九_判断正误',
 ])
+const MATCHING_LAYOUT_QUESTION_KEYS = new Set([
+  '七_同义词匹配',
+  '八_反义词匹配',
+])
+const COMPACT_GROUP_BLOCK_QUESTION_KEYS = new Set([
+  '四_乱序拼写',
+  '五_缺字母填空',
+  '九_判断正误',
+])
+const MATCHING_PAGE_WIDTH_TWIPS = 12240
+const MATCHING_PAGE_HEIGHT_TWIPS = 15840
+const MATCHING_HORIZONTAL_MARGIN_TWIPS = 1800
+const MATCHING_VERTICAL_MARGIN_TWIPS = 1440
+const MATCHING_COLUMN_SPACING_PT = 36
+const MATCHING_COLUMN_WIDTH_PT = (
+  MATCHING_PAGE_WIDTH_TWIPS
+  - MATCHING_HORIZONTAL_MARGIN_TWIPS * 2
+  - MATCHING_COLUMN_SPACING_PT * 20
+) / 2 / 20
+const MATCHING_RIGHT_TAB_PT = 126
 
 const estimateTextWidthPt = (text, sizePt) => {
   return String(text ?? '').split('').reduce((sum, ch) => {
@@ -2045,46 +2066,41 @@ const generateSynAntJudge = (questionParagraphs, answerParagraphs, group, groupI
   writeAnswerBlock(answerParagraphs, `第${groupIndex + 1}组 五 同义反义辨析 答案`, answers)
 }
 
-const buildMatchingTable = (pairs, rightWords, startNumber) => {
-  const numberWidthTwips = 520
-  const letterWidthTwips = 420
-  const wordWidthPt = (DOCX_CONTENT_WIDTH_TWIPS - numberWidthTwips - letterWidthTwips) / 20
-  const leftNaturalWidth = Math.max(...pairs.map((pair) => estimateTextWidthPt(pair[0].displayEnglish, 11))) + 8
-  const rightNaturalWidth = Math.max(...rightWords.map((word) => estimateTextWidthPt(word, 11))) + 8
-  const naturalTotal = Math.max(1, leftNaturalWidth + rightNaturalWidth)
-  const leftRatio = Math.min(0.65, Math.max(0.35, leftNaturalWidth / naturalTotal))
-  const leftWidthPt = wordWidthPt * leftRatio
-  const rightWidthPt = wordWidthPt - leftWidthPt
-  const fontSize = Math.max(8, Math.min(
-    11,
-    11 * leftWidthPt / leftNaturalWidth,
-    11 * rightWidthPt / rightNaturalWidth,
-  ))
-  const leftWidthTwips = Math.round(leftWidthPt * 20)
-  const rightWidthTwips = DOCX_CONTENT_WIDTH_TWIPS - numberWidthTwips - letterWidthTwips - leftWidthTwips
+const buildMatchingParagraphBlock = (pairs, rightWords, { columnBreakBefore = false } = {}) => {
+  let fontSize = 12
+  while (fontSize > 8) {
+    const leftFits = pairs.every((pair, index) => (
+      estimateTextWidthPt(`${index + 1}. ${pair[0].displayEnglish}`, fontSize) <= MATCHING_RIGHT_TAB_PT - 6
+    ))
+    const rightFits = rightWords.every((word, index) => (
+      estimateTextWidthPt(`${'abcde'[index]}. ${word}`, fontSize) <= MATCHING_COLUMN_WIDTH_PT - MATCHING_RIGHT_TAB_PT
+    ))
+    if (leftFits && rightFits) break
+    fontSize -= 0.5
+  }
 
-  const rows = pairs.map((pair, index) => {
-    const keepNext = index < pairs.length - 1
-    return [
-      { text: `${startNumber + index}. `, size: fontSize, align: 'right', noWrap: true, keepNext, keepLines: true },
-      { text: pair[0].displayEnglish, size: fontSize, noWrap: true, keepNext, keepLines: true },
-      { text: `${'abcde'[index] || 'a'}. `, size: fontSize, align: 'right', noWrap: true, keepNext, keepLines: true },
-      { text: rightWords[index], size: fontSize, noWrap: true, keepNext, keepLines: true },
-    ]
-  })
-  return table(rows, {
-    columnWidths: [numberWidthTwips, leftWidthTwips, letterWidthTwips, rightWidthTwips],
-    cantSplit: true,
-    fixedLayout: true,
-    cellMargins: { top: 12, right: 24, bottom: 12, left: 24 },
-  })
+  return [
+    paragraph('', { columnBreakBefore, keepNext: true, keepLines: true, lineSpacing: 1 }),
+    ...pairs.map((pair, index) => paragraph(
+      `${index + 1}. ${pair[0].displayEnglish}\t${'abcde'[index]}. ${rightWords[index]}`,
+      {
+        size: fontSize,
+        tabs: [MATCHING_RIGHT_TAB_PT],
+        keepNext: index < pairs.length - 1,
+        keepLines: true,
+        lineSpacing: 1,
+      },
+    )),
+  ]
 }
 
 const generateMatchBlocks = (questionParagraphs, answerParagraphs, group, groupIndex, context, relationKey, sectionTitle, answerTitle) => {
-  questionParagraphs.push(paragraph(sectionTitle, { bold: true, size: 12, spaceBefore: 6, spaceAfter: 4, keepNext: true }))
-  questionParagraphs.push(paragraph(relationKey === 'synonym'
-    ? 'Match each word with its synonym on the right. 将左侧单词与右侧同义词连线匹配。'
-    : 'Match each word with its antonym on the right. 将左侧单词与右侧反义词连线匹配。', { spaceAfter: 4, keepNext: true }))
+  if (groupIndex === 0) {
+    questionParagraphs.push(paragraph(sectionTitle, { bold: true, size: 12, spaceBefore: 6, spaceAfter: 4, keepNext: true }))
+    questionParagraphs.push(paragraph(relationKey === 'synonym'
+      ? 'Match each word with its synonym on the right. 将左侧单词与右侧同义词连线匹配。'
+      : 'Match each word with its antonym on the right. 将左侧单词与右侧反义词连线匹配。', { spaceAfter: 4, keepNext: true }))
+  }
   const pairs = group
     .map((entry) => {
       const lexical = context.lexicalCache.get(entry.key) || {}
@@ -2097,6 +2113,7 @@ const generateMatchBlocks = (questionParagraphs, answerParagraphs, group, groupI
   const answers = []
   let questionNumber = 0
   const blockCount = Math.ceil(context.questionsPerGroup / 5)
+  const secondColumnBlockIndex = Math.ceil(blockCount / 2)
   for (let blockIndex = 0; blockIndex < blockCount; blockIndex += 1) {
     const block = []
     const blockTarget = Math.min(5, context.questionsPerGroup - questionNumber)
@@ -2119,7 +2136,9 @@ const generateMatchBlocks = (questionParagraphs, answerParagraphs, group, groupI
     }
     if (!block.length) break
     const rightWords = shuffle(block.map((pair) => pair[1]), context.rng)
-    questionParagraphs.push(buildMatchingTable(block, rightWords, questionNumber + 1))
+    questionParagraphs.push(...buildMatchingParagraphBlock(block, rightWords, {
+      columnBreakBefore: blockIndex === secondColumnBlockIndex,
+    }))
     block.forEach((pair, index) => {
       const letter = 'abcde'[rightWords.indexOf(pair[1])] || 'a'
       const displayNumber = questionNumber + index + 1
@@ -2190,6 +2209,27 @@ const archiveQuestionDocxOptions = (questionKey) => {
     },
     defaultFont: 'Times New Roman',
     defaultEastAsiaFont: '宋体',
+    defaultSize: 12,
+  }
+}
+
+const matchingQuestionDocxOptions = (questionKey) => {
+  if (!MATCHING_LAYOUT_QUESTION_KEYS.has(questionKey)) return {}
+  return {
+    columns: 2,
+    columnSpacing: MATCHING_COLUMN_SPACING_PT,
+    pageWidthTwips: MATCHING_PAGE_WIDTH_TWIPS,
+    pageHeightTwips: MATCHING_PAGE_HEIGHT_TWIPS,
+    pageMarginsTwips: {
+      top: MATCHING_VERTICAL_MARGIN_TWIPS,
+      right: MATCHING_HORIZONTAL_MARGIN_TWIPS,
+      bottom: MATCHING_VERTICAL_MARGIN_TWIPS,
+      left: MATCHING_HORIZONTAL_MARGIN_TWIPS,
+      header: 720,
+      footer: 720,
+    },
+    defaultFont: 'Times New Roman',
+    defaultEastAsiaFont: 'Times New Roman',
     defaultSize: 12,
   }
 }
@@ -2531,9 +2571,9 @@ const renderTranslationQuestionsPdf = async (pages, title) => {
   pdf.registerFontkit(fontkit)
   const fontBytes = await loadCjkFontBytes()
   const font = await pdf.embedFont(fontBytes, { subset: true })
-  pages.forEach((pageData) => {
+  pages.forEach((pageData, pageIndex) => {
     const page = pdf.addPage([A4.width, A4.height])
-    if (title) {
+    if (title && pageIndex === 0) {
       page.drawText(title, {
         x: TRANSLATION_MARGINS.left,
         y: A4.height - 40,
@@ -2649,6 +2689,7 @@ const createNonTranslationFiles = async (questionKey, groups, context) => {
     await context.checkForCancellation()
     const [start, end] = groupRange(groupIndex, group, context.groupSize)
     const useArchiveFlow = ARCHIVE_LAYOUT_QUESTION_KEYS.has(questionKey)
+    const groupBlockStart = questionParagraphs.length
     questionParagraphs.push(paragraph(`第 ${groupIndex + 1} 组（第${start}～${end}词）`, {
       size: 14,
       bold: true,
@@ -2664,9 +2705,18 @@ const createNonTranslationFiles = async (questionKey, groups, context) => {
     if (questionKey === '四_乱序拼写') generateScramble(questionParagraphs, answerParagraphs, group, groupIndex, context)
     if (questionKey === '五_缺字母填空') generateMissingLetters(questionParagraphs, answerParagraphs, group, groupIndex, context)
     if (questionKey === '六_同义反义辨析') generateSynAntJudge(questionParagraphs, answerParagraphs, group, groupIndex, context)
-    if (questionKey === '七_同义词匹配') generateMatchBlocks(questionParagraphs, answerParagraphs, group, groupIndex, context, 'synonym', '六. Synonym Matching 同义词匹配', '六 同义词匹配')
-    if (questionKey === '八_反义词匹配') generateMatchBlocks(questionParagraphs, answerParagraphs, group, groupIndex, context, 'antonym', '七. Antonym Matching 反义词匹配', '七 反义词匹配')
+    if (questionKey === '七_同义词匹配') generateMatchBlocks(questionParagraphs, answerParagraphs, group, groupIndex, context, 'synonym', '七. Synonym Matching 同义词匹配', '六 同义词匹配')
+    if (questionKey === '八_反义词匹配') generateMatchBlocks(questionParagraphs, answerParagraphs, group, groupIndex, context, 'antonym', '八. Antonym Matching 反义词匹配', '七 反义词匹配')
     if (questionKey === '九_判断正误') generateTrueFalse(questionParagraphs, answerParagraphs, group, groupIndex, context)
+    if (COMPACT_GROUP_BLOCK_QUESTION_KEYS.has(questionKey) && context.questionsPerGroup <= 10) {
+      const groupBlockEnd = questionParagraphs.length - 1
+      for (let blockIndex = groupBlockStart; blockIndex < groupBlockEnd; blockIndex += 1) {
+        const block = questionParagraphs[blockIndex]
+        if (!block || block.kind === 'table') continue
+        block.keepNext = true
+        block.keepLines = true
+      }
+    }
     processedWords += group.length
     await context.reportProgress({
       message: `[${context.exportName}] ${typeInfo.title} ${processedWords}/${context.wordCount}`,
@@ -2685,13 +2735,13 @@ const createNonTranslationFiles = async (questionKey, groups, context) => {
   // 参考包指定的题型使用其 Letter 双栏结构；匹配长文本题仍使用单栏。
   const singleColumnQuestionKeys = new Set([
     '六_同义反义辨析',
-    '七_同义词匹配',
-    '八_反义词匹配',
   ])
   const useColumns = singleColumnQuestionKeys.has(questionKey) ? 1 : 2
   const questionDocxOptions = ARCHIVE_LAYOUT_QUESTION_KEYS.has(questionKey)
     ? archiveQuestionDocxOptions(questionKey)
-    : { columns: useColumns, columnSpacing: LEGACY_TWO_COLUMN_SPACING_PT }
+    : MATCHING_LAYOUT_QUESTION_KEYS.has(questionKey)
+      ? matchingQuestionDocxOptions(questionKey)
+      : { columns: useColumns, columnSpacing: LEGACY_TWO_COLUMN_SPACING_PT }
   return [
     {
       name: `${context.exportName}/${questionKey}/${questionKey}.docx`,
