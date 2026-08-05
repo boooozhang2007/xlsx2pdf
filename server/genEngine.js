@@ -1701,6 +1701,7 @@ const paragraph = (text, options = {}) => ({
   bold: options.bold || false,
   size: options.size || 12,
   font: options.font || '',
+  eastAsiaFont: options.eastAsiaFont || '',
   tabs: options.tabs || [],
   align: options.align || 'left',
   spaceBefore: options.spaceBefore || 0,
@@ -1709,6 +1710,7 @@ const paragraph = (text, options = {}) => ({
   keepNext: options.keepNext || false,
   keepLines: options.keepLines || false,
   indentLeft: options.indentLeft || 0,
+  lineSpacing: options.lineSpacing || 0,
 })
 
 const table = (rows, options = {}) => ({
@@ -1730,6 +1732,23 @@ const LEGACY_COLUMN_WIDTH_PT = (
 ) / 2 / 20
 const OPTION_INDENT_PT = 8
 const OPTION_GAP_PT = 7
+const ARCHIVE_PAGE_WIDTH_TWIPS = 12240
+const ARCHIVE_PAGE_HEIGHT_TWIPS = 15840
+const ARCHIVE_MARGIN_TWIPS = 720
+const ARCHIVE_SYNONYM_LEFT_MARGIN_TWIPS = 1134
+const ARCHIVE_COLUMN_SPACING_PT = 36
+const ARCHIVE_SYNONYM_COLUMN_WIDTH_PT = (
+  ARCHIVE_PAGE_WIDTH_TWIPS
+  - ARCHIVE_SYNONYM_LEFT_MARGIN_TWIPS
+  - ARCHIVE_MARGIN_TWIPS
+  - ARCHIVE_COLUMN_SPACING_PT * 20
+) / 2 / 20
+const ARCHIVE_LAYOUT_QUESTION_KEYS = new Set([
+  '三_同义替换',
+  '四_乱序拼写',
+  '五_缺字母填空',
+  '九_判断正误',
+])
 
 const estimateTextWidthPt = (text, sizePt) => {
   return String(text ?? '').split('').reduce((sum, ch) => {
@@ -1742,11 +1761,11 @@ const estimateTextWidthPt = (text, sizePt) => {
 
 // 生成选项行段落：4 个选项一行放得下则单行；否则拆成 A、B / C、D 两行；
 // 制表位在两行中保持一致，因此 A/C、B/D 始终上下对齐。
-const buildOptionLines = (options, size = 12) => {
+const buildOptionLines = (options, size = 12, columnWidth = LEGACY_COLUMN_WIDTH_PT) => {
   const labeledOptions = Array.from({ length: 4 }, (_, index) => (
     `${'ABCD'[index]}. ${String(options[index] || '').trim()}`
   ))
-  const usableWidth = LEGACY_COLUMN_WIDTH_PT - OPTION_INDENT_PT
+  const usableWidth = columnWidth - OPTION_INDENT_PT
   const oneLineWidths = labeledOptions.map((value) => estimateTextWidthPt(value, size))
   if (oneLineWidths.reduce((sum, width) => sum + width, 0) + OPTION_GAP_PT * 3 <= usableWidth) {
     const tabs = []
@@ -1798,6 +1817,7 @@ const buildOptionLines = (options, size = 12) => {
 const pushQuestionWithOptions = (questionParagraphs, stemText, options, {
   size = 12,
   middleLines = [],
+  columnWidth = LEGACY_COLUMN_WIDTH_PT,
 } = {}) => {
   const stem = paragraph(stemText, { size, keepNext: true, keepLines: true })
   questionParagraphs.push(stem)
@@ -1809,7 +1829,7 @@ const pushQuestionWithOptions = (questionParagraphs, stemText, options, {
       keepLines: true,
     }))
   })
-  const optionLines = buildOptionLines(options, size)
+  const optionLines = buildOptionLines(options, size, columnWidth)
   optionLines.forEach((line, index) => {
     questionParagraphs.push({
       ...line,
@@ -1932,8 +1952,8 @@ const generateMultipleChoice = (questionParagraphs, answerParagraphs, group, gro
 const generateSynonymReplacement = (questionParagraphs, answerParagraphs, group, groupIndex, context) => {
   const chosen = context.choicePlan.get(`三_同义替换:${groupIndex}`) || chooseSynonymWords(group, context)
   if (!chosen.length) throw new Error('当前词表缺少可用的同义词结果，无法生成同义替换题。')
-  questionParagraphs.push(paragraph('三. Synonym Replacement 同义替换', { bold: true, size: 12, spaceBefore: 6, spaceAfter: 4 }))
-  questionParagraphs.push(paragraph('Replace the underlined word with its synonym. 用同义词替换句中画线单词。', { spaceAfter: 6 }))
+  questionParagraphs.push(paragraph('三. Synonym Replacement 同义替换', { bold: true, size: 12, spaceBefore: 6, spaceAfter: 4, keepNext: true }))
+  questionParagraphs.push(paragraph('Replace the underlined word with its synonym. 用同义词替换句中画线单词。', { spaceAfter: 6, keepNext: true }))
   const answers = []
   chosen.forEach((entry, index) => {
     const material = context.synonymMaterialCache.get(entry.key) || {}
@@ -1944,11 +1964,36 @@ const generateSynonymReplacement = (questionParagraphs, answerParagraphs, group,
     const shuffled = shuffle(options.slice(0, 4), context.rng)
     const synonymOriginal = requireGeneratedValue(material.synonymOriginal, '同义替换缺少原句。')
     const synonymRewriteBlank = requireGeneratedValue(material.synonymRewriteBlank, '同义替换缺少改写句。')
-    questionParagraphs.push(paragraph(`${index + 1}. ${synonymOriginal}`))
-    pushQuestionWithOptions(questionParagraphs, synonymRewriteBlank, shuffled)
+    questionParagraphs.push(paragraph(`${index + 1}. ${synonymOriginal}`, { keepNext: true, keepLines: true }))
+    pushQuestionWithOptions(questionParagraphs, synonymRewriteBlank, shuffled, {
+      columnWidth: ARCHIVE_SYNONYM_COLUMN_WIDTH_PT,
+    })
     answers.push([index + 1, 'ABCD'[shuffled.indexOf(synonym)] || 'A'])
   })
   writeAnswerBlock(answerParagraphs, `第${groupIndex + 1}组 三 同义替换 答案`, answers)
+}
+
+const generateScramble = (questionParagraphs, answerParagraphs, group, groupIndex, context) => {
+  const pool = group.filter((entry) => {
+    const core = spellingCore(entry.english)
+    return core.length >= 4 && core.length <= 10
+  })
+  const chosen = fillToCount(pool, context.questionsPerGroup, context.rng)
+  questionParagraphs.push(paragraph('四. Word Scramble 单词乱序拼写题', { bold: true, size: 12, keepNext: true }))
+  questionParagraphs.push(paragraph('Rearrange the letters to form correct words. 重新排列字母，拼写出正确单词。', { keepNext: true }))
+  const answers = []
+  chosen.forEach((entry, index) => {
+    const core = spellingCore(entry.english)
+    let letters = core.split('')
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      letters = shuffle(letters, context.rng)
+      if (letters.join('') !== core) break
+    }
+    const meaningSuffix = entry.plainChinese ? `  (${entry.plainChinese})` : ''
+    questionParagraphs.push(paragraph(`${index + 1}. ${letters.join(' ')} → ____________${meaningSuffix}`, { keepLines: true }))
+    answers.push([index + 1, entry.displayEnglish])
+  })
+  writeAnswerBlock(answerParagraphs, `第${groupIndex + 1}组 四 乱序拼写 答案`, answers)
 }
 
 
@@ -1958,8 +2003,8 @@ const generateMissingLetters = (questionParagraphs, answerParagraphs, group, gro
     return core.length >= 5 && core.length <= 12
   })
   const chosen = fillToCount(pool, context.questionsPerGroup, context.rng)
-  questionParagraphs.push(paragraph('四. Missing Letters 缺字母填空', { bold: true, size: 12, spaceBefore: 6, spaceAfter: 4 }))
-  questionParagraphs.push(paragraph('Fill in the missing letters and write the full word. 补全所缺字母，并写出完整单词。', { spaceAfter: 6 }))
+  questionParagraphs.push(paragraph('五. Missing Letters 缺字母填空', { bold: true, size: 12, keepNext: true }))
+  questionParagraphs.push(paragraph('Fill in the missing letters and write the full word. 补全所缺字母，并写出完整单词。', { keepNext: true }))
   const answers = []
   chosen.forEach((entry, index) => {
     const core = spellingCore(entry.english)
@@ -1968,7 +2013,7 @@ const generateMissingLetters = (questionParagraphs, answerParagraphs, group, gro
     const chars = core.split('')
     indices.forEach((pick) => { chars[pick] = '_' })
     const meaningSuffix = entry.plainChinese ? `  (${entry.plainChinese})` : ''
-    questionParagraphs.push(paragraph(`${index + 1}. ${chars.join(' ')}${meaningSuffix}`))
+    questionParagraphs.push(paragraph(`${index + 1}. ${chars.join(' ')}${meaningSuffix}`, { keepLines: true }))
     answers.push([index + 1, entry.displayEnglish])
   })
   writeAnswerBlock(answerParagraphs, `第${groupIndex + 1}组 四 缺字母填空 答案`, answers)
@@ -2087,15 +2132,15 @@ const generateMatchBlocks = (questionParagraphs, answerParagraphs, group, groupI
 
 const generateTrueFalse = (questionParagraphs, answerParagraphs, group, groupIndex, context) => {
   const chosen = context.choicePlan.get(`九_判断正误:${groupIndex}`) || sample(group, Math.min(context.questionsPerGroup, group.length), context.rng)
-  questionParagraphs.push(paragraph('八. True or False 判断正误', { bold: true, size: 12, spaceBefore: 6, spaceAfter: 4 }))
-  questionParagraphs.push(paragraph('Write T (true) or F (false) for each statement. 判断下列句子的正误，正确填T，错误填F。', { spaceAfter: 6 }))
+  questionParagraphs.push(paragraph('九. True or False 判断正误', { bold: true, size: 12, keepNext: true }))
+  questionParagraphs.push(paragraph('Write T (true) or F (false) for each statement. 判断下列句子的正误，正确填T，错误填F。', { keepNext: true }))
   const answers = []
   chosen.forEach((entry, index) => {
     const material = context.basicMaterialCache.get(entry.key)
     const isTrue = context.rng() >= 0.5
     const tfTrue = requireGeneratedValue(material?.tfTrue, '判断正误缺少 LLM 正确句。')
     const tfFalse = requireGeneratedValue(material?.tfFalse, '判断正误缺少 LLM 错误句。')
-    questionParagraphs.push(paragraph(`${index + 1}. (    ) ${isTrue ? tfTrue : tfFalse}`))
+    questionParagraphs.push(paragraph(`${index + 1}. (    ) ${isTrue ? tfTrue : tfFalse}`, { keepLines: true }))
     answers.push([index + 1, isTrue ? 'T' : 'F'])
   })
   writeAnswerBlock(answerParagraphs, `第${groupIndex + 1}组 八 判断正误 答案`, answers)
@@ -2103,6 +2148,51 @@ const generateTrueFalse = (questionParagraphs, answerParagraphs, group, groupInd
 
 const createDocxParagraphs = (title) => [paragraph(title, { size: 16, bold: true, align: 'center', spaceAfter: 8 })]
 const createAnswerParagraphs = (title) => [paragraph(title, { size: 18, bold: true, align: 'center', spaceAfter: 10 })]
+
+const applyArchiveQuestionTypography = (questionKey, paragraphs) => {
+  if (!ARCHIVE_LAYOUT_QUESTION_KEYS.has(questionKey)) return
+  const compactNormal = questionKey === '五_缺字母填空'
+  const compactBold = questionKey === '四_乱序拼写' || questionKey === '九_判断正误'
+
+  paragraphs.forEach((block) => {
+    if (!block || block.kind === 'table') return
+    block.font = 'Times New Roman'
+    block.eastAsiaFont = '宋体'
+    block.spaceBefore = 0
+    block.spaceAfter = 0
+    block.lineSpacing = 1
+    if (compactNormal || compactBold) {
+      block.size = 12
+      block.bold = compactBold
+      block.align = 'left'
+    }
+  })
+
+  if (paragraphs[0]) paragraphs[0].keepNext = true
+}
+
+const archiveQuestionDocxOptions = (questionKey) => {
+  if (!ARCHIVE_LAYOUT_QUESTION_KEYS.has(questionKey)) return {}
+  return {
+    columns: 2,
+    columnSpacing: ARCHIVE_COLUMN_SPACING_PT,
+    pageWidthTwips: ARCHIVE_PAGE_WIDTH_TWIPS,
+    pageHeightTwips: ARCHIVE_PAGE_HEIGHT_TWIPS,
+    pageMarginsTwips: {
+      top: ARCHIVE_MARGIN_TWIPS,
+      right: ARCHIVE_MARGIN_TWIPS,
+      bottom: ARCHIVE_MARGIN_TWIPS,
+      left: questionKey === '三_同义替换'
+        ? ARCHIVE_SYNONYM_LEFT_MARGIN_TWIPS
+        : ARCHIVE_MARGIN_TWIPS,
+      header: ARCHIVE_MARGIN_TWIPS,
+      footer: ARCHIVE_MARGIN_TWIPS,
+    },
+    defaultFont: 'Times New Roman',
+    defaultEastAsiaFont: '宋体',
+    defaultSize: 12,
+  }
+}
 
 const testPaperOptionLine = (options) => options.map((value, index) => `${'ABCD'[index]}. ${value}`).join('  ')
 const testPaperRange = (groupIndex, group, groupSize = TEST_PAPER_GROUP_SIZE) => {
@@ -2558,17 +2648,20 @@ const createNonTranslationFiles = async (questionKey, groups, context) => {
     const group = groups[groupIndex]
     await context.checkForCancellation()
     const [start, end] = groupRange(groupIndex, group, context.groupSize)
+    const useArchiveFlow = ARCHIVE_LAYOUT_QUESTION_KEYS.has(questionKey)
     questionParagraphs.push(paragraph(`第 ${groupIndex + 1} 组（第${start}～${end}词）`, {
       size: 14,
       bold: true,
       spaceBefore: 10,
       spaceAfter: 4,
-      pageBreakBefore: groupIndex > 0,
+      pageBreakBefore: groupIndex > 0 && (!useArchiveFlow || questionKey === '三_同义替换'),
+      keepNext: useArchiveFlow,
     }))
 
     if (questionKey === '一_释义匹配') generateMatching(questionParagraphs, answerParagraphs, group, groupIndex, context)
     if (questionKey === '二_选择题') generateMultipleChoice(questionParagraphs, answerParagraphs, group, groupIndex, context)
     if (questionKey === '三_同义替换') generateSynonymReplacement(questionParagraphs, answerParagraphs, group, groupIndex, context)
+    if (questionKey === '四_乱序拼写') generateScramble(questionParagraphs, answerParagraphs, group, groupIndex, context)
     if (questionKey === '五_缺字母填空') generateMissingLetters(questionParagraphs, answerParagraphs, group, groupIndex, context)
     if (questionKey === '六_同义反义辨析') generateSynAntJudge(questionParagraphs, answerParagraphs, group, groupIndex, context)
     if (questionKey === '七_同义词匹配') generateMatchBlocks(questionParagraphs, answerParagraphs, group, groupIndex, context, 'synonym', '六. Synonym Matching 同义词匹配', '六 同义词匹配')
@@ -2587,24 +2680,25 @@ const createNonTranslationFiles = async (questionKey, groups, context) => {
   }
 
   await context.checkForCancellation()
+  applyArchiveQuestionTypography(questionKey, questionParagraphs)
 
-  // 第一至三题保留紧凑双栏；第六至八题和原有长文本题型使用单栏。
+  // 参考包指定的题型使用其 Letter 双栏结构；匹配长文本题仍使用单栏。
   const singleColumnQuestionKeys = new Set([
-    '五_缺字母填空',
     '六_同义反义辨析',
     '七_同义词匹配',
     '八_反义词匹配',
-    '九_判断正误',
   ])
   const useColumns = singleColumnQuestionKeys.has(questionKey) ? 1 : 2
+  const questionDocxOptions = ARCHIVE_LAYOUT_QUESTION_KEYS.has(questionKey)
+    ? archiveQuestionDocxOptions(questionKey)
+    : { columns: useColumns, columnSpacing: LEGACY_TWO_COLUMN_SPACING_PT }
   return [
     {
       name: `${context.exportName}/${questionKey}/${questionKey}.docx`,
       data: createDocxBuffer({
         title: `${typeInfo.title}题目`,
         paragraphs: questionParagraphs,
-        columns: useColumns,
-        columnSpacing: LEGACY_TWO_COLUMN_SPACING_PT,
+        ...questionDocxOptions,
       }),
     },
     {

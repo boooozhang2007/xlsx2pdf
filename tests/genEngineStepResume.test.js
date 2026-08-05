@@ -600,6 +600,110 @@ test('legacy short options stay on one aligned row', async () => {
   })
 })
 
+test('archive-style spelling and true-false questions use dense Letter two-column typography', async () => {
+  const { generateWorksheetArchive } = await import('../server/genEngine.js')
+  const rows = Array.from({ length: 55 }, (_, index) => {
+    const first = String.fromCharCode(97 + Math.floor(index / 26))
+    const second = String.fromCharCode(97 + (index % 26))
+    return { english: `word${first}${second}`, chinese: `词义${index + 1}` }
+  })
+  const initialCache = { basic: {} }
+  rows.forEach(({ english, chinese }, index) => {
+    initialCache.basic[`${english}||${chinese}`] = {
+      clozeSentence: `Use ______ in sentence ${index + 1}.`,
+      tfTrue: `The true statement for item ${index + 1}.`,
+      tfFalse: `The false statement for item ${index + 1}.`,
+    }
+  })
+
+  const result = await generateWorksheetArchive({
+    rows,
+    fileName: '参考包紧凑排版.xlsx',
+    generationMode: 'legacy_zip',
+    questionTypes: ['四_乱序拼写', '五_缺字母填空', '九_判断正误'],
+    legacyQuestionCount: 10,
+    initialCache,
+  })
+
+  const readPart = (questionKey, partName, answer = false) => {
+    const suffix = `/${questionKey}${answer ? '答案' : ''}.docx`
+    const docx = findStoredZipEntry(result.buffer, (name) => name.endsWith(suffix))
+    assert.ok(docx, `missing ${suffix}`)
+    const part = findStoredZipEntry(docx, (name) => name === partName)
+    assert.ok(part, `missing ${partName} in ${suffix}`)
+    return part.toString('utf8')
+  }
+
+  const questionKeys = ['四_乱序拼写', '五_缺字母填空', '九_判断正误']
+  questionKeys.forEach((questionKey) => {
+    const xml = readPart(questionKey, 'word/document.xml')
+    const styles = readPart(questionKey, 'word/styles.xml')
+    assert.match(xml, /<w:pgSz w:w="12240" w:h="15840" w:orient="portrait"\/>/)
+    assert.match(xml, /<w:pgMar w:top="720" w:right="720" w:bottom="720" w:left="720" w:header="720" w:footer="720" w:gutter="0"\/>/)
+    assert.match(xml, /<w:cols w:num="2" w:space="720"\/>/)
+    assert.doesNotMatch(xml, /<w:pageBreakBefore\/>/)
+    assert.match(xml, /第 2 组（第51～55词）/)
+    assert.match(xml, /<w:spacing w:before="0" w:after="0" w:line="240" w:lineRule="auto"\/>/)
+    assert.match(xml, /<w:keepLines\/>/)
+    assert.match(styles, /w:ascii="Times New Roman"/)
+    assert.match(styles, /w:eastAsia="宋体"/)
+    assert.match(styles, /<w:sz w:val="24"\/>/)
+
+    const answerXml = readPart(questionKey, 'word/document.xml', true)
+    assert.match(answerXml, /<w:pgSz w:w="11906" w:h="16838" w:orient="portrait"\/>/)
+    assert.match(answerXml, /<w:cols w:num="1" w:space="360"\/>/)
+  })
+
+  const scrambleXml = readPart('四_乱序拼写', 'word/document.xml')
+  const missingXml = readPart('五_缺字母填空', 'word/document.xml')
+  const trueFalseXml = readPart('九_判断正误', 'word/document.xml')
+  assert.match(scrambleXml, /四\. Word Scramble 单词乱序拼写题/)
+  assert.match(scrambleXml, /→ ____________/)
+  assert.match(scrambleXml, /<w:b\/>/)
+  assert.doesNotMatch(missingXml, /<w:b\/>/)
+  assert.match(trueFalseXml, /九\. True or False 判断正误/)
+  assert.match(trueFalseXml, /<w:b\/>/)
+})
+
+test('archive-style synonym replacement keeps each stem rewrite and option block together', async () => {
+  const { generateWorksheetArchive } = await import('../server/genEngine.js')
+  const { rows, initialCache } = buildFixedTestPaperFixture(55)
+  const result = await generateWorksheetArchive({
+    rows,
+    fileName: '同义替换题块测试.xlsx',
+    generationMode: 'legacy_zip',
+    questionTypes: ['三_同义替换'],
+    legacyQuestionCount: 4,
+    initialCache,
+  })
+  const docx = findStoredZipEntry(result.buffer, (name) => name.endsWith('/三_同义替换.docx'))
+  const xml = findStoredZipEntry(docx, (name) => name === 'word/document.xml').toString('utf8')
+  const styles = findStoredZipEntry(docx, (name) => name === 'word/styles.xml').toString('utf8')
+  const paragraphs = xml.match(/<w:p>[\s\S]*?<\/w:p>/g) || []
+  const originalRows = paragraphs.filter((item) => item.includes('The original sentence contains'))
+  const rewriteRows = paragraphs.filter((item) => item.includes('The rewritten sentence contains'))
+  const optionRows = paragraphs.filter((item) => item.includes('A. ') && item.includes('B. '))
+
+  assert.match(xml, /<w:pgSz w:w="12240" w:h="15840" w:orient="portrait"\/>/)
+  assert.match(xml, /<w:pgMar w:top="720" w:right="720" w:bottom="720" w:left="1134" w:header="720" w:footer="720" w:gutter="0"\/>/)
+  assert.match(xml, /<w:cols w:num="2" w:space="720"\/>/)
+  assert.equal((xml.match(/<w:pageBreakBefore\/>/g) || []).length, 1)
+  assert.equal(originalRows.length, 8)
+  assert.equal(rewriteRows.length, 8)
+  assert.ok(optionRows.length >= 8)
+  originalRows.forEach((row) => {
+    assert.match(row, /<w:keepNext\/>/)
+    assert.match(row, /<w:keepLines\/>/)
+  })
+  rewriteRows.forEach((row) => {
+    assert.match(row, /<w:keepNext\/>/)
+    assert.match(row, /<w:keepLines\/>/)
+  })
+  optionRows.forEach((row) => assert.match(row, /<w:keepLines\/>/))
+  assert.match(styles, /w:ascii="Times New Roman"/)
+  assert.match(styles, /w:eastAsia="宋体"/)
+})
+
 test('legacy answers flow between groups in aligned ten-column rows', async () => {
   process.env.VIVI_LLM_MODEL ||= 'test-model'
   const { generateWorksheetArchive } = await import('../server/genEngine.js')

@@ -19,10 +19,13 @@ const buildRunInnerXml = (text) => String(text ?? '')
   })
   .join('')
 
-const buildRunXml = ({ text = '', bold = false, size = 12, font = '' }) => {
+const buildRunXml = ({ text = '', bold = false, size = 12, font = '', eastAsiaFont = '' }) => {
+  const resolvedEastAsiaFont = eastAsiaFont || font
   const runProps = [
     bold ? '<w:b/>' : '',
-    font ? `<w:rFonts w:ascii="${xmlEscape(font)}" w:hAnsi="${xmlEscape(font)}" w:cs="${xmlEscape(font)}"/>` : '',
+    font || resolvedEastAsiaFont
+      ? `<w:rFonts${font ? ` w:ascii="${xmlEscape(font)}" w:hAnsi="${xmlEscape(font)}" w:cs="${xmlEscape(font)}"` : ''}${resolvedEastAsiaFont ? ` w:eastAsia="${xmlEscape(resolvedEastAsiaFont)}"` : ''}/>`
+      : '',
     `<w:sz w:val="${Math.round(size * 2)}"/>`,
     `<w:szCs w:val="${Math.round(size * 2)}"/>`,
   ].join('')
@@ -34,6 +37,7 @@ const buildParagraphXml = ({
   bold = false,
   size = 12,
   font = '',
+  eastAsiaFont = '',
   tabs = [],
   align = 'left',
   spaceBefore = 0,
@@ -42,6 +46,7 @@ const buildParagraphXml = ({
   keepNext = false,
   keepLines = false,
   indentLeft = 0,
+  lineSpacing = 0,
 }) => {
   const alignmentMap = {
     left: 'left',
@@ -56,14 +61,14 @@ const buildParagraphXml = ({
     align ? `<w:jc w:val="${alignmentMap[align] || 'left'}"/>` : '',
     tabs.length ? `<w:tabs>${tabs.map((position) => `<w:tab w:val="left" w:pos="${toTwips(position)}"/>`).join('')}</w:tabs>` : '',
     indentLeft ? `<w:ind w:left="${toTwips(indentLeft)}"/>` : '',
-    `<w:spacing w:before="${toTwips(spaceBefore)}" w:after="${toTwips(spaceAfter)}"/>`,
+    `<w:spacing w:before="${toTwips(spaceBefore)}" w:after="${toTwips(spaceAfter)}"${lineSpacing ? ` w:line="${Math.round(Number(lineSpacing) * 240)}" w:lineRule="auto"` : ''}/>`,
   ].join('')
 
   if (!text) {
     return `<w:p><w:pPr>${paragraphProps}</w:pPr></w:p>`
   }
 
-  return `<w:p><w:pPr>${paragraphProps}</w:pPr>${buildRunXml({ text, bold, size, font })}</w:p>`
+  return `<w:p><w:pPr>${paragraphProps}</w:pPr>${buildRunXml({ text, bold, size, font, eastAsiaFont })}</w:p>`
 }
 
 const buildTableCellXml = (cell = {}) => {
@@ -74,6 +79,7 @@ const buildTableCellXml = (cell = {}) => {
     bold: Boolean(value.bold),
     size: value.size || 12,
     font: value.font || '',
+    eastAsiaFont: value.eastAsiaFont || '',
     align: value.align || 'left',
     spaceBefore: value.spaceBefore || 0,
     spaceAfter: value.spaceAfter || 0,
@@ -81,6 +87,7 @@ const buildTableCellXml = (cell = {}) => {
     keepLines: Boolean(value.keepLines),
     tabs: value.tabs || [],
     indentLeft: value.indentLeft || 0,
+    lineSpacing: value.lineSpacing || 0,
   })
   return [
     '<w:tc>',
@@ -143,12 +150,26 @@ const buildTableXml = ({
   ].join('')
 }
 
-const buildSectionPropertiesXml = ({ columns = 1, columnSpacing = 18 } = {}) => {
+const buildSectionPropertiesXml = ({
+  columns = 1,
+  columnSpacing = 18,
+  pageWidthTwips = 11906,
+  pageHeightTwips = 16838,
+  pageMarginsTwips = {},
+} = {}) => {
   const safeColumns = Math.max(1, Math.min(4, Math.round(Number(columns) || 1)))
+  const margins = {
+    top: Math.max(0, Math.round(Number(pageMarginsTwips.top) || 1440)),
+    right: Math.max(0, Math.round(Number(pageMarginsTwips.right) || 1440)),
+    bottom: Math.max(0, Math.round(Number(pageMarginsTwips.bottom) || 1440)),
+    left: Math.max(0, Math.round(Number(pageMarginsTwips.left) || 1440)),
+    header: Math.max(0, Math.round(Number(pageMarginsTwips.header) || 720)),
+    footer: Math.max(0, Math.round(Number(pageMarginsTwips.footer) || 720)),
+  }
   return [
     '<w:sectPr>',
-    '<w:pgSz w:w="11906" w:h="16838" w:orient="portrait"/>',
-    '<w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/>',
+    `<w:pgSz w:w="${Math.round(Number(pageWidthTwips) || 11906)}" w:h="${Math.round(Number(pageHeightTwips) || 16838)}" w:orient="portrait"/>`,
+    `<w:pgMar w:top="${margins.top}" w:right="${margins.right}" w:bottom="${margins.bottom}" w:left="${margins.left}" w:header="${margins.header}" w:footer="${margins.footer}" w:gutter="0"/>`,
     `<w:cols w:num="${safeColumns}" w:space="${toTwips(columnSpacing)}"/>`,
     '</w:sectPr>',
   ].join('')
@@ -159,13 +180,14 @@ const buildBlockXml = (block) => {
   return buildParagraphXml(block || {})
 }
 
-const createStylesXml = () => `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+const createStylesXml = ({ defaultFont = '', defaultEastAsiaFont = '', defaultSize = 12 } = {}) => `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
   <w:docDefaults>
     <w:rPrDefault>
       <w:rPr>
-        <w:sz w:val="24"/>
-        <w:szCs w:val="24"/>
+        ${defaultFont || defaultEastAsiaFont ? `<w:rFonts${defaultFont ? ` w:ascii="${xmlEscape(defaultFont)}" w:hAnsi="${xmlEscape(defaultFont)}" w:cs="${xmlEscape(defaultFont)}"` : ''}${defaultEastAsiaFont || defaultFont ? ` w:eastAsia="${xmlEscape(defaultEastAsiaFont || defaultFont)}"` : ''}/>` : ''}
+        <w:sz w:val="${Math.round(Number(defaultSize) * 2)}"/>
+        <w:szCs w:val="${Math.round(Number(defaultSize) * 2)}"/>
       </w:rPr>
     </w:rPrDefault>
   </w:docDefaults>
@@ -245,14 +267,32 @@ const createAppXml = () => `<?xml version="1.0" encoding="UTF-8" standalone="yes
   <Application>XLSX2PDF Console</Application>
 </Properties>`
 
-export const createDocxBuffer = ({ title, paragraphs, columns = 1, columnSpacing = 18 }) => {
+export const createDocxBuffer = ({
+  title,
+  paragraphs,
+  columns = 1,
+  columnSpacing = 18,
+  pageWidthTwips = 11906,
+  pageHeightTwips = 16838,
+  pageMarginsTwips = {},
+  defaultFont = '',
+  defaultEastAsiaFont = '',
+  defaultSize = 12,
+}) => {
+  const documentOptions = {
+    columns,
+    columnSpacing,
+    pageWidthTwips,
+    pageHeightTwips,
+    pageMarginsTwips,
+  }
   return createZipBuffer([
     { name: '[Content_Types].xml', data: createContentTypesXml() },
     { name: '_rels/.rels', data: createRootRelsXml() },
     { name: 'docProps/core.xml', data: createCoreXml(title) },
     { name: 'docProps/app.xml', data: createAppXml() },
-    { name: 'word/document.xml', data: createDocumentXml(paragraphs, { columns, columnSpacing }) },
-    { name: 'word/styles.xml', data: createStylesXml() },
+    { name: 'word/document.xml', data: createDocumentXml(paragraphs, documentOptions) },
+    { name: 'word/styles.xml', data: createStylesXml({ defaultFont, defaultEastAsiaFont, defaultSize }) },
     { name: 'word/_rels/document.xml.rels', data: createDocumentRelsXml() },
     { name: 'word/settings.xml', data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:settings xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:zoom w:percent="100"/></w:settings>` },
     { name: 'word/webSettings.xml', data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:webSettings xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"/>` },
