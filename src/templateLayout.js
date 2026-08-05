@@ -1,8 +1,10 @@
-const TEMPLATE_PAGE_COUNTS = [
+// These values are full-page capacities, not the number of populated rows on a
+// particular export's final page. Later pages use the default capacity below.
+const TEMPLATE_PAGE_CAPACITIES = [
   41, 41, 39, 39, 41, 41, 38, 40, 40, 39, 41, 38, 40, 37,
   40, 38, 41, 39, 40, 40, 38, 39, 39, 41, 38, 40, 37, 41,
   40, 40, 39, 39, 41, 40, 38, 37, 39, 41, 40, 39, 39, 41,
-  38, 37, 40, 38, 39, 40, 40, 40, 37, 39, 39, 41, 37, 4,
+  38, 37, 40, 38, 39, 40, 40, 40, 37, 39, 39, 41, 37,
 ]
 
 export const TEMPLATE_TITLE = '词表'
@@ -26,7 +28,7 @@ export const TEMPLATE_PDF = {
 }
 
 export const getTemplatePageCapacity = (pageIndex) => {
-  if (pageIndex < TEMPLATE_PAGE_COUNTS.length) return TEMPLATE_PAGE_COUNTS[pageIndex]
+  if (pageIndex < TEMPLATE_PAGE_CAPACITIES.length) return TEMPLATE_PAGE_CAPACITIES[pageIndex]
   return TEMPLATE_DEFAULT_PAGE_CAPACITY
 }
 
