@@ -1724,6 +1724,7 @@ const table = (rows, options = {}) => ({
 })
 
 const DOCX_PAGE_WIDTH_TWIPS = 11906
+const DOCX_PAGE_HEIGHT_TWIPS = 16838
 const DOCX_HORIZONTAL_MARGIN_TWIPS = 1440
 const DOCX_CONTENT_WIDTH_TWIPS = DOCX_PAGE_WIDTH_TWIPS - DOCX_HORIZONTAL_MARGIN_TWIPS * 2
 const DOCX_CONTENT_WIDTH_PT = DOCX_CONTENT_WIDTH_TWIPS / 20
@@ -1731,17 +1732,29 @@ const LEGACY_TWO_COLUMN_SPACING_PT = 18
 const LEGACY_COLUMN_WIDTH_PT = (
   DOCX_CONTENT_WIDTH_TWIPS - LEGACY_TWO_COLUMN_SPACING_PT * 20
 ) / 2 / 20
+// 前三道选择题（一_释义匹配 / 二_选择题 / 三_同义替换）统一使用窄页边距
+// （左右各 36pt），在保持两栏不变的前提下把每栏可用宽度撑到最大，
+// 让 A、B、C、D 四个选项尽量挤在同一行，减少整题跨页。
+const OPTION_TWO_COLUMN_SPACING_PT = 36
+const OPTION_NARROW_MARGIN_TWIPS = 720
+const OPTION_COLUMN_WIDTH_PT = (
+  DOCX_PAGE_WIDTH_TWIPS
+  - OPTION_NARROW_MARGIN_TWIPS * 2
+  - OPTION_TWO_COLUMN_SPACING_PT * 20
+) / 2 / 20
 const OPTION_INDENT_PT = 8
 const OPTION_GAP_PT = 7
+// 四选项单行最小字号：真实单词（≤10 字符）通常 7.5-11pt 即可一行；
+// 更长的选项会退化为 A、B / C、D 两行并保持 12pt，避免字号过小影响可读性。
+const OPTION_MIN_SIZE_PT = 7.5
 const ARCHIVE_PAGE_WIDTH_TWIPS = 12240
 const ARCHIVE_PAGE_HEIGHT_TWIPS = 15840
 const ARCHIVE_MARGIN_TWIPS = 720
-const ARCHIVE_SYNONYM_LEFT_MARGIN_TWIPS = 1134
 const ARCHIVE_COLUMN_SPACING_PT = 36
+// 三_同义替换也使用左右 720twips 窄边距，栏宽与四/五/九一致。
 const ARCHIVE_SYNONYM_COLUMN_WIDTH_PT = (
   ARCHIVE_PAGE_WIDTH_TWIPS
-  - ARCHIVE_SYNONYM_LEFT_MARGIN_TWIPS
-  - ARCHIVE_MARGIN_TWIPS
+  - ARCHIVE_MARGIN_TWIPS * 2
   - ARCHIVE_COLUMN_SPACING_PT * 20
 ) / 2 / 20
 const ARCHIVE_LAYOUT_QUESTION_KEYS = new Set([
@@ -1802,6 +1815,33 @@ const buildOptionLines = (options, size = 12, columnWidth = LEGACY_COLUMN_WIDTH_
     })]
   }
 
+  // 四选项一行放不下时，优先逐级缩小字号（最小 7.5pt）把 A、B、C、D 挤回同一行，
+  // 允许行尾留空；仍然放不下才退化为 A、B / C、D 两行。
+  let oneLineSize = size
+  let oneLineFits = false
+  while (oneLineSize >= OPTION_MIN_SIZE_PT) {
+    const widths = labeledOptions.map((value) => estimateTextWidthPt(value, oneLineSize))
+    if (widths.reduce((sum, width) => sum + width, 0) + OPTION_GAP_PT * 3 <= usableWidth) {
+      oneLineFits = true
+      break
+    }
+    oneLineSize -= 0.25
+  }
+  if (oneLineFits) {
+    const oneLineWidthsAtSize = labeledOptions.map((value) => estimateTextWidthPt(value, oneLineSize))
+    const tabs = []
+    let cursor = OPTION_INDENT_PT + oneLineWidthsAtSize[0] + OPTION_GAP_PT
+    for (let index = 1; index < labeledOptions.length; index += 1) {
+      tabs.push(cursor)
+      cursor += oneLineWidthsAtSize[index] + OPTION_GAP_PT
+    }
+    return [paragraph(labeledOptions.join('\t'), {
+      size: oneLineSize,
+      tabs,
+      indentLeft: OPTION_INDENT_PT,
+    })]
+  }
+
   let actualSize = size
   let leftWidth = 0
   let rightWidth = 0
@@ -1835,16 +1875,24 @@ const buildOptionLines = (options, size = 12, columnWidth = LEGACY_COLUMN_WIDTH_
 
 // 题干段 + 选项段用 keepNext 串链，保证同一道题的题目与选项在同一栏内不跨栏不跨页。
 // middleLines: 题干与选项之间的补充行（如中文译文），同样参与 keepNext 串链。
+// 题干超过一栏宽度时自动缩小字号（最小 8.5pt，保持可读），尽量减少整题被迫挪到下一页。
 const pushQuestionWithOptions = (questionParagraphs, stemText, options, {
   size = 12,
   middleLines = [],
   columnWidth = LEGACY_COLUMN_WIDTH_PT,
+  stemMinSize = 8.5,
 } = {}) => {
-  const stem = paragraph(stemText, { size, keepNext: true, keepLines: true })
+  const stemUsableWidth = columnWidth - 4
+  let stemSize = size
+  while (stemSize >= stemMinSize) {
+    if (estimateTextWidthPt(String(stemText ?? ''), stemSize) <= stemUsableWidth) break
+    stemSize -= 0.25
+  }
+  const stem = paragraph(stemText, { size: stemSize, keepNext: true, keepLines: true })
   questionParagraphs.push(stem)
   middleLines.forEach((line) => {
     questionParagraphs.push(paragraph(line, {
-      size,
+      size: Math.min(size, stemSize),
       indentLeft: 12,
       keepNext: true,
       keepLines: true,
@@ -1947,6 +1995,7 @@ const generateMatching = (questionParagraphs, answerParagraphs, group, groupInde
     const definitionZh = requireGeneratedValue(lexical.get(entry.key)?.definitionZh, '释义匹配存在缺失的 definition_zh。')
     pushQuestionWithOptions(questionParagraphs, `${index + 1}. ${definition}`, options, {
       size: 11,
+      columnWidth: OPTION_COLUMN_WIDTH_PT,
       middleLines: context.withChineseTranslation && definitionZh ? [`（${definitionZh}）`] : [],
     })
     answers.push([index + 1, 'ABCD'[options.indexOf(entry.displayEnglish)] || 'A'])
@@ -1964,7 +2013,9 @@ const generateMultipleChoice = (questionParagraphs, answerParagraphs, group, gro
     const options = shuffle([...distractors.map((item) => item.displayEnglish), entry.displayEnglish], context.rng).slice(0, 4)
     const material = context.basicMaterialCache.get(entry.key)
     const clozeSentence = requireGeneratedValue(material?.clozeSentence, '选择题缺少 LLM 题面材料。')
-    pushQuestionWithOptions(questionParagraphs, `${index + 1}. ${clozeSentence}`, options)
+    pushQuestionWithOptions(questionParagraphs, `${index + 1}. ${clozeSentence}`, options, {
+      columnWidth: OPTION_COLUMN_WIDTH_PT,
+    })
     answers.push([index + 1, 'ABCD'[options.indexOf(entry.displayEnglish)] || 'A'])
   })
   writeAnswerBlock(answerParagraphs, `第${groupIndex + 1}组 二 选择题 答案`, answers)
@@ -2197,13 +2248,13 @@ const archiveQuestionDocxOptions = (questionKey) => {
     columnSpacing: ARCHIVE_COLUMN_SPACING_PT,
     pageWidthTwips: ARCHIVE_PAGE_WIDTH_TWIPS,
     pageHeightTwips: ARCHIVE_PAGE_HEIGHT_TWIPS,
+    // 三_同义替换与四/五/九一样使用左右 720twips（36pt）窄边距，
+    // 栏数保持两栏，每栏更宽，选项更容易挤在同一行。
     pageMarginsTwips: {
       top: ARCHIVE_MARGIN_TWIPS,
       right: ARCHIVE_MARGIN_TWIPS,
       bottom: ARCHIVE_MARGIN_TWIPS,
-      left: questionKey === '三_同义替换'
-        ? ARCHIVE_SYNONYM_LEFT_MARGIN_TWIPS
-        : ARCHIVE_MARGIN_TWIPS,
+      left: ARCHIVE_MARGIN_TWIPS,
       header: ARCHIVE_MARGIN_TWIPS,
       footer: ARCHIVE_MARGIN_TWIPS,
     },
@@ -2733,6 +2784,8 @@ const createNonTranslationFiles = async (questionKey, groups, context) => {
   applyArchiveQuestionTypography(questionKey, questionParagraphs)
 
   // 参考包指定的题型使用其 Letter 双栏结构；匹配长文本题仍使用单栏。
+  // 一/二/三选择题统一使用窄边距两栏：栏数不变，仅把左右边距收窄到 36pt，
+  // 让每栏更宽、选项更容易挤在同一行，减少整题跨页。
   const singleColumnQuestionKeys = new Set([
     '六_同义反义辨析',
   ])
@@ -2741,7 +2794,25 @@ const createNonTranslationFiles = async (questionKey, groups, context) => {
     ? archiveQuestionDocxOptions(questionKey)
     : MATCHING_LAYOUT_QUESTION_KEYS.has(questionKey)
       ? matchingQuestionDocxOptions(questionKey)
-      : { columns: useColumns, columnSpacing: LEGACY_TWO_COLUMN_SPACING_PT }
+      : (questionKey === '一_释义匹配' || questionKey === '二_选择题' || questionKey === '三_同义替换')
+        ? {
+            columns: useColumns,
+            columnSpacing: OPTION_TWO_COLUMN_SPACING_PT,
+            pageWidthTwips: DOCX_PAGE_WIDTH_TWIPS,
+            pageHeightTwips: DOCX_PAGE_HEIGHT_TWIPS,
+            pageMarginsTwips: {
+              top: DOCX_HORIZONTAL_MARGIN_TWIPS,
+              right: OPTION_NARROW_MARGIN_TWIPS,
+              bottom: DOCX_HORIZONTAL_MARGIN_TWIPS,
+              left: OPTION_NARROW_MARGIN_TWIPS,
+              header: 720,
+              footer: 720,
+            },
+            defaultFont: 'Times New Roman',
+            defaultEastAsiaFont: '宋体',
+            defaultSize: 12,
+          }
+        : { columns: useColumns, columnSpacing: LEGACY_TWO_COLUMN_SPACING_PT }
   return [
     {
       name: `${context.exportName}/${questionKey}/${questionKey}.docx`,

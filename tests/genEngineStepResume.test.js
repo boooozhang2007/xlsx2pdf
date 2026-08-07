@@ -530,24 +530,29 @@ test('legacy matching worksheet aligns two-row options and keeps optional Chines
   const withoutChineseXml = readQuestionXml(withoutChinese)
 
   assert.match(withChineseXml, /<w:pgSz w:w="11906" w:h="16838" w:orient="portrait"\/>/)
-  assert.match(withChineseXml, /<w:cols w:num="2" w:space="360"\/>/)
+  assert.match(withChineseXml, /<w:pgMar w:top="1440" w:right="720" w:bottom="1440" w:left="720" w:header="720" w:footer="720" w:gutter="0"\/>/)
+  assert.match(withChineseXml, /<w:cols w:num="2" w:space="720"\/>/)
 
-  // 长选项使用 AB / CD 两行，并共享第二列制表位以保证 A/C、B/D 对齐。
+  // 窄边距两栏下，长选项优先缩字号挤在 A/B/C/D 同一行（可留空）；
+  // 只有实在挤不下才退化为 AB / CD 两行。这里验证两者都正常输出且制表位对齐。
   const optionTables = withChineseXml.match(/<w:tbl>[\s\S]*?<\/w:tbl>/g) || []
   assert.equal(optionTables.length, 0)
   const paragraphs = withChineseXml.match(/<w:p>[\s\S]*?<\/w:p>/g) || []
-  const abRows = paragraphs.filter((item) => item.includes('A. sampleword') && item.includes('B. sampleword'))
-  const cdRows = paragraphs.filter((item) => item.includes('C. sampleword') && item.includes('D. sampleword'))
-  assert.equal(abRows.length, 12)
-  assert.equal(cdRows.length, 12)
-  abRows.forEach((row, index) => {
-    const abPosition = row.match(/<w:tab w:val="left" w:pos="(\d+)"\/>/)?.[1]
-    const cdPosition = cdRows[index].match(/<w:tab w:val="left" w:pos="(\d+)"\/>/)?.[1]
-    assert.ok(abPosition)
-    assert.equal(abPosition, cdPosition)
-    assert.match(row, /<w:tab\/>/)
-    assert.match(cdRows[index], /<w:tab\/>/)
-  })
+  const singleRows = paragraphs.filter((item) => item.includes('A. sampleword') && item.includes('D. sampleword'))
+  const abRows = paragraphs.filter((item) => item.includes('A. sampleword') && item.includes('B. sampleword') && !item.includes('D. sampleword'))
+  const cdRows = paragraphs.filter((item) => item.includes('C. sampleword') && item.includes('D. sampleword') && !item.includes('A. sampleword'))
+  assert.ok(singleRows.length > 0 || abRows.length > 0)
+  assert.equal(abRows.length, cdRows.length)
+  if (abRows.length) {
+    abRows.forEach((row, index) => {
+      const abPosition = row.match(/<w:tab w:val="left" w:pos="(\d+)"\/>/)?.[1]
+      const cdPosition = cdRows[index].match(/<w:tab w:val="left" w:pos="(\d+)"\/>/)?.[1]
+      assert.ok(abPosition)
+      assert.equal(abPosition, cdPosition)
+      assert.match(row, /<w:tab\/>/)
+      assert.match(cdRows[index], /<w:tab\/>/)
+    })
+  }
 
   const englishStart = withChineseXml.search(/definition for item \d+/)
   assert.ok(englishStart >= 0)
@@ -597,6 +602,47 @@ test('legacy short options stay on one aligned row', async () => {
   optionRows.forEach((row) => {
     assert.equal((row.match(/<w:tab\/>/g) || []).length, 3)
     assert.equal((row.match(/<w:tab w:val="left"/g) || []).length, 3)
+  })
+})
+
+test('overlong options degrade to aligned AB/CD two rows instead of shrinking below 7.5pt', async () => {
+  process.env.VIVI_LLM_MODEL ||= 'test-model'
+  const { generateWorksheetArchive } = await import('../server/genEngine.js')
+  // 每个选项 20+ 字符，四选项一行即使在 7.5pt 也放不下，必须退化为两行。
+  const words = ['extraordinarily-long-word-alpha', 'extraordinarily-long-word-bravo', 'extraordinarily-long-word-charlie', 'extraordinarily-long-word-delta']
+  const rows = words.map((english, index) => ({ english, chinese: `词义${index + 1}` }))
+  const initialCache = { lexical: {} }
+  rows.forEach(({ english, chinese }, index) => {
+    initialCache.lexical[`${english}||${chinese}`] = {
+      definitionEn: `definition ${index + 1}`,
+      definitionZh: `短释义${index + 1}`,
+      synonym: `similar${index + 1}`,
+      antonym: `opposite${index + 1}`,
+    }
+  })
+
+  const result = await generateWorksheetArchive({
+    rows,
+    fileName: '超长选项测试.xlsx',
+    generationMode: 'legacy_zip',
+    questionTypes: ['一_释义匹配'],
+    legacyQuestionCount: 4,
+    initialCache,
+  })
+  const docx = findStoredZipEntry(result.buffer, (name) => name.endsWith('/一_释义匹配.docx'))
+  const xml = findStoredZipEntry(docx, (name) => name === 'word/document.xml').toString('utf8')
+  const paragraphs = xml.match(/<w:p>[\s\S]*?<\/w:p>/g) || []
+  const abRows = paragraphs.filter((item) => item.includes('A. ') && item.includes('B. ') && !item.includes('C. '))
+  const cdRows = paragraphs.filter((item) => item.includes('C. ') && item.includes('D. ') && !item.includes('A. '))
+  assert.equal(abRows.length, 4)
+  assert.equal(cdRows.length, 4)
+  abRows.forEach((row, index) => {
+    const abPosition = row.match(/<w:tab w:val="left" w:pos="(\d+)"\/>/)?.[1]
+    const cdPosition = cdRows[index].match(/<w:tab w:val="left" w:pos="(\d+)"\/>/)?.[1]
+    assert.ok(abPosition)
+    assert.equal(abPosition, cdPosition)
+    // 两行选项不允许缩到 7.5pt 以下。
+    assert.ok(Number(row.match(/<w:sz w:val="(\d+)"/)?.[1]) / 2 >= 7.5)
   })
 })
 
@@ -686,7 +732,7 @@ test('archive-style synonym replacement keeps each stem rewrite and option block
   const optionRows = paragraphs.filter((item) => item.includes('A. ') && item.includes('B. '))
 
   assert.match(xml, /<w:pgSz w:w="12240" w:h="15840" w:orient="portrait"\/>/)
-  assert.match(xml, /<w:pgMar w:top="720" w:right="720" w:bottom="720" w:left="1134" w:header="720" w:footer="720" w:gutter="0"\/>/)
+  assert.match(xml, /<w:pgMar w:top="720" w:right="720" w:bottom="720" w:left="720" w:header="720" w:footer="720" w:gutter="0"\/>/)
   assert.match(xml, /<w:cols w:num="2" w:space="720"\/>/)
   assert.equal((xml.match(/<w:pageBreakBefore\/>/g) || []).length, 1)
   assert.equal(originalRows.length, 8)
