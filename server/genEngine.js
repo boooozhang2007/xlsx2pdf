@@ -2128,34 +2128,42 @@ const generateSynAntJudge = (questionParagraphs, answerParagraphs, group, groupI
 }
 
 const buildMatchingParagraphBlock = (pairs, rightWords, { columnBreakBefore = false } = {}) => {
-  // 起始 11pt（比 12pt 更紧凑），超宽时逐级缩小到 8pt。
-  // 左列（数字+词）与右列（字母+词）都要求一行放下、不折行：
-  // 右列若折行会顶格出现在下一行开头，容易与下一题的数字行混淆。
+  // 用无边框两列表格承载"数字+词 | 字母+词"：
+  // 左右单元格各自独立折行，长短语不会被截断，也不会顶格到下一行开头造成歧义。
+  // 字号 11pt，超宽时整体缩到最小 8pt。
   let fontSize = 11
+  const leftCellWidth = Math.round((MATCHING_RIGHT_TAB_PT - 4) * 20)
+  const rightCellWidth = Math.round((MATCHING_COLUMN_WIDTH_PT - MATCHING_RIGHT_TAB_PT) * 20)
   while (fontSize > 8) {
     const leftFits = pairs.every((pair, index) => (
-      estimateTextWidthPt(`${index + 1}. ${pair[0].displayEnglish}`, fontSize) <= MATCHING_RIGHT_TAB_PT - 8
+      estimateTextWidthPt(`${index + 1}. ${pair[0].displayEnglish}`, fontSize) <= leftCellWidth / 20 - 6
     ))
     const rightFits = rightWords.every((word, index) => (
-      estimateTextWidthPt(`${'abcde'[index]}. ${word}`, fontSize) <= MATCHING_COLUMN_WIDTH_PT - MATCHING_RIGHT_TAB_PT - 4
+      estimateTextWidthPt(`${'abcde'[index]}. ${word}`, fontSize) <= rightCellWidth / 20 - 6
     ))
     if (leftFits && rightFits) break
     fontSize -= 0.5
   }
 
-  return [
-    paragraph('', { columnBreakBefore, keepNext: true, keepLines: true, lineSpacing: 1 }),
-    ...pairs.map((pair, index) => paragraph(
-      `${index + 1}. ${pair[0].displayEnglish}\t${'abcde'[index]}. ${rightWords[index]}`,
-      {
-        size: fontSize,
-        tabs: [MATCHING_RIGHT_TAB_PT],
-        keepNext: index < pairs.length - 1,
-        keepLines: true,
-        lineSpacing: 1,
-      },
-    )),
-  ]
+  const spacer = paragraph('', { columnBreakBefore, keepNext: true, keepLines: true, lineSpacing: 1 })
+  const tableBlock = table(pairs.map((pair, index) => [
+    {
+      text: `${index + 1}. ${pair[0].displayEnglish}`,
+      size: fontSize,
+      align: 'left',
+    },
+    {
+      text: `${'abcde'[index]}. ${rightWords[index]}`,
+      size: fontSize,
+      align: 'left',
+    },
+  ]), {
+    columnWidths: [leftCellWidth, rightCellWidth],
+    cantSplit: true,
+    fixedLayout: true,
+    cellMargins: { top: 0, right: 24, bottom: 0, left: 0 },
+  })
+  return [spacer, tableBlock]
 }
 
 const generateMatchBlocks = (questionParagraphs, answerParagraphs, group, groupIndex, context, relationKey, sectionTitle, answerTitle) => {

@@ -830,16 +830,25 @@ test('legacy synonym and antonym matching follow the spaced two-column template'
     assert.equal((xml.match(/<w:pageBreakBefore\/>/g) || []).length, 1)
     assert.equal((xml.match(blankBlockSpacer) || []).length, 4)
     assert.equal((xml.match(/<w:br w:type="column"\/>/g) || []).length, 2)
-    assert.equal((xml.match(/<w:tab w:val="left" w:pos="2960"\/>/g) || []).length, 20)
-    assert.equal((xml.match(/<w:tab\/>/g) || []).length, 20)
-    assert.equal((xml.match(/<w:tbl>/g) || []).length, 0)
+    // 匹配行使用无边框两列表格：左右单元格各自折行，长短语不截断、不错位。
+    // 只匹配外层表格（嵌套表格不参与断言）。
+    const outerTableRe = /<w:tbl>(?:(?!<\/w:tbl>).)*?<\/w:tbl>/g
+    const matchTables = xml.match(outerTableRe) || []
+    assert.equal(matchTables.length, 4)
+    matchTables.forEach((matchTable) => {
+      assert.match(matchTable, /<w:tblLayout w:type="fixed"\/>/)
+      assert.match(matchTable, /<w:cantSplit\/>/)
+      assert.equal((matchTable.match(/<w:gridCol /g) || []).length, 2)
+      // 每个单元格内容完整保留（长短语不截断）。
+      assert.match(matchTable, /<w:t[^>]*>a\. /)
+    })
     // 匹配行起始字号 11pt（w:sz=22），防止回归到 12pt 造成页面更空。
     assert.match(xml, /<w:sz w:val="22"\/>/)
     assert.match(styles, /w:ascii="Times New Roman"/)
 
     const answerDocx = findStoredZipEntry(result.buffer, (name) => name.endsWith(`/${questionKey}答案.docx`))
     const answerXml = findStoredZipEntry(answerDocx, (name) => name === 'word/document.xml').toString('utf8')
-    assert.equal((answerXml.match(/<w:tbl>/g) || []).length, 2)
+    assert.equal((answerXml.match(outerTableRe) || []).length, 2)
     assert.match(answerXml, /<w:tblLayout w:type="fixed"\/>/)
   })
 })
