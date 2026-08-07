@@ -778,13 +778,13 @@ test('legacy answers flow between groups in aligned ten-column rows', async () =
   })
 })
 
-test('legacy synonym-antonym judge remains a single-column worksheet', async () => {
+test('legacy synonym-antonym judge uses the narrow-margin two-column worksheet', async () => {
   process.env.VIVI_LLM_MODEL ||= 'test-model'
   const { generateWorksheetArchive } = await import('../server/genEngine.js')
   const { rows, initialCache } = buildFixedTestPaperFixture(20)
   const result = await generateWorksheetArchive({
     rows,
-    fileName: '单栏匹配测试.xlsx',
+    fileName: '双栏辨析测试.xlsx',
     generationMode: 'legacy_zip',
     questionTypes: ['六_同义反义辨析'],
     legacyQuestionCount: 10,
@@ -792,7 +792,8 @@ test('legacy synonym-antonym judge remains a single-column worksheet', async () 
   })
   const docx = findStoredZipEntry(result.buffer, (name) => name.endsWith('/六_同义反义辨析.docx'))
   const xml = findStoredZipEntry(docx, (name) => name === 'word/document.xml').toString('utf8')
-  assert.match(xml, /<w:cols w:num="1"/)
+  assert.match(xml, /<w:cols w:num="2" w:space="720"\/>/)
+  assert.match(xml, /<w:pgMar w:top="1440" w:right="720" w:bottom="1440" w:left="720" w:header="720" w:footer="720" w:gutter="0"\/>/)
 })
 
 test('legacy synonym and antonym matching follow the spaced two-column template', async () => {
@@ -822,16 +823,18 @@ test('legacy synonym and antonym matching follow the spaced two-column template'
     const blankBlockSpacer = /<w:p><w:pPr><w:keepNext\/><w:keepLines\/><w:jc w:val="left"\/><w:spacing w:before="0" w:after="0" w:line="240" w:lineRule="auto"\/><\/w:pPr>(?:<w:r><w:br w:type="column"\/><\/w:r>)?<\/w:p>/g
 
     assert.match(xml, /<w:pgSz w:w="12240" w:h="15840" w:orient="portrait"\/>/)
-    assert.match(xml, /<w:pgMar w:top="1440" w:right="1800" w:bottom="1440" w:left="1800" w:header="720" w:footer="720" w:gutter="0"\/>/)
+    assert.match(xml, /<w:pgMar w:top="720" w:right="720" w:bottom="720" w:left="720" w:header="720" w:footer="720" w:gutter="0"\/>/)
     assert.match(xml, /<w:cols w:num="2" w:space="720"\/>/)
     assert.equal(xml.split(sectionHeading).length - 1, 1)
     assert.equal(xml.split(instruction).length - 1, 1)
     assert.equal((xml.match(/<w:pageBreakBefore\/>/g) || []).length, 1)
     assert.equal((xml.match(blankBlockSpacer) || []).length, 4)
     assert.equal((xml.match(/<w:br w:type="column"\/>/g) || []).length, 2)
-    assert.equal((xml.match(/<w:tab w:val="left" w:pos="2520"\/>/g) || []).length, 20)
+    assert.equal((xml.match(/<w:tab w:val="left" w:pos="2960"\/>/g) || []).length, 20)
     assert.equal((xml.match(/<w:tab\/>/g) || []).length, 20)
     assert.equal((xml.match(/<w:tbl>/g) || []).length, 0)
+    // 匹配行起始字号 11pt（w:sz=22），防止回归到 12pt 造成页面更空。
+    assert.match(xml, /<w:sz w:val="22"\/>/)
     assert.match(styles, /w:ascii="Times New Roman"/)
 
     const answerDocx = findStoredZipEntry(result.buffer, (name) => name.endsWith(`/${questionKey}答案.docx`))

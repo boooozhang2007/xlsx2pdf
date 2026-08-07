@@ -1774,15 +1774,18 @@ const COMPACT_GROUP_BLOCK_QUESTION_KEYS = new Set([
 ])
 const MATCHING_PAGE_WIDTH_TWIPS = 12240
 const MATCHING_PAGE_HEIGHT_TWIPS = 15840
-const MATCHING_HORIZONTAL_MARGIN_TWIPS = 1800
-const MATCHING_VERTICAL_MARGIN_TWIPS = 1440
+// 同义词/反义词匹配使用窄边距（左右各 720twips = 36pt），
+// 在保持两栏不变的前提下让每栏更宽，左右各放 3 组 5 题并保持对齐，
+// 减少页面空白。
+const MATCHING_HORIZONTAL_MARGIN_TWIPS = 720
+const MATCHING_VERTICAL_MARGIN_TWIPS = 720
 const MATCHING_COLUMN_SPACING_PT = 36
 const MATCHING_COLUMN_WIDTH_PT = (
   MATCHING_PAGE_WIDTH_TWIPS
   - MATCHING_HORIZONTAL_MARGIN_TWIPS * 2
   - MATCHING_COLUMN_SPACING_PT * 20
 ) / 2 / 20
-const MATCHING_RIGHT_TAB_PT = 126
+const MATCHING_RIGHT_TAB_PT = 148
 
 const estimateTextWidthPt = (text, sizePt) => {
   return String(text ?? '').split('').reduce((sum, ch) => {
@@ -2111,20 +2114,30 @@ const generateSynAntJudge = (questionParagraphs, answerParagraphs, group, groupI
   pairs = shuffle(pairs.slice(0, context.questionsPerGroup), context.rng)
   const answers = []
   pairs.forEach((pair, index) => {
-    questionParagraphs.push(paragraph(`${index + 1}. ${pair[0]} & ${pair[1]} (    )`))
+    const text = `${index + 1}. ${pair[0]} & ${pair[1]} (    )`
+    // 双栏窄栏下防止单行内容折行：超宽时自动缩小字号（最小 8.5pt）。
+    let lineSize = 12
+    while (lineSize > 8.5) {
+      if (estimateTextWidthPt(text, lineSize) <= OPTION_COLUMN_WIDTH_PT - 8) break
+      lineSize -= 0.5
+    }
+    questionParagraphs.push(paragraph(text, { size: lineSize, keepLines: true }))
     answers.push([index + 1, pair[2]])
   })
   writeAnswerBlock(answerParagraphs, `第${groupIndex + 1}组 五 同义反义辨析 答案`, answers)
 }
 
 const buildMatchingParagraphBlock = (pairs, rightWords, { columnBreakBefore = false } = {}) => {
-  let fontSize = 12
+  // 起始 11pt（比 12pt 更紧凑），超宽时逐级缩小到 8pt。
+  // 左列（数字+词）与右列（字母+词）都要求一行放下、不折行：
+  // 右列若折行会顶格出现在下一行开头，容易与下一题的数字行混淆。
+  let fontSize = 11
   while (fontSize > 8) {
     const leftFits = pairs.every((pair, index) => (
-      estimateTextWidthPt(`${index + 1}. ${pair[0].displayEnglish}`, fontSize) <= MATCHING_RIGHT_TAB_PT - 6
+      estimateTextWidthPt(`${index + 1}. ${pair[0].displayEnglish}`, fontSize) <= MATCHING_RIGHT_TAB_PT - 8
     ))
     const rightFits = rightWords.every((word, index) => (
-      estimateTextWidthPt(`${'abcde'[index]}. ${word}`, fontSize) <= MATCHING_COLUMN_WIDTH_PT - MATCHING_RIGHT_TAB_PT
+      estimateTextWidthPt(`${'abcde'[index]}. ${word}`, fontSize) <= MATCHING_COLUMN_WIDTH_PT - MATCHING_RIGHT_TAB_PT - 4
     ))
     if (leftFits && rightFits) break
     fontSize -= 0.5
@@ -2783,18 +2796,15 @@ const createNonTranslationFiles = async (questionKey, groups, context) => {
   await context.checkForCancellation()
   applyArchiveQuestionTypography(questionKey, questionParagraphs)
 
-  // 参考包指定的题型使用其 Letter 双栏结构；匹配长文本题仍使用单栏。
-  // 一/二/三选择题统一使用窄边距两栏：栏数不变，仅把左右边距收窄到 36pt，
-  // 让每栏更宽、选项更容易挤在同一行，减少整题跨页。
-  const singleColumnQuestionKeys = new Set([
-    '六_同义反义辨析',
-  ])
-  const useColumns = singleColumnQuestionKeys.has(questionKey) ? 1 : 2
+  // 参考包指定的题型使用其 Letter 双栏结构。
+  // 一/二/三/六选择题统一使用窄边距两栏：栏数不变，仅把左右边距收窄到 36pt，
+  // 让每栏更宽、内容更容易放在同一行，减少整题跨页。
+  const useColumns = 2
   const questionDocxOptions = ARCHIVE_LAYOUT_QUESTION_KEYS.has(questionKey)
     ? archiveQuestionDocxOptions(questionKey)
     : MATCHING_LAYOUT_QUESTION_KEYS.has(questionKey)
       ? matchingQuestionDocxOptions(questionKey)
-      : (questionKey === '一_释义匹配' || questionKey === '二_选择题' || questionKey === '三_同义替换')
+      : (questionKey === '一_释义匹配' || questionKey === '二_选择题' || questionKey === '三_同义替换' || questionKey === '六_同义反义辨析')
         ? {
             columns: useColumns,
             columnSpacing: OPTION_TWO_COLUMN_SPACING_PT,
