@@ -301,11 +301,11 @@ function App() {
     },
     gen: {
       pill: '受保护的服务端练习包生成',
-      title: '把当前词表变成练习 ZIP。',
+      title: '把当前词表变成练习包。',
       description: '复用当前 XLSX 读表设置，在受保护页面里调用 Vercel Node.js 后端生成练习包，并以 ZIP 下载。',
       mockTitle: 'Worksheet pack',
       mockSubTitle: `${rows.length || 0} entries`,
-      mockRight: () => '11 类题型 / ZIP export',
+      mockRight: () => '11 类题型 / 练习包',
     },
   }[activeTool]
 

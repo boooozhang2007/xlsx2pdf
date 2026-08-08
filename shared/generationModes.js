@@ -27,12 +27,10 @@ export const normalizeTestPaperGroupSizes = (values) => {
 export const GENERATION_MODE_OPTIONS = [
   {
     key: GENERATION_MODE_FIXED_TEST_PAPER,
-    title: '模板测试卷',
-    description: '按固定模板生成，可同时导出多种词量分组，答案附在文末。',
+    title: '测试卷',
   },
   {
     key: GENERATION_MODE_LEGACY_ZIP,
-    title: '当前格式 ZIP',
-    description: '按原来的多题型结构打包成 ZIP，可设置每组题目数量。',
+    title: '练习包',
   },
 ]

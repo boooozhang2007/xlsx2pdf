@@ -17,7 +17,7 @@ import {
 import { apiJson, fetchDownloadRequest } from './api'
 import { downloadNamedBlob } from './ttsUtils'
 import AuthGate from './AuthGate'
-import { ALL_QUESTION_TYPE_KEYS, FIXED_TEST_PAPER_QUESTION_KEYS, FIXED_TEST_PAPER_SECTIONS, QUESTION_TYPE_OPTIONS } from '../shared/worksheetTypes'
+import { ALL_QUESTION_TYPE_KEYS, FIXED_TEST_PAPER_QUESTION_KEYS } from '../shared/worksheetTypes'
 import {
   DEFAULT_LEGACY_QUESTION_COUNT,
   GENERATION_MODE_FIXED_TEST_PAPER,
@@ -27,6 +27,7 @@ import {
   normalizeLegacyQuestionCount,
   normalizeWithChineseTranslation,
 } from '../shared/generationModes'
+import { dedupeCacheJobs } from '../shared/cacheGroups'
 
 const DEFAULT_QUESTION_TYPES = ALL_QUESTION_TYPE_KEYS
 
@@ -477,7 +478,7 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
     return [...groups.entries()].map(([name, items]) => ({
       name,
       jobs: items,
-      cacheJobs: items.filter((job) => job.cacheReady),
+      cacheJobs: dedupeCacheJobs(items),
       testJobs: items.filter((job) => job.generationMode === GENERATION_MODE_FIXED_TEST_PAPER),
       zipJobs: items.filter((job) => job.generationMode === GENERATION_MODE_LEGACY_ZIP),
     })).sort((left, right) => {
@@ -488,9 +489,7 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
   }, [jobs, fileName])
 
   const currentFileCacheJobs = useMemo(
-    () => jobs
-      .filter((job) => job.cacheReady && job.fileName === fileName)
-      .slice(0, 20),
+    () => dedupeCacheJobs(jobs.filter((job) => job.fileName === fileName)).slice(0, 20),
     [jobs, fileName],
   )
 
@@ -558,14 +557,6 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
     setStatus('')
   }
 
-  const toggleType = (key) => {
-    setSelectedTypes((current) => (
-      current.includes(key)
-        ? current.filter((item) => item !== key)
-        : [...current, key]
-    ))
-  }
-
   const toggleTestPaperGroupSize = (value) => {
     setTestPaperGroupSizes((current) => {
       if (!current.includes(value)) return [...current, value]
@@ -588,7 +579,7 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
       return
     }
     if (selectedGenerationMode === GENERATION_MODE_LEGACY_ZIP && !selectedTypes.length) {
-      setStatus('当前格式 ZIP 至少需要勾选一个题型。')
+      setStatus('练习包至少需要一个题型。')
       return
     }
 
@@ -596,8 +587,8 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
     setBusy(true)
     setStatus(
       selectedGenerationMode === GENERATION_MODE_FIXED_TEST_PAPER
-        ? `正在提交模板测试卷到服务器队列…预计生成 ${paperCount} 份。`
-        : `正在提交当前格式 ZIP 到服务器队列…共 ${selectedTypes.length} 个题型。`,
+        ? `正在提交测试卷到服务器队列…预计生成 ${paperCount} 份。`
+        : '正在提交练习包到服务器队列…',
     )
 
     try {
@@ -735,7 +726,6 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
   const latestStatusLabel = latestJob ? latestMeta.label : '队列空闲'
   const activeLlmOption = llmModels.find((item) => item.id === selectedLlmModel) || llmModels[0] || null
   const activeModeMeta = GENERATION_MODE_OPTIONS.find((item) => item.key === selectedGenerationMode) || GENERATION_MODE_OPTIONS[0]
-  const activeLegacyLlmCount = QUESTION_TYPE_OPTIONS.filter((item) => item.needsLlm && selectedTypes.includes(item.key)).length
   const totalCacheCount = jobGroups.reduce((total, group) => total + group.cacheJobs.length, 0)
   const queueRowProps = {
     onCancel: cancelJob,
@@ -881,13 +871,13 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
                     </section>
                     <section className="genFolderColumn">
                       <header>
-                        <span><FileText size={14} />ZIP 组</span>
+                        <span><FileText size={14} />练习包</span>
                         <strong>{group.zipJobs.length}</strong>
                       </header>
                       <div className="genFolderColumnBody">
                         {group.zipJobs.length ? group.zipJobs.map((job) => (
                           <QueueJobRow job={job} {...queueRowProps} key={job.id} />
-                        )) : <p className="genQueueEmpty">暂无 ZIP 记录</p>}
+                        )) : <p className="genQueueEmpty">暂无练习包记录</p>}
                       </div>
                     </section>
                   </div>
@@ -913,7 +903,7 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
             disabled={busy || !usableRows.length}
           >
             {busy ? <Loader2 className="spin" size={18} /> : <Upload size={18} />}
-            {selectedGenerationMode === GENERATION_MODE_FIXED_TEST_PAPER ? '提交测试卷队列' : '提交 ZIP 队列'}
+            {selectedGenerationMode === GENERATION_MODE_FIXED_TEST_PAPER ? '提交测试卷队列' : '提交练习包队列'}
           </button>
           <div className="genMetaGrid genMetaCompact">
             <div>
@@ -934,11 +924,7 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
             </div>
             <div>
               <small>模式</small>
-              <strong>{activeModeMeta?.title || '模板测试卷'}</strong>
-            </div>
-            <div>
-              <small>需 LLM</small>
-              <strong>{selectedGenerationMode === GENERATION_MODE_FIXED_TEST_PAPER ? FIXED_TEST_PAPER_SECTIONS.filter((item) => item.needsLlm).length : activeLegacyLlmCount}</strong>
+              <strong>{activeModeMeta?.title || '测试卷'}</strong>
             </div>
           </div>
           <div className="genReuseSummary">
@@ -982,11 +968,11 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
               </select>
             </div>
           ) : null}
-          <div className="questionTypeGrid compact">
+          <div className="questionTypeGrid compact genModeGrid">
             {GENERATION_MODE_OPTIONS.map((item) => {
               const active = selectedGenerationMode === item.key
               return (
-                <label className={`questionTypeCard compact${active ? ' active' : ''}`} key={item.key}>
+                <label className={`questionTypeCard compact genModeCard${active ? ' active' : ''}`} key={item.key}>
                   <input
                     className="questionTypeInput"
                     type="radio"
@@ -996,7 +982,6 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
                   />
                   <span className="questionTypeMark" aria-hidden="true" />
                   <strong>{item.title}</strong>
-                  <span>{item.description}</span>
                 </label>
               )
             })}
@@ -1005,7 +990,7 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
           {selectedGenerationMode === GENERATION_MODE_FIXED_TEST_PAPER ? (
             <>
               <div className="field fullField">
-                <span>独立 ZIP 份数（1–20，服务器按顺序生成）</span>
+                <span>独立测试卷份数（1–20，服务器按顺序生成）</span>
                 <input
                   type="number"
                   min="1"
@@ -1034,16 +1019,6 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
                   })}
                 </div>
               </div>
-              <div className="questionTypeGrid compact">
-                {FIXED_TEST_PAPER_SECTIONS.map((item) => (
-                  <div className="questionTypeCard compact active" key={item.key}>
-                    <strong>{item.title}</strong>
-                    {item.needsLlm ? <em>LLM</em> : null}
-                    <span>第 {item.order} 题 · {item.countLabel}</span>
-                  </div>
-                ))}
-              </div>
-              <p className="genQueueEmpty">按模板固定生成 8 个题段，所选规格共享同一批模型题面，仅在导出时分别分组。当前预计生成 {paperCount} 份 docx{withChineseTranslation ? '' : '（第一题不含中文翻译）'}。</p>
             </>
           ) : (
             <>
@@ -1059,26 +1034,6 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
                   onBlur={() => setLegacyQuestionCount(normalizeLegacyQuestionCount(legacyQuestionCount))}
                 />
               </div>
-              <div className="questionTypeGrid compact">
-                {QUESTION_TYPE_OPTIONS.map((item) => {
-                  const active = selectedTypes.includes(item.key)
-                  return (
-                    <label className={`questionTypeCard compact${active ? ' active' : ''}`} key={item.key}>
-                      <input
-                        className="questionTypeInput"
-                        type="checkbox"
-                        checked={active}
-                        onChange={() => toggleType(item.key)}
-                      />
-                      <span className="questionTypeMark" aria-hidden="true" />
-                      <strong>{item.title}</strong>
-                      {item.needsLlm ? <em>LLM</em> : null}
-                      <span>{item.description}</span>
-                    </label>
-                  )
-                })}
-              </div>
-              <p className="genQueueEmpty">会按原来的多题型结构打包成 ZIP，第一题文档使用 A4 竖版双栏。当前已勾选 {selectedTypes.length} 个题型，每组生成 {normalizeLegacyQuestionCount(legacyQuestionCount)} 题{withChineseTranslation ? '' : '（第一题不含中文翻译）'}。</p>
             </>
           )}
           <label className="genToggleRow">

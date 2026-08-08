@@ -1863,6 +1863,15 @@ a,
   min-height: 104px;
 }
 
+.genConfigStage .genModeGrid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.genConfigStage .genModeCard {
+  align-content: center;
+  min-height: 58px;
+}
+
 .genConfigStage .genMetaCompact {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }

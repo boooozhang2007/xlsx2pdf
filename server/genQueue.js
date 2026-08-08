@@ -113,6 +113,7 @@ const summarizeJob = (job) => ({
   copyIndex: job.copyIndex || 0,
   copyCount: job.copyCount || 1,
   cacheReady: Boolean(job.cacheReady),
+  cacheSignature: String(job.cacheSignature || ''),
   cacheSourceJobIds: Array.isArray(job.cacheSourceJobIds) ? job.cacheSourceJobIds : [],
 })
 
@@ -575,17 +576,25 @@ const settleStaleCanceledJobs = async (jobs) => Promise.all((jobs || []).map(asy
 
 const listJobStates = async ({ includeAll = false } = {}) => {
   const objects = await listObjects({ prefix: `${JOB_PREFIX}/` })
-  const cacheJobIds = new Set(objects
-    .map((item) => item.Key)
-    .filter((key) => key?.endsWith('/cache.json'))
-    .map((key) => key.split('/')[1])
-    .filter(Boolean))
+  const cacheSignaturesByJobId = new Map(objects
+    .filter((item) => item.Key?.endsWith('/cache.json'))
+    .map((item) => {
+      const jobId = item.Key.split('/')[1]
+      const etag = String(item.ETag || '').replace(/^"|"$/g, '')
+      const signature = etag ? `${etag}:${Number(item.Size || 0)}` : item.Key
+      return [jobId, signature]
+    })
+    .filter(([jobId]) => Boolean(jobId)))
   const jobKeys = objects
     .map((item) => item.Key)
     .filter((key) => key?.endsWith('/job.json'))
   const jobs = await Promise.all(jobKeys.map((key) => getObjectJson({ key }).catch(() => null)))
   const normalizedJobs = (await settleStaleCanceledJobs(jobs.filter(Boolean)))
-    .map((job) => ({ ...job, cacheReady: cacheJobIds.has(job.id) }))
+    .map((job) => ({
+      ...job,
+      cacheReady: cacheSignaturesByJobId.has(job.id),
+      cacheSignature: cacheSignaturesByJobId.get(job.id) || '',
+    }))
   const sortedJobs = normalizedJobs
     .filter(Boolean)
     .sort((left, right) => (right.createdAt || 0) - (left.createdAt || 0))
