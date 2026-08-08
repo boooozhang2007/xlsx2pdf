@@ -322,6 +322,8 @@ const formatJobMode = (job) => (
 
 function QueueJobRow({
   job,
+  selectedDownloadJobIds,
+  toggleDownloadJob,
   onCancel,
   onDelete,
   onRetry,
@@ -348,7 +350,18 @@ function QueueJobRow({
   return (
     <article className={`genQueueRow ${job.status}`}>
       <div className="genQueueRowTop">
-        <span className={`genQueueChip ${job.status}`}>{meta.label}</span>
+        <div className="genQueueRowStatus">
+          {job.status === 'completed' ? (
+            <input
+              className="genBatchCheckbox"
+              type="checkbox"
+              checked={selectedDownloadJobIds.includes(job.id)}
+              onChange={() => toggleDownloadJob(job.id)}
+              aria-label={`选择${job.fileName}批量下载`}
+            />
+          ) : null}
+          <span className={`genQueueChip ${job.status}`}>{meta.label}</span>
+        </div>
         <span className="genQueueTime">{formatTime(job.updatedAt || job.createdAt)}</span>
       </div>
       <div className="genQueueRowMeta">
@@ -428,6 +441,8 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
   const [retryingJobId, setRetryingJobId] = useState('')
   const [cancelingJobId, setCancelingJobId] = useState('')
   const [deletingJobId, setDeletingJobId] = useState('')
+  const [selectedDownloadJobIds, setSelectedDownloadJobIds] = useState([])
+  const [batchDownloading, setBatchDownloading] = useState(false)
   const [status, setStatus] = useState('')
   const [jobs, setJobs] = useState([])
   const [selectedGenerationMode, setSelectedGenerationMode] = useState(GENERATION_MODE_FIXED_TEST_PAPER)
@@ -547,6 +562,13 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
     const availableIds = new Set(currentFileCacheJobs.map((job) => job.id))
     setSelectedCacheJobIds((current) => current.filter((id) => availableIds.has(id)))
   }, [currentFileCacheJobs])
+
+  useEffect(() => {
+    const downloadableIds = new Set(jobs
+      .filter((job) => job.status === 'completed' && job.artifactReady)
+      .map((job) => job.id))
+    setSelectedDownloadJobIds((current) => current.filter((id) => downloadableIds.has(id)))
+  }, [jobs])
 
   const login = async (password) => {
     await apiJson('/api/auth?action=login', {
@@ -711,11 +733,42 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
         method: 'DELETE',
       })
       setJobs((current) => current.filter((item) => item.id !== job.id))
+      setSelectedDownloadJobIds((current) => current.filter((id) => id !== job.id))
       setStatus('队列记录及对应文件已删除。')
     } catch (error) {
       setStatus(error.message || '删除队列记录失败。')
     } finally {
       setDeletingJobId('')
+    }
+  }
+
+  const toggleDownloadJob = (jobId) => {
+    setSelectedDownloadJobIds((current) => (
+      current.includes(jobId)
+        ? current.filter((id) => id !== jobId)
+        : [...current, jobId]
+    ))
+  }
+
+  const batchDownload = async () => {
+    if (!selectedDownloadJobIds.length || batchDownloading) return
+    setBatchDownloading(true)
+    setStatus(`正在合并 ${selectedDownloadJobIds.length} 个压缩包…`)
+    try {
+      const { blob, fileName: downloadedName } = await fetchDownloadRequest(
+        '/api/gen/jobs/download',
+        {
+          method: 'POST',
+          body: JSON.stringify({ ids: selectedDownloadJobIds }),
+        },
+      )
+      downloadNamedBlob(blob, downloadedName || '词汇练习 批量下载.zip')
+      setStatus('批量 ZIP 已开始下载。')
+      setSelectedDownloadJobIds([])
+    } catch (error) {
+      setStatus(error.message || '批量下载失败。')
+    } finally {
+      setBatchDownloading(false)
     }
   }
 
@@ -738,6 +791,8 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
     retryingJobId,
     reexportingJobId,
     downloadingJobId,
+    selectedDownloadJobIds,
+    toggleDownloadJob,
   }
 
   if (!authChecked) {
@@ -821,6 +876,15 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
           <div className="blockTitle">
             <FolderOpen size={17} />
             <span>文件与生成记录</span>
+            <button
+              className="genBatchDownload"
+              type="button"
+              onClick={batchDownload}
+              disabled={!selectedDownloadJobIds.length || batchDownloading}
+            >
+              {batchDownloading ? <Loader2 className="spin" size={14} /> : <ArrowDownToLine size={14} />}
+              批量下载{selectedDownloadJobIds.length ? ` ${selectedDownloadJobIds.length}` : ''}
+            </button>
             <button className="genQueueRefresh" type="button" onClick={() => loadJobs()} disabled={queueBusy}>
               {queueBusy ? <Loader2 className="spin" size={14} /> : <RefreshCw size={14} />}
               刷新

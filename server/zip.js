@@ -148,3 +148,31 @@ export const createZipBuffer = (files) => {
 
   return Buffer.concat([...localParts, centralDirectory, endRecord])
 }
+
+export const extractStoredZipFiles = (value) => {
+  const buffer = normalizeBytes(value)
+  const files = []
+  let offset = 0
+
+  while (offset + 30 <= buffer.length && buffer.readUInt32LE(offset) === 0x04034b50) {
+    const compressionMethod = buffer.readUInt16LE(offset + 8)
+    const compressedSize = buffer.readUInt32LE(offset + 18)
+    const fileNameLength = buffer.readUInt16LE(offset + 26)
+    const extraFieldLength = buffer.readUInt16LE(offset + 28)
+    if (compressionMethod !== 0) throw new Error('批量下载只支持本站生成的未压缩 ZIP。')
+
+    const fileNameStart = offset + 30
+    const dataStart = fileNameStart + fileNameLength + extraFieldLength
+    const dataEnd = dataStart + compressedSize
+    if (dataEnd > buffer.length) throw new Error('ZIP 文件内容不完整。')
+
+    const name = buffer.subarray(fileNameStart, fileNameStart + fileNameLength).toString('utf8')
+    if (name && !name.endsWith('/')) {
+      files.push({ name, data: Buffer.from(buffer.subarray(dataStart, dataEnd)) })
+    }
+    offset = dataEnd
+  }
+
+  if (!files.length) throw new Error('ZIP 中没有可合并的文件。')
+  return files
+}
