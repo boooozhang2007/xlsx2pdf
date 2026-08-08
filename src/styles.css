@@ -1394,6 +1394,263 @@ a,
   padding-right: 2px;
 }
 
+.genQueueFolders {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.genFileFolder {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  border: 1px solid rgba(28, 35, 46, 0.08);
+  border-radius: 22px;
+  background: rgba(255, 253, 248, 0.72);
+  padding: 13px;
+}
+
+.genFileFolder.current {
+  border-color: rgba(47, 111, 79, 0.28);
+  box-shadow: 0 10px 28px rgba(47, 111, 79, 0.08);
+}
+
+.genFileFolderHead,
+.genFolderColumn > header,
+.genQueueRowTop,
+.genQueueRowMeta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.genFileFolderHead > div,
+.genFolderColumn > header span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.genFileFolderHead strong {
+  overflow: hidden;
+  color: #1c232e;
+  font-size: 14px;
+  font-weight: 950;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.genFileFolderHead span {
+  border-radius: 999px;
+  background: #dcefe4;
+  color: #28714f;
+  padding: 3px 8px;
+  font-size: 10px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.genFileFolderHead small,
+.genFolderColumn > header strong {
+  color: #677280;
+  font-size: 11px;
+  font-weight: 850;
+  white-space: nowrap;
+}
+
+.genFolderColumns {
+  display: grid;
+  grid-template-columns: minmax(170px, .82fr) minmax(240px, 1fr) minmax(240px, 1fr);
+  gap: 9px;
+  min-width: 0;
+}
+
+.genFolderColumn {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  min-width: 0;
+  border: 1px solid rgba(28, 35, 46, 0.07);
+  border-radius: 16px;
+  background: rgba(247, 249, 246, 0.72);
+  padding: 10px;
+}
+
+.genFolderColumn > header {
+  padding: 0 2px;
+}
+
+.genFolderColumn > header span {
+  color: #1c232e;
+  font-size: 11px;
+  font-weight: 950;
+}
+
+.genFolderColumnBody {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+}
+
+.genCacheRow {
+  display: grid;
+  grid-template-columns: 16px 24px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  border: 1px solid rgba(28, 35, 46, 0.08);
+  border-radius: 13px;
+  background: rgba(255, 253, 248, 0.84);
+  padding: 8px 9px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.genCacheRow.selected {
+  border-color: rgba(47, 111, 79, 0.38);
+  background: #edf6ef;
+}
+
+.genCacheRow.disabled {
+  cursor: default;
+  opacity: .62;
+}
+
+.genCacheRow input {
+  width: 15px;
+  height: 15px;
+  accent-color: #2f6f4f;
+}
+
+.genCacheRowMark {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 8px;
+  background: #e2eee5;
+  color: #2f6f4f;
+}
+
+.genCacheRowText {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.genCacheRowText strong,
+.genCacheRowText small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.genCacheRowText strong {
+  color: #1c232e;
+  font-size: 11px;
+  font-weight: 950;
+}
+
+.genCacheRowText small {
+  color: #677280;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.genQueueRow {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  border: 1px solid rgba(28, 35, 46, 0.07);
+  border-radius: 13px;
+  background: rgba(255, 253, 248, 0.84);
+  padding: 9px 10px;
+}
+
+.genQueueRow.processing {
+  border-color: rgba(47, 111, 79, 0.24);
+  background: rgba(236, 244, 238, 0.86);
+}
+
+.genQueueRow.completed {
+  border-color: rgba(47, 143, 95, 0.2);
+}
+
+.genQueueRow.failed {
+  border-color: rgba(214, 48, 48, 0.2);
+  background: rgba(251, 236, 234, 0.86);
+}
+
+.genQueueRowMeta {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+}
+
+.genQueueRowMeta strong,
+.genQueueRowMeta span {
+  color: #1c232e;
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.genQueueRowMeta span {
+  color: #677280;
+  font-weight: 750;
+}
+
+.genQueueRow .genQueueActions {
+  width: auto;
+  flex-direction: row;
+  justify-content: flex-end;
+}
+
+.genQueueRow .genQueueActions button {
+  width: 27px;
+  height: 25px;
+  padding: 0;
+}
+
+.genReuseSummary {
+  display: grid;
+  gap: 4px;
+  border: 1px solid rgba(47, 111, 79, 0.14);
+  border-radius: 14px;
+  background: rgba(236, 244, 238, 0.72);
+  padding: 10px 12px;
+}
+
+.genReuseSummary > div {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: #2f6f4f;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.genReuseSummary strong {
+  margin-left: auto;
+  font-size: 13px;
+}
+
+.genReuseSummary small {
+  color: #677280;
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.genCachePicker {
+  display: grid;
+  gap: 7px;
+  max-height: 190px;
+  overflow: auto;
+}
+
 .genQueueMetaText {
   color: #99a3b0;
   font-size: 11px;
@@ -3448,6 +3705,19 @@ a,
     width: 100%;
     flex-direction: row;
     flex-wrap: wrap;
+  }
+
+  .genFolderColumns {
+    grid-template-columns: 1fr;
+  }
+
+  .genFileFolderHead {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .genFileFolderHead small {
+    white-space: normal;
   }
 
   .playerHero {

@@ -1,7 +1,7 @@
 import { readJsonBody, rejectMethod, requireSession, sendJson } from '../../auth.js'
 import crypto from 'node:crypto'
 import { start } from 'workflow/api'
-import { cancelWorksheetJob, deleteWorksheetJob, failWorksheetJobStart, listWorksheetJobs, retryWorksheetJob, submitWorksheetJob } from '../../genQueue.js'
+import { cancelWorksheetJob, deleteWorksheetJob, failWorksheetJobStart, listWorksheetJobs, retryWorksheetJob, seedWorksheetJobCaches, submitWorksheetJob } from '../../genQueue.js'
 import { getAvailableLlmModels, getDefaultLlmModel } from '../../genEngine.js'
 import { ALL_QUESTION_TYPE_KEYS, FIXED_TEST_PAPER_QUESTION_KEYS } from '../../../shared/worksheetTypes.js'
 import { GENERATION_MODE_FIXED_TEST_PAPER, GENERATION_MODE_LEGACY_ZIP, normalizeWithChineseTranslation } from '../../../shared/generationModes.js'
@@ -71,7 +71,11 @@ export default async function handler(req, res) {
       : (Array.isArray(body.questionTypes) && body.questionTypes.length ? body.questionTypes : ALL_QUESTION_TYPE_KEYS)
 
     const copies = Math.max(1, Math.min(20, Number.parseInt(body.copies, 10) || 1))
+    const cacheSourceJobIds = Array.isArray(body.cacheSourceJobIds)
+      ? [...new Set(body.cacheSourceJobIds.map((value) => String(value || '').trim()).filter(Boolean))].slice(0, 20)
+      : []
     const batchId = copies > 1 ? crypto.randomUUID() : ''
+    const variationBatchId = batchId || (cacheSourceJobIds.length ? crypto.randomUUID() : '')
     const submissions = []
     for (let index = 0; index < copies; index += 1) {
       submissions.push(await submitWorksheetJob({
@@ -86,9 +90,10 @@ export default async function handler(req, res) {
         batchId,
         copyIndex: copies > 1 ? index + 1 : 0,
         copyCount: copies,
-        variationSeed: copies > 1 ? `${batchId}:${index + 1}` : '',
+        variationSeed: variationBatchId ? `${variationBatchId}:${index + 1}` : '',
         exportSuffix: copies > 1 ? `第${String(index + 1).padStart(2, '0')}份` : '',
-        allowDuplicate: copies > 1,
+        allowDuplicate: copies > 1 || cacheSourceJobIds.length > 0,
+        cacheSourceJobIds,
       }))
     }
     const jobs = submissions.map((item) => item.job)
@@ -97,6 +102,9 @@ export default async function handler(req, res) {
       return sendJson(res, 200, { ok: true, job: jobs[0], jobs, deduplicated: true })
     }
     try {
+      if (cacheSourceJobIds.length) {
+        await Promise.all(createdJobs.map((job) => seedWorksheetJobCaches(cacheSourceJobIds, job.id)))
+      }
       const run = copies > 1
         ? await start(worksheetJobBatchWorkflow, [createdJobs.map((job) => job.id)])
         : await start(worksheetJobWorkflow, [createdJobs[0].id])

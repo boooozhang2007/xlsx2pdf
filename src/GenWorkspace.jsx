@@ -3,7 +3,9 @@ import {
   ArrowDownToLine,
   CheckCircle2,
   Clock3,
+  Database,
   FileText,
+  FolderOpen,
   Loader2,
   RefreshCw,
   Square,
@@ -311,6 +313,110 @@ const buildPreviewModel = (typeKey, rows) => {
   }
 }
 
+const formatJobMode = (job) => (
+  job.generationMode === GENERATION_MODE_FIXED_TEST_PAPER
+    ? `${(job.testPaperGroupSizes || [100]).map((size) => size || '全部').join('/')} 词`
+    : `每组 ${job.legacyQuestionCount || DEFAULT_LEGACY_QUESTION_COUNT} 题`
+)
+
+function QueueJobRow({
+  job,
+  onCancel,
+  onDelete,
+  onRetry,
+  onReexport,
+  onDownload,
+  cancelingJobId,
+  deletingJobId,
+  retryingJobId,
+  reexportingJobId,
+  downloadingJobId,
+}) {
+  const meta = STATUS_META[job.status] || STATUS_META.queued
+  const Icon = meta.icon
+  const jobPercent = clampPercent(job.progress?.percent || 0)
+  const jobStageTotal = getStageWordTotal(job)
+  const jobStageDone = getStageWordCompleted(job)
+  const canCancel = ['queued', 'processing', 'canceling'].includes(job.status)
+  const stopping = cancelingJobId === job.id || job.status === 'canceling'
+  const canDelete = !['processing', 'canceling'].includes(job.status)
+  const deleting = deletingJobId === job.id
+  const isActive = ['processing', 'canceling'].includes(job.status)
+  const copyLabel = job.copyIndex ? `第 ${job.copyIndex}/${job.copyCount || 1} 份` : ''
+
+  return (
+    <article className={`genQueueRow ${job.status}`}>
+      <div className="genQueueRowTop">
+        <span className={`genQueueChip ${job.status}`}>{meta.label}</span>
+        <span className="genQueueTime">{formatTime(job.updatedAt || job.createdAt)}</span>
+      </div>
+      <div className="genQueueRowMeta">
+        <strong>{copyLabel || formatJobMode(job)}</strong>
+        {copyLabel ? <span>{formatJobMode(job)}</span> : null}
+        {job.cacheSourceJobIds?.length ? <span>复用 {job.cacheSourceJobIds.length} 组缓存</span> : null}
+      </div>
+      <div className="genQueueStageRow">
+        <Icon size={13} className={isActive ? 'spin genQueueStageIcon' : 'genQueueStageIcon'} />
+        <span className="genQueueWordCount">
+          {jobStageTotal > 0 ? `${jobStageDone}/${jobStageTotal} 词` : `${job.wordCount || 0} 词`}
+        </span>
+        <span className="genQueuePct">{jobPercent}%</span>
+      </div>
+      <div className="genQueueProgressBar" aria-hidden="true">
+        <span style={{ width: `${jobPercent}%` }} />
+      </div>
+      {(job.error || (job.status === 'failed' && job.progress?.message)) ? (
+        <p className="genQueueError">{job.error || job.progress?.message}</p>
+      ) : null}
+      <div className="genQueueActions" aria-label="任务操作">
+        {canCancel ? (
+          <button className="genQueueStop" type="button" onClick={() => onCancel(job)} disabled={stopping} title={job.status === 'queued' ? '移除任务' : '停止任务'} aria-label={job.status === 'queued' ? '移除任务' : '停止任务'}>
+            {stopping ? <Loader2 className="spin" size={14} /> : <Square size={14} />}
+          </button>
+        ) : null}
+        {canDelete ? (
+          <button className="genQueueDelete" type="button" onClick={() => onDelete(job)} disabled={deleting} title="删除记录和文件" aria-label="删除记录和文件">
+            {deleting ? <Loader2 className="spin" size={14} /> : <Trash2 size={14} />}
+          </button>
+        ) : null}
+        {job.status === 'failed' ? (
+          <button className="genQueueReexport" type="button" onClick={() => onRetry(job)} disabled={retryingJobId === job.id} title="重新生成" aria-label="重新生成">
+            {retryingJobId === job.id ? <Loader2 className="spin" size={14} /> : <RefreshCw size={14} />}
+          </button>
+        ) : null}
+        {job.status === 'completed' ? (
+          <>
+            <button className="genQueueReexport" type="button" onClick={() => onReexport(job)} disabled={reexportingJobId === job.id} title="按原缓存重新导出" aria-label="按原缓存重新导出">
+              {reexportingJobId === job.id ? <Loader2 className="spin" size={14} /> : <RefreshCw size={14} />}
+            </button>
+            <button type="button" onClick={() => onDownload(job)} disabled={downloadingJobId === job.id} title="下载" aria-label="下载">
+              {downloadingJobId === job.id ? <Loader2 className="spin" size={14} /> : <ArrowDownToLine size={14} />}
+            </button>
+          </>
+        ) : null}
+      </div>
+    </article>
+  )
+}
+
+function CacheSourceRow({ job, index, selected, disabled, onToggle }) {
+  return (
+    <label className={`genCacheRow${selected ? ' selected' : ''}${disabled ? ' disabled' : ''}`}>
+      <input
+        type="checkbox"
+        checked={selected}
+        disabled={disabled}
+        onChange={() => onToggle(job.id)}
+      />
+      <span className="genCacheRowMark"><Database size={14} /></span>
+      <span className="genCacheRowText">
+        <strong>缓存 {String(index + 1).padStart(2, '0')}</strong>
+        <small>{job.wordCount || 0} 词 · {formatTime(job.updatedAt || job.createdAt)}</small>
+      </span>
+    </label>
+  )
+}
+
 function GenWorkspace({ rows, fileName, activeSheetName }) {
   const [authenticated, setAuthenticated] = useState(false)
   const [authChecked, setAuthChecked] = useState(false)
@@ -331,6 +437,7 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
   const [copyCount, setCopyCount] = useState(1)
   const [llmModels, setLlmModels] = useState([])
   const [selectedLlmModel, setSelectedLlmModel] = useState('')
+  const [selectedCacheJobIds, setSelectedCacheJobIds] = useState([])
   const jobsRequestIdRef = useRef(0)
   const queueBusyRequestIdRef = useRef(0)
   const submitInFlightRef = useRef(false)
@@ -358,6 +465,33 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
   const completedCount = useMemo(
     () => jobs.filter((job) => job.status === 'completed').length,
     [jobs],
+  )
+
+  const jobGroups = useMemo(() => {
+    const groups = new Map()
+    jobs.forEach((job) => {
+      const key = String(job.fileName || '未命名词表').trim() || '未命名词表'
+      if (!groups.has(key)) groups.set(key, [])
+      groups.get(key).push(job)
+    })
+    return [...groups.entries()].map(([name, items]) => ({
+      name,
+      jobs: items,
+      cacheJobs: items.filter((job) => job.cacheReady),
+      testJobs: items.filter((job) => job.generationMode === GENERATION_MODE_FIXED_TEST_PAPER),
+      zipJobs: items.filter((job) => job.generationMode === GENERATION_MODE_LEGACY_ZIP),
+    })).sort((left, right) => {
+      if (left.name === fileName) return -1
+      if (right.name === fileName) return 1
+      return Number(right.jobs[0]?.createdAt || 0) - Number(left.jobs[0]?.createdAt || 0)
+    })
+  }, [jobs, fileName])
+
+  const currentFileCacheJobs = useMemo(
+    () => jobs
+      .filter((job) => job.cacheReady && job.fileName === fileName)
+      .slice(0, 20),
+    [jobs, fileName],
   )
 
   const latestJob = activeJobs.find((job) => job.status === 'processing') || activeJobs[0] || jobs[0] || null
@@ -410,6 +544,11 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
     return () => window.clearInterval(timer)
   }, [authenticated, activeJobs.length])
 
+  useEffect(() => {
+    const availableIds = new Set(currentFileCacheJobs.map((job) => job.id))
+    setSelectedCacheJobIds((current) => current.filter((id) => availableIds.has(id)))
+  }, [currentFileCacheJobs])
+
   const login = async (password) => {
     await apiJson('/api/auth?action=login', {
       method: 'POST',
@@ -432,6 +571,14 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
       if (!current.includes(value)) return [...current, value]
       return current.length > 1 ? current.filter((item) => item !== value) : current
     })
+  }
+
+  const toggleCacheJob = (jobId) => {
+    setSelectedCacheJobIds((current) => (
+      current.includes(jobId)
+        ? current.filter((id) => id !== jobId)
+        : [...current, jobId]
+    ))
   }
 
   const generateArchive = async () => {
@@ -465,6 +612,7 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
           legacyQuestionCount: normalizeLegacyQuestionCount(legacyQuestionCount),
           testPaperGroupSizes,
           withChineseTranslation: normalizeWithChineseTranslation(withChineseTranslation),
+          cacheSourceJobIds: selectedCacheJobIds,
           copies: Math.max(1, Math.min(20, Number.parseInt(copyCount, 10) || 1)),
         }),
       })
@@ -479,6 +627,7 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
           ? `已提交 ${submittedJobs.length} 份，服务器将按顺序生成。`
           : '已提交。')
       loadJobs(true)
+      setSelectedCacheJobIds([])
     } catch (error) {
       setStatus(error.message || '提交队列失败。')
     } finally {
@@ -587,6 +736,19 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
   const activeLlmOption = llmModels.find((item) => item.id === selectedLlmModel) || llmModels[0] || null
   const activeModeMeta = GENERATION_MODE_OPTIONS.find((item) => item.key === selectedGenerationMode) || GENERATION_MODE_OPTIONS[0]
   const activeLegacyLlmCount = QUESTION_TYPE_OPTIONS.filter((item) => item.needsLlm && selectedTypes.includes(item.key)).length
+  const totalCacheCount = jobGroups.reduce((total, group) => total + group.cacheJobs.length, 0)
+  const queueRowProps = {
+    onCancel: cancelJob,
+    onDelete: deleteJob,
+    onRetry: retryJob,
+    onReexport: reexportJob,
+    onDownload: downloadJob,
+    cancelingJobId,
+    deletingJobId,
+    retryingJobId,
+    reexportingJobId,
+    downloadingJobId,
+  }
 
   if (!authChecked) {
     return (
@@ -656,111 +818,80 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
             <strong>{activeJobs.length}</strong>
           </div>
           <div className="genStatItem">
-            <span>已完成</span>
-            <strong>{completedCount}</strong>
+            <span>文件夹</span>
+            <strong>{jobGroups.length}</strong>
           </div>
           <div className="genStatItem">
-            <span>总任务</span>
-            <strong>{jobs.length}</strong>
+            <span>缓存组</span>
+            <strong>{totalCacheCount}</strong>
           </div>
         </div>
 
-        {/* Queue list */}
         <div className="panelBlock genQueuePanel">
           <div className="blockTitle">
-            <Clock3 size={17} />
-            <span>队列记录</span>
+            <FolderOpen size={17} />
+            <span>文件与生成记录</span>
             <button className="genQueueRefresh" type="button" onClick={() => loadJobs()} disabled={queueBusy}>
               {queueBusy ? <Loader2 className="spin" size={14} /> : <RefreshCw size={14} />}
               刷新
             </button>
           </div>
-          <div className="genQueueList">
-            {jobs.length ? jobs.map((job) => {
-              const meta = STATUS_META[job.status] || STATUS_META.queued
-              const Icon = meta.icon
-              const jobPercent = clampPercent(job.progress?.percent || 0)
-              const jobStageTotal = getStageWordTotal(job)
-              const jobStageDone = getStageWordCompleted(job)
-              const canCancel = ['queued', 'processing', 'canceling'].includes(job.status)
-              const stopping = cancelingJobId === job.id || job.status === 'canceling'
-              const canDelete = !['processing', 'canceling'].includes(job.status)
-              const deleting = deletingJobId === job.id
-              const isActive = ['processing', 'canceling'].includes(job.status)
+          <div className="genQueueFolders">
+            {jobGroups.length ? jobGroups.map((group) => {
+              const isCurrentFile = group.name === fileName
               return (
-                <article className={`genQueueItem ${job.status}`} key={job.id}>
-
-                  {/* Top bar: status chip + meta + time */}
-                  <div className="genQueueHead">
-                    <div className="genQueueHeadLeft">
-                      <span className={`genQueueChip ${job.status}`}>{meta.label}</span>
-                      <span className="genQueueMetaText">
-                        {job.generationMode === GENERATION_MODE_FIXED_TEST_PAPER
-                          ? `模板·${(job.testPaperGroupSizes || [100]).map((size) => size || '全部').join('/')}`
-                          : `ZIP·每组${job.legacyQuestionCount || DEFAULT_LEGACY_QUESTION_COUNT}题`}
-                        {job.withChineseTranslation === false ? '·第一题无中文' : ''}
-                      </span>
+                <section className={`genFileFolder${isCurrentFile ? ' current' : ''}`} key={group.name}>
+                  <header className="genFileFolderHead">
+                    <div>
+                      <FolderOpen size={18} />
+                      <strong title={group.name}>{group.name}</strong>
+                      {isCurrentFile ? <span>当前文件</span> : null}
                     </div>
-                    <span className="genQueueTime">{formatTime(job.updatedAt || job.createdAt)}</span>
+                    <small>{group.cacheJobs.length} 个缓存组 · {group.jobs.length} 条生成记录</small>
+                  </header>
+                  <div className="genFolderColumns">
+                    <section className="genFolderColumn cacheColumn">
+                      <header>
+                        <span><Database size={14} />缓存组</span>
+                        <strong>{group.cacheJobs.length}</strong>
+                      </header>
+                      <div className="genFolderColumnBody">
+                        {group.cacheJobs.length ? group.cacheJobs.map((job, index) => (
+                          <CacheSourceRow
+                            job={job}
+                            index={index}
+                            selected={selectedCacheJobIds.includes(job.id)}
+                            disabled={!isCurrentFile}
+                            onToggle={toggleCacheJob}
+                            key={job.id}
+                          />
+                        )) : <p className="genQueueEmpty">暂无可复用缓存</p>}
+                      </div>
+                    </section>
+                    <section className="genFolderColumn">
+                      <header>
+                        <span><FileText size={14} />测试卷</span>
+                        <strong>{group.testJobs.length}</strong>
+                      </header>
+                      <div className="genFolderColumnBody">
+                        {group.testJobs.length ? group.testJobs.map((job) => (
+                          <QueueJobRow job={job} {...queueRowProps} key={job.id} />
+                        )) : <p className="genQueueEmpty">暂无测试卷记录</p>}
+                      </div>
+                    </section>
+                    <section className="genFolderColumn">
+                      <header>
+                        <span><FileText size={14} />ZIP 组</span>
+                        <strong>{group.zipJobs.length}</strong>
+                      </header>
+                      <div className="genFolderColumnBody">
+                        {group.zipJobs.length ? group.zipJobs.map((job) => (
+                          <QueueJobRow job={job} {...queueRowProps} key={job.id} />
+                        )) : <p className="genQueueEmpty">暂无 ZIP 记录</p>}
+                      </div>
+                    </section>
                   </div>
-
-                  {/* Main: left = info, right = vertical actions */}
-                  <div className="genQueueBody">
-                    <div className="genQueueBodyInfo">
-                      <div className="genQueueFileName" title={job.fileName}>
-                        {job.fileName.replace(/\.[^.]+$/, '')}
-                        {job.copyIndex ? ` · 第 ${job.copyIndex}/${job.copyCount || 1} 份` : ''}
-                      </div>
-                      <div className="genQueueStageRow">
-                        <Icon size={13} className={isActive ? 'spin genQueueStageIcon' : 'genQueueStageIcon'} />
-                        {jobStageTotal > 0 ? (
-                          <span className="genQueueWordCount">词条 {jobStageDone}/{jobStageTotal}</span>
-                        ) : (
-                          job.wordCount ? <span className="genQueueWordCount">共 {job.wordCount} 词</span> : null
-                        )}
-                        <span className="genQueuePct">{jobPercent}%</span>
-                      </div>
-                      <div className="genQueueProgressBar" aria-hidden="true">
-                        <span style={{ width: `${jobPercent}%` }} />
-                      </div>
-                      {(job.error || (job.status === 'failed' && job.progress?.message)) ? (
-                        <p className="genQueueError">{job.error || job.progress?.message}</p>
-                      ) : null}
-                    </div>
-                    <div className="genQueueActions">
-                      {canCancel ? (
-                        <button className="genQueueStop" type="button" onClick={() => cancelJob(job)} disabled={stopping}>
-                          {stopping ? <Loader2 className="spin" size={13} /> : <Square size={13} />}
-                          {job.status === 'queued' ? '移除' : '停止'}
-                        </button>
-                      ) : null}
-                      {canDelete ? (
-                        <button className="genQueueDelete" type="button" onClick={() => deleteJob(job)} disabled={deleting}>
-                          {deleting ? <Loader2 className="spin" size={13} /> : <Trash2 size={13} />}
-                          删除
-                        </button>
-                      ) : null}
-                      {job.status === 'failed' ? (
-                        <button className="genQueueReexport" type="button" onClick={() => retryJob(job)} disabled={retryingJobId === job.id}>
-                          {retryingJobId === job.id ? <Loader2 className="spin" size={13} /> : <RefreshCw size={13} />}
-                          重新生成
-                        </button>
-                      ) : null}
-                      {job.status === 'completed' ? (
-                        <>
-                          <button className="genQueueReexport" type="button" onClick={() => reexportJob(job)} disabled={reexportingJobId === job.id}>
-                            {reexportingJobId === job.id ? <Loader2 className="spin" size={13} /> : <RefreshCw size={13} />}
-                            重新导出
-                          </button>
-                          <button type="button" onClick={() => downloadJob(job)} disabled={downloadingJobId === job.id}>
-                            {downloadingJobId === job.id ? <Loader2 className="spin" size={13} /> : <ArrowDownToLine size={13} />}
-                            下载
-                          </button>
-                        </>
-                      ) : null}
-                    </div>
-                  </div>
-                </article>
+                </section>
               )
             }) : (
               <p className="genQueueEmpty">还没有已提交的练习任务。</p>
@@ -810,6 +941,27 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
               <strong>{selectedGenerationMode === GENERATION_MODE_FIXED_TEST_PAPER ? FIXED_TEST_PAPER_SECTIONS.filter((item) => item.needsLlm).length : activeLegacyLlmCount}</strong>
             </div>
           </div>
+          <div className="genReuseSummary">
+            <div>
+              <Database size={15} />
+              <span>本文件可复用缓存</span>
+              <strong>{selectedCacheJobIds.length}/{currentFileCacheJobs.length}</strong>
+            </div>
+            <small>{selectedCacheJobIds.length ? '提交后会从选中的缓存组继续生成新的随机试卷。' : '首次生成会自动建立缓存组，之后可重复抽题。'}</small>
+          </div>
+          {currentFileCacheJobs.length ? (
+            <div className="genCachePicker">
+              {currentFileCacheJobs.map((job, index) => (
+                <CacheSourceRow
+                  job={job}
+                  index={index}
+                  selected={selectedCacheJobIds.includes(job.id)}
+                  onToggle={toggleCacheJob}
+                  key={job.id}
+                />
+              ))}
+            </div>
+          ) : null}
         </div>
 
         <div className="panelBlock">

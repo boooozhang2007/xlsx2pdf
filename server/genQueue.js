@@ -112,6 +112,8 @@ const summarizeJob = (job) => ({
   batchId: job.batchId || '',
   copyIndex: job.copyIndex || 0,
   copyCount: job.copyCount || 1,
+  cacheReady: Boolean(job.cacheReady),
+  cacheSourceJobIds: Array.isArray(job.cacheSourceJobIds) ? job.cacheSourceJobIds : [],
 })
 
 const writeJsonObject = async ({ key, value, ifMatch, ifNoneMatch }) => putObject({
@@ -573,11 +575,17 @@ const settleStaleCanceledJobs = async (jobs) => Promise.all((jobs || []).map(asy
 
 const listJobStates = async ({ includeAll = false } = {}) => {
   const objects = await listObjects({ prefix: `${JOB_PREFIX}/` })
+  const cacheJobIds = new Set(objects
+    .map((item) => item.Key)
+    .filter((key) => key?.endsWith('/cache.json'))
+    .map((key) => key.split('/')[1])
+    .filter(Boolean))
   const jobKeys = objects
     .map((item) => item.Key)
     .filter((key) => key?.endsWith('/job.json'))
   const jobs = await Promise.all(jobKeys.map((key) => getObjectJson({ key }).catch(() => null)))
-  const normalizedJobs = await settleStaleCanceledJobs(jobs.filter(Boolean))
+  const normalizedJobs = (await settleStaleCanceledJobs(jobs.filter(Boolean)))
+    .map((job) => ({ ...job, cacheReady: cacheJobIds.has(job.id) }))
   const sortedJobs = normalizedJobs
     .filter(Boolean)
     .sort((left, right) => (right.createdAt || 0) - (left.createdAt || 0))
@@ -1107,6 +1115,7 @@ export const submitWorksheetJob = async ({
   variationSeed = '',
   exportSuffix = '',
   allowDuplicate = false,
+  cacheSourceJobIds = [],
 }) => {
   const normalizedMode = normalizeGenerationMode(generationMode)
   const normalizedLegacyQuestionCount = normalizeLegacyQuestionCount(legacyQuestionCount)
@@ -1164,6 +1173,7 @@ export const submitWorksheetJob = async ({
     copyCount,
     variationSeed,
     exportSuffix,
+    cacheSourceJobIds: Array.isArray(cacheSourceJobIds) ? [...new Set(cacheSourceJobIds)] : [],
     fileName: normalizedFileName,
     questionTypes,
     generationMode: normalizedMode,
@@ -1210,6 +1220,7 @@ export const submitWorksheetJob = async ({
         llmConcurrency: job.llmConcurrency,
         variationSeed: job.variationSeed,
         exportSuffix: job.exportSuffix,
+        cacheSourceJobIds: job.cacheSourceJobIds,
       },
     }),
     writeJsonObject({
