@@ -33,6 +33,7 @@ export const TEST_PAPER_GROUP_SIZE_OPTIONS = [
   { value: 20, label: '20 词一组' },
   { value: 50, label: '50 词一组' },
   { value: 100, label: '100 词一组' },
+  { value: 200, label: '200 词一组' },
   { value: 500, label: '500 词一组' },
   { value: 0, label: '全部单词一组' },
 ]
