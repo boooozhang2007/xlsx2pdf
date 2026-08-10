@@ -8,16 +8,18 @@ import { createZipBuffer } from './zip.js'
 import { createDocxBuffer } from './docx.js'
 import { ALL_QUESTION_TYPE_KEYS, FIXED_TEST_PAPER_QUESTION_KEYS, FIXED_TEST_PAPER_SECTIONS, QUESTION_TYPE_OPTIONS } from '../shared/worksheetTypes.js'
 import {
+  DEFAULT_LEGACY_GROUP_SIZE,
   GENERATION_MODE_FIXED_TEST_PAPER,
   GENERATION_MODE_LEGACY_ZIP,
+  normalizeLegacyGroupSize,
   normalizeLegacyQuestionCount,
   normalizeTestPaperGroupSizes,
+  normalizeTestPaperQuestionCount,
   normalizeWithChineseTranslation,
 } from '../shared/generationModes.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const BLACK = rgb(0, 0, 0)
-const GROUP_SIZE = 50
 const TEST_PAPER_GROUP_SIZE = 100
 const MAX_EXPORT_ROWS = 2500
 const DISPLAY_WORD_OVERRIDES = {
@@ -139,6 +141,16 @@ const shuffle = (items, rng) => {
 const sample = (items, count, rng) => shuffle(items, rng).slice(0, Math.max(0, count))
 const choice = (items, rng) => items[Math.floor(rng() * items.length)]
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+
+export const selectCoverageWindow = (items, count, seed, copyIndex = 1) => {
+  const source = Array.isArray(items) ? items.filter(Boolean) : []
+  if (!source.length) return []
+  const selectedCount = Math.min(source.length, normalizeTestPaperQuestionCount(count))
+  if (selectedCount >= source.length) return [...source]
+  const ordered = shuffle(source, createSeededRng(seed))
+  const offset = ((Math.max(1, Number(copyIndex) || 1) - 1) * selectedCount) % ordered.length
+  return Array.from({ length: selectedCount }, (_, index) => ordered[(offset + index) % ordered.length])
+}
 
 const stripCodeFence = (text) => String(text || '')
   .trim()
@@ -329,7 +341,7 @@ const normalizeRows = (rows, limit = MAX_EXPORT_ROWS) => {
   return out.map((entry) => ({ ...entry, key: lexicalKey(entry) }))
 }
 
-const chunkGroups = (items, size = GROUP_SIZE) => {
+const chunkGroups = (items, size = DEFAULT_LEGACY_GROUP_SIZE) => {
   const groups = []
   for (let index = 0; index < items.length; index += size) groups.push(items.slice(index, index + size))
   return groups
@@ -1663,9 +1675,10 @@ const buildTestPaperBasicChoicePlan = (groups, context) => {
   const basicEntries = []
   groups.forEach((group, groupIndex) => {
     const compatible = group.filter((entry) => isSentenceCompatibleWord(entry.english))
-    const words = compatible.length ? compatible : group
-    const multipleChoice = fillToCount(words, 10, context.rng)
-    const trueFalse = fillToCount(words, 10, context.rng)
+    const words = shuffle(compatible.length ? compatible : group, context.rng)
+    const multipleChoice = fillToCount(words.slice(0, 10), 10, context.rng)
+    const trueFalsePool = words.length > 10 ? [...words.slice(10), ...words.slice(0, 10)] : words
+    const trueFalse = fillToCount(trueFalsePool.slice(0, 10), 10, context.rng)
     plan.set(`二_选择题:${groupIndex}`, multipleChoice)
     plan.set(`九_判断正误:${groupIndex}`, trueFalse)
     basicEntries.push(...multipleChoice, ...trueFalse)
@@ -2491,12 +2504,15 @@ const createFixedTestPaperFiles = async (groups, context) => {
 
   for (let groupIndex = 0; groupIndex < groups.length; groupIndex += 1) {
     const group = groups[groupIndex]
-    const [start, end] = testPaperRange(groupIndex, group, context.groupSize)
+    const sourceGroup = context.sourceGroups?.[groupIndex] || group
+    const [start, end] = testPaperRange(groupIndex, sourceGroup, context.groupSize)
     const title = buildTestPaperTitle(start, end)
     const questionParagraphs = createDocxParagraphs(title)
     const answerGroups = []
 
-    questionParagraphs.push(paragraph(buildWordBankLine(group), { size: 11, spaceAfter: 8 }))
+    if (context.includeWordBank !== false) {
+      questionParagraphs.push(paragraph(buildWordBankLine(group), { size: 11, spaceAfter: 8 }))
+    }
     generateTestPaperMatchingSection(questionParagraphs, group, context, answerGroups)
     generateTestPaperMultipleChoiceSection(questionParagraphs, group, groupIndex, context, answerGroups)
     generateTestPaperSynonymReplacementSection(questionParagraphs, groupIndex, context, answerGroups)
@@ -2923,6 +2939,7 @@ const createGenerationContext = (
   llmBatchSize,
   llmConcurrency,
   llmEntryLimit,
+  groupSize,
   questionsPerGroup,
   variationSeed,
 ) => {
@@ -2936,9 +2953,12 @@ const createGenerationContext = (
     llmBatchSize: Math.max(1, Number.parseInt(llmBatchSize, 10) || getLlmJobRuntime(llmModel).batchSize),
     llmConcurrency: Math.max(1, Number.parseInt(llmConcurrency, 10) || getLlmJobRuntime(llmModel).concurrency),
     llmEntryLimit: Math.max(1, Number.parseInt(llmEntryLimit, 10) || 100),
-    questionsPerGroup: normalizeLegacyQuestionCount(questionsPerGroup),
+    questionsPerGroup: Math.min(
+      normalizeLegacyQuestionCount(questionsPerGroup),
+      normalizeLegacyGroupSize(groupSize),
+    ),
     withChineseTranslation: true,
-    groupSize: GROUP_SIZE,
+    groupSize: normalizeLegacyGroupSize(groupSize),
     rngSeed,
     rng: createSeededRng(rngSeed),
     lexicalCache: new Map(),
@@ -2963,8 +2983,10 @@ export const generateWorksheetArchive = async ({
   llmConcurrency,
   llmFallbackModels,
   llmEntryLimit,
+  legacyGroupSize,
   legacyQuestionCount,
   testPaperGroupSizes,
+  testPaperQuestionCount,
   withChineseTranslation = true,
   initialCache = null,
   onCacheCheckpoint = null,
@@ -3002,11 +3024,16 @@ export const generateWorksheetArchive = async ({
     llmBatchSize,
     llmConcurrency,
     llmEntryLimit,
+    legacyGroupSize,
     legacyQuestionCount,
     variationSeed,
   )
   context.generationMode = normalizedMode
   context.withChineseTranslation = normalizeWithChineseTranslation(withChineseTranslation)
+  context.testPaperQuestionCount = normalizeTestPaperQuestionCount(testPaperQuestionCount)
+  const variationMatch = String(variationSeed || '').match(/^(.*):(\d+)$/)
+  context.coverageSeed = variationMatch?.[1] || variationSeed || context.rngSeed
+  context.coverageCopyIndex = variationMatch ? Number(variationMatch[2]) : 1
   if (Array.isArray(llmFallbackModels) && llmFallbackModels.length) {
     context.llmFallbackModels = llmFallbackModels.filter((m) => String(m || '').trim() && m !== context.llmModel)
   }
@@ -3034,15 +3061,25 @@ export const generateWorksheetArchive = async ({
   const fixedGroupSets = normalizedMode === GENERATION_MODE_FIXED_TEST_PAPER
     ? normalizeTestPaperGroupSizes(testPaperGroupSizes).map((configuredSize) => {
         const groupSize = configuredSize || words.length
+        const sourceGroups = chunkGroups(words, groupSize)
+        const label = configuredSize ? `${configuredSize}词一组` : '全部单词一组'
         return {
           configuredSize,
           groupSize,
-          label: configuredSize ? `${configuredSize}词一组` : '全部单词一组',
-          groups: chunkGroups(words, groupSize),
+          label,
+          sourceGroups,
+          groups: sourceGroups.map((group, groupIndex) => selectCoverageWindow(
+            group,
+            context.testPaperQuestionCount,
+            `${context.coverageSeed}|${label}|${groupIndex}|question-pool`,
+            context.coverageCopyIndex,
+          )),
         }
       })
     : []
-  const groups = normalizedMode === GENERATION_MODE_FIXED_TEST_PAPER ? fixedGroupSets[0].groups : chunkGroups(words, GROUP_SIZE)
+  const groups = normalizedMode === GENERATION_MODE_FIXED_TEST_PAPER
+    ? fixedGroupSets[0].groups
+    : chunkGroups(words, context.groupSize)
   const needsLexical = selectedKeys.some((key) => LEXICAL_QUESTION_KEYS.has(key))
   const needsBasicMaterials = selectedKeys.some((key) => BASIC_MATERIAL_QUESTION_KEYS.has(key))
   const needsSynonymMaterials = selectedKeys.includes('三_同义替换')
@@ -3258,7 +3295,9 @@ export const generateWorksheetArchive = async ({
     })
     for (const groupSet of fixedGroupSets) {
       context.groupSize = groupSet.groupSize
+      context.sourceGroups = groupSet.sourceGroups
       context.exportVariantLabel = groupSet.label
+      context.includeWordBank = groupSet.configuredSize !== 0
       context.choicePlan = context.fixedChoicePlans.get(groupSet.label) || new Map()
       context.rng = createSeededRng(`${context.rngSeed}|${groupSet.label}|render`)
       files.push(...await createFixedTestPaperFiles(groupSet.groups, context))

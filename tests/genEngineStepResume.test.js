@@ -476,6 +476,69 @@ test('batch copies use independent numbered archive names', async () => {
   assert.ok(result.buffer.length > 0)
 })
 
+test('legacy practice packages honor custom group and sample sizes', async () => {
+  const { generateWorksheetArchive } = await import('../server/genEngine.js')
+  const rows = Array.from({ length: 12 }, (_, index) => ({
+    english: `word${String.fromCharCode(97 + index)}`,
+    chinese: `抽词测试${index + 1}`,
+  }))
+  const result = await generateWorksheetArchive({
+    rows,
+    fileName: '自定义分组.xlsx',
+    generationMode: 'legacy_zip',
+    questionTypes: ['四_乱序拼写'],
+    legacyGroupSize: 5,
+    legacyQuestionCount: 3,
+  })
+
+  const docx = findStoredZipEntry(result.buffer, (name) => name.endsWith('/四_乱序拼写.docx'))
+  assert.ok(docx)
+  const xml = findStoredZipEntry(docx, (name) => name === 'word/document.xml').toString('utf8')
+
+  assert.match(xml, /第 1 组（第1～5词）/)
+  assert.match(xml, /第 2 组（第6～10词）/)
+  assert.match(xml, /第 3 组（第11～12词）/)
+  assert.equal((xml.match(/→ ____________/g) || []).length, 9)
+})
+
+test('test-paper sampling rotates across copies before repeating words', async () => {
+  const { selectCoverageWindow } = await import('../server/genEngine.js')
+  const words = Array.from({ length: 12 }, (_, index) => `word-${index + 1}`)
+  const copies = [1, 2, 3].map((copyIndex) => (
+    selectCoverageWindow(words, 5, 'shared-batch', copyIndex)
+  ))
+
+  assert.equal(copies[0].length, 5)
+  assert.equal(new Set([...copies[0], ...copies[1]]).size, 10)
+  assert.equal(new Set(copies.flat()).size, 12)
+  assert.deepEqual(selectCoverageWindow(words, 20, 'shared-batch', 1), words)
+})
+
+test('test papers honor the sampled word pool and cover a primary-school 20-word group', async () => {
+  const { generateWorksheetArchive } = await import('../server/genEngine.js')
+  const { rows, initialCache } = buildFixedTestPaperFixture(30)
+  const result = await generateWorksheetArchive({
+    rows,
+    fileName: '小学抽词测试.xlsx',
+    generationMode: 'fixed_test_paper',
+    testPaperGroupSizes: [100],
+    testPaperQuestionCount: 20,
+    initialCache,
+  })
+  const docx = findStoredZipEntry(result.buffer, (name) => name.endsWith('测试卷.docx'))
+  assert.ok(docx)
+  const xml = findStoredZipEntry(docx, (name) => name === 'word/document.xml').toString('utf8')
+  const wordBankSection = xml.split('一、Matching')[0]
+  const multipleChoiceSection = xml.match(/二、Multiple[\s\S]*?三、Synonym/)?.[0] || ''
+  const trueFalseSection = xml.match(/八、T\/F[\s\S]*?参考答案/)?.[0] || ''
+  const practicedItems = [...`${multipleChoiceSection}${trueFalseSection}`.matchAll(/item (\d+)/g)]
+    .map((match) => match[1])
+
+  assert.equal((wordBankSection.match(/sampleword/g) || []).length, 20)
+  assert.equal(new Set(practicedItems).size, 20)
+  assert.match(xml, /英语词汇专项测试卷1-30/)
+})
+
 test('nine batch variation seeds produce nine unique fixed-test-paper question sets', async () => {
   const { generateWorksheetArchive } = await import('../server/genEngine.js')
   const { rows, initialCache } = buildFixedTestPaperFixture()
@@ -503,6 +566,28 @@ test('nine batch variation seeds produce nine unique fixed-test-paper question s
   assert.equal(new Set(questionSets).size, 9)
   assert.match(questionSets[0], /<w:cols w:num="1"/)
   assert.doesNotMatch(questionSets[0], /<w:cols w:num="2"/)
+})
+
+test('all-words test papers omit the vocabulary bank only for that export size', async () => {
+  const { generateWorksheetArchive } = await import('../server/genEngine.js')
+  const { rows, initialCache } = buildFixedTestPaperFixture(30)
+  const generate = (testPaperGroupSizes) => generateWorksheetArchive({
+    rows,
+    fileName: '词汇库显示测试.xlsx',
+    generationMode: 'fixed_test_paper',
+    testPaperGroupSizes,
+    initialCache,
+  })
+
+  const [allWords, grouped] = await Promise.all([generate([0]), generate([100])])
+  const readQuestionXml = (result) => {
+    const docx = findStoredZipEntry(result.buffer, (name) => name.endsWith('测试卷.docx'))
+    assert.ok(docx)
+    return findStoredZipEntry(docx, (name) => name === 'word/document.xml').toString('utf8')
+  }
+
+  assert.doesNotMatch(readQuestionXml(allWords), /词汇库：/)
+  assert.match(readQuestionXml(grouped), /词汇库：/)
 })
 
 test('legacy matching worksheet aligns two-row options and keeps optional Chinese', async () => {

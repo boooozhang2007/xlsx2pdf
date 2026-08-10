@@ -4,6 +4,8 @@ import { deleteObject, getObjectBuffer, getObjectJson, getObjectJsonWithMetadata
 import {
   GENERATION_MODE_FIXED_TEST_PAPER,
   GENERATION_MODE_LEGACY_ZIP,
+  normalizeTestPaperQuestionCount,
+  normalizeLegacyGroupSize,
   normalizeLegacyQuestionCount,
   normalizeTestPaperGroupSizes,
   normalizeWithChineseTranslation,
@@ -65,8 +67,10 @@ const buildJobFingerprint = ({
   questionTypes,
   generationMode,
   llmModel,
+  legacyGroupSize,
   legacyQuestionCount,
   testPaperGroupSizes,
+  testPaperQuestionCount,
   withChineseTranslation,
 }) => crypto.createHash('sha256').update(JSON.stringify({
   rows,
@@ -74,8 +78,10 @@ const buildJobFingerprint = ({
   questionTypes,
   generationMode,
   llmModel,
+  legacyGroupSize,
   legacyQuestionCount,
   testPaperGroupSizes,
+  testPaperQuestionCount,
   withChineseTranslation,
 })).digest('hex')
 
@@ -94,8 +100,10 @@ const summarizeJob = (job) => ({
   wordCount: job.wordCount || 0,
   questionTypes: job.questionTypes || [],
   generationMode: normalizeGenerationMode(job.generationMode),
+  legacyGroupSize: normalizeLegacyGroupSize(job.legacyGroupSize),
   legacyQuestionCount: normalizeLegacyQuestionCount(job.legacyQuestionCount),
   testPaperGroupSizes: normalizeTestPaperGroupSizes(job.testPaperGroupSizes),
+  testPaperQuestionCount: normalizeTestPaperQuestionCount(job.testPaperQuestionCount),
   withChineseTranslation: normalizeWithChineseTranslation(job.withChineseTranslation),
   llmModel: job.llmModel || '',
   llmBatchSize: job.llmBatchSize || 0,
@@ -735,8 +743,10 @@ const processSingleJob = async (job) => {
       llmEntryLimit: getLlmEntryLimitForRuntime({ llmBatchSize, llmConcurrency }),
       variationSeed: payload.variationSeed || latestJob.variationSeed || '',
       exportSuffix: payload.exportSuffix || latestJob.exportSuffix || '',
+      legacyGroupSize: payload.legacyGroupSize ?? latestJob.legacyGroupSize,
       legacyQuestionCount: payload.legacyQuestionCount || latestJob.legacyQuestionCount,
       testPaperGroupSizes: payload.testPaperGroupSizes || latestJob.testPaperGroupSizes,
+      testPaperQuestionCount: payload.testPaperQuestionCount ?? latestJob.testPaperQuestionCount,
       withChineseTranslation: normalizeWithChineseTranslation(payload.withChineseTranslation ?? latestJob.withChineseTranslation),
       onProgress: handleProgress,
       onShouldCancel: shouldCancelOrYield,
@@ -1115,8 +1125,10 @@ export const submitWorksheetJob = async ({
   questionTypes,
   generationMode,
   llmModel,
+  legacyGroupSize,
   legacyQuestionCount,
   testPaperGroupSizes,
+  testPaperQuestionCount,
   withChineseTranslation,
   batchId = '',
   copyIndex = 0,
@@ -1127,8 +1139,12 @@ export const submitWorksheetJob = async ({
   cacheSourceJobIds = [],
 }) => {
   const normalizedMode = normalizeGenerationMode(generationMode)
-  const normalizedLegacyQuestionCount = normalizeLegacyQuestionCount(legacyQuestionCount)
+  const normalizedLegacyGroupSize = normalizeLegacyGroupSize(legacyGroupSize)
+  const normalizedLegacyQuestionCount = normalizedMode === GENERATION_MODE_LEGACY_ZIP
+    ? Math.min(normalizeLegacyQuestionCount(legacyQuestionCount), normalizedLegacyGroupSize)
+    : normalizeLegacyQuestionCount(legacyQuestionCount)
   const normalizedTestPaperGroupSizes = normalizeTestPaperGroupSizes(testPaperGroupSizes)
+  const normalizedTestPaperQuestionCount = normalizeTestPaperQuestionCount(testPaperQuestionCount)
   const normalizedWithChineseTranslation = normalizeWithChineseTranslation(withChineseTranslation)
   const llmRuntime = getLlmJobRuntime(String(llmModel || getDefaultLlmModel()).trim())
   const normalizedFileName = String(fileName || '词组练习.xlsx')
@@ -1138,8 +1154,10 @@ export const submitWorksheetJob = async ({
     questionTypes,
     generationMode: normalizedMode,
     llmModel: llmRuntime.model,
+    legacyGroupSize: normalizedLegacyGroupSize,
     legacyQuestionCount: normalizedLegacyQuestionCount,
     testPaperGroupSizes: normalizedTestPaperGroupSizes,
+    testPaperQuestionCount: normalizedTestPaperQuestionCount,
     withChineseTranslation: normalizedWithChineseTranslation,
   })
   if (!allowDuplicate) {
@@ -1160,8 +1178,10 @@ export const submitWorksheetJob = async ({
             questionTypes: payload.questionTypes || candidate.questionTypes || [],
             generationMode: normalizeGenerationMode(payload.generationMode || candidate.generationMode),
             llmModel: payload.llmModel || candidate.llmModel || getDefaultLlmModel(),
+            legacyGroupSize: normalizeLegacyGroupSize(payload.legacyGroupSize ?? candidate.legacyGroupSize),
             legacyQuestionCount: normalizeLegacyQuestionCount(payload.legacyQuestionCount ?? candidate.legacyQuestionCount),
             testPaperGroupSizes: normalizeTestPaperGroupSizes(payload.testPaperGroupSizes || candidate.testPaperGroupSizes),
+            testPaperQuestionCount: normalizeTestPaperQuestionCount(payload.testPaperQuestionCount ?? candidate.testPaperQuestionCount),
             withChineseTranslation: normalizeWithChineseTranslation(payload.withChineseTranslation ?? candidate.withChineseTranslation),
           }),
         }
@@ -1186,8 +1206,10 @@ export const submitWorksheetJob = async ({
     fileName: normalizedFileName,
     questionTypes,
     generationMode: normalizedMode,
+    legacyGroupSize: normalizedLegacyGroupSize,
     legacyQuestionCount: normalizedLegacyQuestionCount,
     testPaperGroupSizes: normalizedTestPaperGroupSizes,
+    testPaperQuestionCount: normalizedTestPaperQuestionCount,
     withChineseTranslation: normalizedWithChineseTranslation,
     llmModel: llmRuntime.model,
     llmFallbackModels: llmRuntime.fallbackModels,
@@ -1220,8 +1242,10 @@ export const submitWorksheetJob = async ({
         fileName: job.fileName,
         questionTypes,
         generationMode: job.generationMode,
+        legacyGroupSize: job.legacyGroupSize,
         legacyQuestionCount: job.legacyQuestionCount,
         testPaperGroupSizes: job.testPaperGroupSizes,
+        testPaperQuestionCount: job.testPaperQuestionCount,
         withChineseTranslation: job.withChineseTranslation,
         llmModel: job.llmModel,
         llmFallbackModels: job.llmFallbackModels,
@@ -1260,8 +1284,10 @@ export const retryWorksheetJob = async (jobId, { questionTypes } = {}) => {
     questionTypes: questionTypes || payload.questionTypes || sourceJob.questionTypes,
     generationMode: payload.generationMode || sourceJob.generationMode,
     llmModel: payload.llmModel || sourceJob.llmModel,
+    legacyGroupSize: payload.legacyGroupSize ?? sourceJob.legacyGroupSize,
     legacyQuestionCount: payload.legacyQuestionCount ?? sourceJob.legacyQuestionCount,
     testPaperGroupSizes: payload.testPaperGroupSizes || sourceJob.testPaperGroupSizes,
+    testPaperQuestionCount: payload.testPaperQuestionCount ?? sourceJob.testPaperQuestionCount,
     withChineseTranslation: payload.withChineseTranslation ?? sourceJob.withChineseTranslation,
     batchId: sourceJob.batchId || '',
     copyIndex: sourceJob.copyIndex || 0,
@@ -1450,8 +1476,10 @@ export const prepareWorksheetBatchWorkflowMigration = async (batchId, { resetRun
         questionTypes: sourcePayload.questionTypes || sourceJob.questionTypes || [],
         generationMode: sourcePayload.generationMode || sourceJob.generationMode,
         llmModel: sourcePayload.llmModel || sourceJob.llmModel || getDefaultLlmModel(),
+        legacyGroupSize: sourcePayload.legacyGroupSize ?? sourceJob.legacyGroupSize,
         legacyQuestionCount: sourcePayload.legacyQuestionCount ?? sourceJob.legacyQuestionCount,
         testPaperGroupSizes: sourcePayload.testPaperGroupSizes || sourceJob.testPaperGroupSizes,
+        testPaperQuestionCount: sourcePayload.testPaperQuestionCount ?? sourceJob.testPaperQuestionCount,
         withChineseTranslation: sourcePayload.withChineseTranslation ?? sourceJob.withChineseTranslation,
         batchId: normalizedBatchId,
         copyIndex,
@@ -1652,8 +1680,10 @@ export const reexportWorksheetJob = async (jobId) => {
     llmFallbackModels: payload.llmFallbackModels || job.llmFallbackModels,
     variationSeed: payload.variationSeed || job.variationSeed || '',
     exportSuffix: payload.exportSuffix || job.exportSuffix || '',
+    legacyGroupSize: payload.legacyGroupSize ?? job.legacyGroupSize,
     legacyQuestionCount: payload.legacyQuestionCount || job.legacyQuestionCount,
     testPaperGroupSizes: payload.testPaperGroupSizes || job.testPaperGroupSizes,
+    testPaperQuestionCount: payload.testPaperQuestionCount ?? job.testPaperQuestionCount,
     withChineseTranslation: normalizeWithChineseTranslation(payload.withChineseTranslation ?? job.withChineseTranslation),
     initialCache: cache,
   })

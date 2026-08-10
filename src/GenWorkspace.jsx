@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowDownToLine,
   CheckCircle2,
+  ChevronDown,
   Clock3,
   Database,
   FileText,
@@ -19,15 +20,22 @@ import { downloadNamedBlob } from './ttsUtils'
 import AuthGate from './AuthGate'
 import { ALL_QUESTION_TYPE_KEYS, FIXED_TEST_PAPER_QUESTION_KEYS } from '../shared/worksheetTypes'
 import {
+  DEFAULT_LEGACY_GROUP_SIZE,
   DEFAULT_LEGACY_QUESTION_COUNT,
+  DEFAULT_TEST_PAPER_QUESTION_COUNT,
   GENERATION_MODE_FIXED_TEST_PAPER,
   GENERATION_MODE_LEGACY_ZIP,
   GENERATION_MODE_OPTIONS,
+  GENERATION_PRESET_OPTIONS,
+  GENERATION_PRESET_SECONDARY,
   TEST_PAPER_GROUP_SIZE_OPTIONS,
+  normalizeLegacyGroupSize,
   normalizeLegacyQuestionCount,
+  normalizeTestPaperQuestionCount,
   normalizeWithChineseTranslation,
 } from '../shared/generationModes'
 import { dedupeCacheJobs } from '../shared/cacheGroups'
+import { collapseBatchJobs, getActionJobs } from '../shared/jobBatches'
 
 const DEFAULT_QUESTION_TYPES = ALL_QUESTION_TYPE_KEYS
 
@@ -88,12 +96,6 @@ const getStageWordCompleted = (job) => {
   const total = getStageWordTotal(job)
   const completed = Number(job?.progress?.stageWordCompleted || 0)
   return total ? Math.max(0, Math.min(total, completed)) : 0
-}
-
-const formatWordProgress = (job) => {
-  const total = getStageWordTotal(job)
-  if (!total) return job?.wordCount ? `共 ${job.wordCount} 词` : '等待开始'
-  return `${getStageWordCompleted(job)} / ${total}`
 }
 
 const getStageLabel = (job) => String(job?.progress?.stageLabel || job?.progress?.currentStep || '').trim() || '等待处理'
@@ -316,14 +318,12 @@ const buildPreviewModel = (typeKey, rows) => {
 
 const formatJobMode = (job) => (
   job.generationMode === GENERATION_MODE_FIXED_TEST_PAPER
-    ? `${(job.testPaperGroupSizes || [100]).map((size) => size || '全部').join('/')} 词`
-    : `每组 ${job.legacyQuestionCount || DEFAULT_LEGACY_QUESTION_COUNT} 题`
+    ? `${(job.testPaperGroupSizes || [100]).map((size) => size || '全部').join('/')} 词/组 · 抽 ${job.testPaperQuestionCount || DEFAULT_TEST_PAPER_QUESTION_COUNT} 词`
+    : `${job.legacyGroupSize || DEFAULT_LEGACY_GROUP_SIZE} 词/组 · 抽 ${job.legacyQuestionCount || DEFAULT_LEGACY_QUESTION_COUNT} 词`
 )
 
 function QueueJobRow({
   job,
-  selectedDownloadJobIds,
-  toggleDownloadJob,
   onCancel,
   onDelete,
   onRetry,
@@ -345,21 +345,15 @@ function QueueJobRow({
   const canDelete = !['processing', 'canceling'].includes(job.status)
   const deleting = deletingJobId === job.id
   const isActive = ['processing', 'canceling'].includes(job.status)
-  const copyLabel = job.copyIndex ? `第 ${job.copyIndex}/${job.copyCount || 1} 份` : ''
+  const isBatch = getActionJobs(job).length > 1
+  const copyLabel = isBatch
+    ? `批量生成 ${job.copyCount || getActionJobs(job).length} 份`
+    : job.copyIndex ? `第 ${job.copyIndex}/${job.copyCount || 1} 份` : ''
 
   return (
     <article className={`genQueueRow ${job.status}`}>
       <div className="genQueueRowTop">
         <div className="genQueueRowStatus">
-          {job.status === 'completed' ? (
-            <input
-              className="genBatchCheckbox"
-              type="checkbox"
-              checked={selectedDownloadJobIds.includes(job.id)}
-              onChange={() => toggleDownloadJob(job.id)}
-              aria-label={`选择${job.fileName}批量下载`}
-            />
-          ) : null}
           <span className={`genQueueChip ${job.status}`}>{meta.label}</span>
         </div>
         <span className="genQueueTime">{formatTime(job.updatedAt || job.createdAt)}</span>
@@ -400,10 +394,12 @@ function QueueJobRow({
         ) : null}
         {job.status === 'completed' ? (
           <>
-            <button className="genQueueReexport" type="button" onClick={() => onReexport(job)} disabled={reexportingJobId === job.id} title="按原缓存重新导出" aria-label="按原缓存重新导出">
-              {reexportingJobId === job.id ? <Loader2 className="spin" size={14} /> : <RefreshCw size={14} />}
-            </button>
-            <button type="button" onClick={() => onDownload(job)} disabled={downloadingJobId === job.id} title="下载" aria-label="下载">
+            {!isBatch ? (
+              <button className="genQueueReexport" type="button" onClick={() => onReexport(job)} disabled={reexportingJobId === job.id} title="按原缓存重新导出" aria-label="按原缓存重新导出">
+                {reexportingJobId === job.id ? <Loader2 className="spin" size={14} /> : <RefreshCw size={14} />}
+              </button>
+            ) : null}
+            <button type="button" onClick={() => onDownload(job)} disabled={downloadingJobId === job.id} title={isBatch ? '下载整个批次' : '下载'} aria-label={isBatch ? '下载整个批次' : '下载'}>
               {downloadingJobId === job.id ? <Loader2 className="spin" size={14} /> : <ArrowDownToLine size={14} />}
             </button>
           </>
@@ -431,6 +427,26 @@ function CacheSourceRow({ job, index, selected, disabled, onToggle }) {
   )
 }
 
+function CollapsibleRecordColumn({ className = '', icon: Icon, title, count, emptyText, children }) {
+  const [open, setOpen] = useState(true)
+  return (
+    <details
+      className={`genFolderColumn ${className}`.trim()}
+      open={open}
+      onToggle={(event) => setOpen(event.currentTarget.open)}
+    >
+      <summary>
+        <span><Icon size={14} />{title}</span>
+        <strong>{count}</strong>
+        <ChevronDown className="genFolderChevron" size={14} aria-hidden="true" />
+      </summary>
+      <div className="genFolderColumnBody">
+        {count ? children : <p className="genQueueEmpty">{emptyText}</p>}
+      </div>
+    </details>
+  )
+}
+
 function GenWorkspace({ rows, fileName, activeSheetName }) {
   const [authenticated, setAuthenticated] = useState(false)
   const [authChecked, setAuthChecked] = useState(false)
@@ -441,15 +457,16 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
   const [retryingJobId, setRetryingJobId] = useState('')
   const [cancelingJobId, setCancelingJobId] = useState('')
   const [deletingJobId, setDeletingJobId] = useState('')
-  const [selectedDownloadJobIds, setSelectedDownloadJobIds] = useState([])
-  const [batchDownloading, setBatchDownloading] = useState(false)
   const [status, setStatus] = useState('')
   const [jobs, setJobs] = useState([])
+  const [selectedPreset, setSelectedPreset] = useState(GENERATION_PRESET_SECONDARY)
   const [selectedGenerationMode, setSelectedGenerationMode] = useState(GENERATION_MODE_FIXED_TEST_PAPER)
   const [selectedTypes, setSelectedTypes] = useState(DEFAULT_QUESTION_TYPES)
+  const [legacyGroupSize, setLegacyGroupSize] = useState(DEFAULT_LEGACY_GROUP_SIZE)
   const [legacyQuestionCount, setLegacyQuestionCount] = useState(DEFAULT_LEGACY_QUESTION_COUNT)
   const [testPaperGroupSizes, setTestPaperGroupSizes] = useState([100])
-  const [withChineseTranslation, setWithChineseTranslation] = useState(true)
+  const [testPaperQuestionCount, setTestPaperQuestionCount] = useState(DEFAULT_TEST_PAPER_QUESTION_COUNT)
+  const [withChineseTranslation, setWithChineseTranslation] = useState(false)
   const [copyCount, setCopyCount] = useState(1)
   const [llmModels, setLlmModels] = useState([])
   const [selectedLlmModel, setSelectedLlmModel] = useState('')
@@ -474,13 +491,10 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
     [llmModels],
   )
 
+  const displayJobs = useMemo(() => collapseBatchJobs(jobs), [jobs])
   const activeJobs = useMemo(
-    () => jobs.filter((job) => ['queued', 'processing', 'canceling'].includes(job.status)),
-    [jobs],
-  )
-  const completedCount = useMemo(
-    () => jobs.filter((job) => job.status === 'completed').length,
-    [jobs],
+    () => displayJobs.filter((job) => ['queued', 'processing', 'canceling'].includes(job.status)),
+    [displayJobs],
   )
 
   const jobGroups = useMemo(() => {
@@ -490,16 +504,21 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
       if (!groups.has(key)) groups.set(key, [])
       groups.get(key).push(job)
     })
-    return [...groups.entries()].map(([name, items]) => ({
-      name,
-      jobs: items,
-      cacheJobs: dedupeCacheJobs(items),
-      testJobs: items.filter((job) => job.generationMode === GENERATION_MODE_FIXED_TEST_PAPER),
-      zipJobs: items.filter((job) => job.generationMode === GENERATION_MODE_LEGACY_ZIP),
-    })).sort((left, right) => {
+    return [...groups.entries()].map(([name, items]) => {
+      const testJobs = collapseBatchJobs(items.filter((job) => job.generationMode === GENERATION_MODE_FIXED_TEST_PAPER))
+      const zipJobs = collapseBatchJobs(items.filter((job) => job.generationMode === GENERATION_MODE_LEGACY_ZIP))
+      return {
+        name,
+        jobs: [...testJobs, ...zipJobs],
+        cacheJobs: dedupeCacheJobs(items),
+        testJobs,
+        zipJobs,
+        latestCreatedAt: Number(items[0]?.createdAt || 0),
+      }
+    }).sort((left, right) => {
       if (left.name === fileName) return -1
       if (right.name === fileName) return 1
-      return Number(right.jobs[0]?.createdAt || 0) - Number(left.jobs[0]?.createdAt || 0)
+      return right.latestCreatedAt - left.latestCreatedAt
     })
   }, [jobs, fileName])
 
@@ -563,13 +582,6 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
     setSelectedCacheJobIds((current) => current.filter((id) => availableIds.has(id)))
   }, [currentFileCacheJobs])
 
-  useEffect(() => {
-    const downloadableIds = new Set(jobs
-      .filter((job) => job.status === 'completed' && job.artifactReady)
-      .map((job) => job.id))
-    setSelectedDownloadJobIds((current) => current.filter((id) => downloadableIds.has(id)))
-  }, [jobs])
-
   const login = async (password) => {
     await apiJson('/api/auth?action=login', {
       method: 'POST',
@@ -580,6 +592,7 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
   }
 
   const toggleTestPaperGroupSize = (value) => {
+    setSelectedPreset('')
     setTestPaperGroupSizes((current) => {
       if (!current.includes(value)) return [...current, value]
       return current.length > 1 ? current.filter((item) => item !== value) : current
@@ -592,6 +605,16 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
         ? current.filter((id) => id !== jobId)
         : [...current, jobId]
     ))
+  }
+
+  const applyGenerationPreset = (preset) => {
+    setSelectedPreset(preset.key)
+    setWithChineseTranslation(preset.withChineseTranslation)
+    setLegacyGroupSize(preset.legacyGroupSize)
+    setLegacyQuestionCount(preset.legacyQuestionCount)
+    setTestPaperGroupSizes(preset.testPaperGroupSizes)
+    setTestPaperQuestionCount(preset.testPaperQuestionCount)
+    setCopyCount(1)
   }
 
   const generateArchive = async () => {
@@ -622,8 +645,13 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
           generationMode: selectedGenerationMode,
           questionTypes: selectedGenerationMode === GENERATION_MODE_FIXED_TEST_PAPER ? FIXED_TEST_PAPER_QUESTION_KEYS : selectedTypes,
           llmModel: selectedLlmModel,
-          legacyQuestionCount: normalizeLegacyQuestionCount(legacyQuestionCount),
+          legacyGroupSize: normalizeLegacyGroupSize(legacyGroupSize),
+          legacyQuestionCount: Math.min(
+            normalizeLegacyQuestionCount(legacyQuestionCount),
+            normalizeLegacyGroupSize(legacyGroupSize),
+          ),
           testPaperGroupSizes,
+          testPaperQuestionCount: normalizeTestPaperQuestionCount(testPaperQuestionCount),
           withChineseTranslation: normalizeWithChineseTranslation(withChineseTranslation),
           cacheSourceJobIds: selectedCacheJobIds,
           copies: Math.max(1, Math.min(20, Number.parseInt(copyCount, 10) || 1)),
@@ -651,14 +679,20 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
 
   const downloadJob = async (job) => {
     if (!job?.id) return
+    const downloadJobs = getActionJobs(job)
     setDownloadingJobId(job.id)
     try {
-      const { blob, fileName: downloadedName } = await fetchDownloadRequest(
-        `/api/gen/jobs/download?id=${encodeURIComponent(job.id)}`,
-        { method: 'GET' },
-      )
+      const { blob, fileName: downloadedName } = downloadJobs.length > 1
+        ? await fetchDownloadRequest('/api/gen/jobs/download', {
+            method: 'POST',
+            body: JSON.stringify({ ids: downloadJobs.map((item) => item.id) }),
+          })
+        : await fetchDownloadRequest(
+            `/api/gen/jobs/download?id=${encodeURIComponent(downloadJobs[0].id)}`,
+            { method: 'GET' },
+          )
       downloadNamedBlob(blob, downloadedName || job.exportFileName || fallbackArchiveName(job.fileName))
-      setStatus('测试卷包已开始下载。')
+      setStatus(downloadJobs.length > 1 ? `批次中的 ${downloadJobs.length} 份文件已开始下载。` : '测试卷包已开始下载。')
       loadJobs(true)
     } catch (error) {
       setStatus(error.message || '下载任务失败。')
@@ -687,17 +721,22 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
 
   const retryJob = async (job) => {
     if (!job?.id) return
+    const failedJobs = getActionJobs(job).filter((item) => item.status === 'failed')
+    if (!failedJobs.length) return
     setRetryingJobId(job.id)
-    setStatus('正在从失败任务恢复原始词表并重新生成…')
+    setStatus(failedJobs.length > 1 ? `正在重新提交批次中的 ${failedJobs.length} 个失败任务…` : '正在从失败任务恢复原始词表并重新生成…')
     try {
-      const data = await apiJson('/api/gen/jobs', {
+      const responses = await Promise.all(failedJobs.map((item) => apiJson('/api/gen/jobs', {
         method: 'POST',
-        body: JSON.stringify({ retryJobId: job.id }),
-      })
-      if (data?.job) {
-        setJobs((current) => [data.job, ...current.filter((item) => item.id !== data.job.id)])
-      }
-      setStatus(data.deduplicated ? '相同任务已在服务器处理中。' : '失败任务已重新提交。')
+        body: JSON.stringify({ retryJobId: item.id }),
+      })))
+      const submittedJobs = responses.map((data) => data.job).filter(Boolean)
+      const replacedIds = new Set(failedJobs.map((item) => item.id))
+      setJobs((current) => [
+        ...submittedJobs,
+        ...current.filter((item) => !replacedIds.has(item.id) && !submittedJobs.some((submitted) => submitted.id === item.id)),
+      ])
+      setStatus(responses.every((data) => data.deduplicated) ? '相同任务已在服务器处理中。' : '失败任务已重新提交。')
       loadJobs(true)
     } catch (error) {
       setStatus(error.message || '重新生成失败。')
@@ -708,15 +747,16 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
 
   const cancelJob = async (job) => {
     if (!job?.id || ['completed', 'failed', 'canceled'].includes(job.status)) return
+    const cancelJobs = getActionJobs(job).filter((item) => ['queued', 'processing', 'canceling'].includes(item.status))
+    if (!cancelJobs.length) return
     setCancelingJobId(job.id)
     try {
-      const data = await apiJson(`/api/gen/jobs?id=${encodeURIComponent(job.id)}`, {
+      const responses = await Promise.all(cancelJobs.map((item) => apiJson(`/api/gen/jobs?id=${encodeURIComponent(item.id)}`, {
         method: 'DELETE',
-      })
-      if (data?.job) {
-        setJobs((current) => current.map((item) => (item.id === data.job.id ? data.job : item)))
-      }
-      setStatus(job.status === 'queued' ? '任务已从服务器队列移除。' : '已向服务器发送停止请求。')
+      })))
+      const updates = new Map(responses.map((data) => data.job).filter(Boolean).map((item) => [item.id, item]))
+      setJobs((current) => current.map((item) => updates.get(item.id) || item))
+      setStatus(cancelJobs.length > 1 ? `已向批次中的 ${cancelJobs.length} 个任务发送停止请求。` : job.status === 'queued' ? '任务已从服务器队列移除。' : '已向服务器发送停止请求。')
       loadJobs(true)
     } catch (error) {
       setStatus(error.message || '停止任务失败。')
@@ -727,14 +767,15 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
 
   const deleteJob = async (job) => {
     if (!job?.id || ['processing', 'canceling'].includes(job.status)) return
+    const deleteJobs = getActionJobs(job)
+    const deleteIds = new Set(deleteJobs.map((item) => item.id))
     setDeletingJobId(job.id)
     try {
-      await apiJson(`/api/gen/jobs?id=${encodeURIComponent(job.id)}&intent=delete`, {
+      await Promise.all(deleteJobs.map((item) => apiJson(`/api/gen/jobs?id=${encodeURIComponent(item.id)}&intent=delete`, {
         method: 'DELETE',
-      })
-      setJobs((current) => current.filter((item) => item.id !== job.id))
-      setSelectedDownloadJobIds((current) => current.filter((id) => id !== job.id))
-      setStatus('队列记录及对应文件已删除。')
+      })))
+      setJobs((current) => current.filter((item) => !deleteIds.has(item.id)))
+      setStatus(deleteJobs.length > 1 ? `批次中的 ${deleteJobs.length} 条记录及文件已删除。` : '队列记录及对应文件已删除。')
     } catch (error) {
       setStatus(error.message || '删除队列记录失败。')
     } finally {
@@ -742,39 +783,7 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
     }
   }
 
-  const toggleDownloadJob = (jobId) => {
-    setSelectedDownloadJobIds((current) => (
-      current.includes(jobId)
-        ? current.filter((id) => id !== jobId)
-        : [...current, jobId]
-    ))
-  }
-
-  const batchDownload = async () => {
-    if (!selectedDownloadJobIds.length || batchDownloading) return
-    setBatchDownloading(true)
-    setStatus(`正在合并 ${selectedDownloadJobIds.length} 个压缩包…`)
-    try {
-      const { blob, fileName: downloadedName } = await fetchDownloadRequest(
-        '/api/gen/jobs/download',
-        {
-          method: 'POST',
-          body: JSON.stringify({ ids: selectedDownloadJobIds }),
-        },
-      )
-      downloadNamedBlob(blob, downloadedName || '词汇练习 批量下载.zip')
-      setStatus('批量 ZIP 已开始下载。')
-      setSelectedDownloadJobIds([])
-    } catch (error) {
-      setStatus(error.message || '批量下载失败。')
-    } finally {
-      setBatchDownloading(false)
-    }
-  }
-
-  const progressLabel = latestJob?.progress?.message || (activeJobs.length ? '服务器正在处理队列…' : '当前没有进行中的队列任务。')
   const stageLabel = latestJob ? getStageLabel(latestJob) : '等待处理'
-  const stageWordProgress = latestJob ? formatWordProgress(latestJob) : '—'
   const latestMeta = STATUS_META[latestJob?.status] || STATUS_META.queued
   const latestStatusLabel = latestJob ? latestMeta.label : '队列空闲'
   const activeLlmOption = llmModels.find((item) => item.id === selectedLlmModel) || llmModels[0] || null
@@ -791,8 +800,6 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
     retryingJobId,
     reexportingJobId,
     downloadingJobId,
-    selectedDownloadJobIds,
-    toggleDownloadJob,
   }
 
   if (!authChecked) {
@@ -876,15 +883,6 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
           <div className="blockTitle">
             <FolderOpen size={17} />
             <span>文件与生成记录</span>
-            <button
-              className="genBatchDownload"
-              type="button"
-              onClick={batchDownload}
-              disabled={!selectedDownloadJobIds.length || batchDownloading}
-            >
-              {batchDownloading ? <Loader2 className="spin" size={14} /> : <ArrowDownToLine size={14} />}
-              批量下载{selectedDownloadJobIds.length ? ` ${selectedDownloadJobIds.length}` : ''}
-            </button>
             <button className="genQueueRefresh" type="button" onClick={() => loadJobs()} disabled={queueBusy}>
               {queueBusy ? <Loader2 className="spin" size={14} /> : <RefreshCw size={14} />}
               刷新
@@ -904,13 +902,14 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
                     <small>{group.cacheJobs.length} 个缓存组 · {group.jobs.length} 条生成记录</small>
                   </header>
                   <div className="genFolderColumns">
-                    <section className="genFolderColumn cacheColumn">
-                      <header>
-                        <span><Database size={14} />缓存组</span>
-                        <strong>{group.cacheJobs.length}</strong>
-                      </header>
-                      <div className="genFolderColumnBody">
-                        {group.cacheJobs.length ? group.cacheJobs.map((job, index) => (
+                    <CollapsibleRecordColumn
+                      className="cacheColumn"
+                      icon={Database}
+                      title="缓存组"
+                      count={group.cacheJobs.length}
+                      emptyText="暂无可复用缓存"
+                    >
+                      {group.cacheJobs.map((job, index) => (
                           <CacheSourceRow
                             job={job}
                             index={index}
@@ -919,31 +918,14 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
                             onToggle={toggleCacheJob}
                             key={job.id}
                           />
-                        )) : <p className="genQueueEmpty">暂无可复用缓存</p>}
-                      </div>
-                    </section>
-                    <section className="genFolderColumn">
-                      <header>
-                        <span><FileText size={14} />测试卷</span>
-                        <strong>{group.testJobs.length}</strong>
-                      </header>
-                      <div className="genFolderColumnBody">
-                        {group.testJobs.length ? group.testJobs.map((job) => (
-                          <QueueJobRow job={job} {...queueRowProps} key={job.id} />
-                        )) : <p className="genQueueEmpty">暂无测试卷记录</p>}
-                      </div>
-                    </section>
-                    <section className="genFolderColumn">
-                      <header>
-                        <span><FileText size={14} />练习包</span>
-                        <strong>{group.zipJobs.length}</strong>
-                      </header>
-                      <div className="genFolderColumnBody">
-                        {group.zipJobs.length ? group.zipJobs.map((job) => (
-                          <QueueJobRow job={job} {...queueRowProps} key={job.id} />
-                        )) : <p className="genQueueEmpty">暂无练习包记录</p>}
-                      </div>
-                    </section>
+                        ))}
+                    </CollapsibleRecordColumn>
+                    <CollapsibleRecordColumn icon={FileText} title="测试卷" count={group.testJobs.length} emptyText="暂无测试卷记录">
+                      {group.testJobs.map((job) => <QueueJobRow job={job} {...queueRowProps} key={job.id} />)}
+                    </CollapsibleRecordColumn>
+                    <CollapsibleRecordColumn icon={FileText} title="练习包" count={group.zipJobs.length} emptyText="暂无练习包记录">
+                      {group.zipJobs.map((job) => <QueueJobRow job={job} {...queueRowProps} key={job.id} />)}
+                    </CollapsibleRecordColumn>
                   </div>
                 </section>
               )
@@ -1019,6 +1001,28 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
             <FileText size={17} />
             <span>生成模式</span>
           </div>
+          <div className="genPresetBlock">
+            <span className="genPresetLabel">年级预设</span>
+            <div className="questionTypeGrid compact genPresetGrid">
+              {GENERATION_PRESET_OPTIONS.map((preset) => {
+                const active = selectedPreset === preset.key
+                return (
+                  <label className={`questionTypeCard compact genPresetCard${active ? ' active' : ''}`} key={preset.key}>
+                    <input
+                      className="questionTypeInput"
+                      type="radio"
+                      name="generationPreset"
+                      checked={active}
+                      onChange={() => applyGenerationPreset(preset)}
+                    />
+                    <span className="questionTypeMark" aria-hidden="true" />
+                    <strong>{preset.title}</strong>
+                    <small>{preset.description}</small>
+                  </label>
+                )
+              })}
+            </div>
+          </div>
           {llmModels.length ? (
             <div className="field fullField">
               <span>LLM 模型</span>
@@ -1056,12 +1060,16 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
               <div className="field fullField">
                 <span>独立测试卷份数（1–20，服务器按顺序生成）</span>
                 <input
+                  aria-label="独立测试卷份数"
                   type="number"
                   min="1"
                   max="20"
                   step="1"
                   value={copyCount}
-                  onChange={(event) => setCopyCount(event.target.value)}
+                  onChange={(event) => {
+                    setSelectedPreset('')
+                    setCopyCount(event.target.value)
+                  }}
                   onBlur={() => setCopyCount(Math.max(1, Math.min(20, Number.parseInt(copyCount, 10) || 1)))}
                 />
               </div>
@@ -1083,19 +1091,65 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
                   })}
                 </div>
               </div>
-            </>
-          ) : (
-            <>
               <div className="field fullField">
-                <span>每组题目数量（1–500）</span>
+                <span>每组抽词数（1–500，超过本组词数时全抽）</span>
                 <input
+                  aria-label="测试卷每组抽词数"
                   type="number"
                   min="1"
                   max="500"
                   step="1"
+                  value={testPaperQuestionCount}
+                  onChange={(event) => {
+                    setSelectedPreset('')
+                    setTestPaperQuestionCount(event.target.value)
+                  }}
+                  onBlur={() => setTestPaperQuestionCount(normalizeTestPaperQuestionCount(testPaperQuestionCount))}
+                />
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="field fullField">
+                <span>每组词数（1–2500）</span>
+                <input
+                  aria-label="每组词数"
+                  type="number"
+                  min="1"
+                  max="2500"
+                  step="1"
+                  value={legacyGroupSize}
+                  onChange={(event) => {
+                    setSelectedPreset('')
+                    setLegacyGroupSize(event.target.value)
+                  }}
+                  onBlur={() => {
+                    const normalizedGroupSize = normalizeLegacyGroupSize(legacyGroupSize)
+                    setLegacyGroupSize(normalizedGroupSize)
+                    setLegacyQuestionCount((current) => Math.min(
+                      normalizeLegacyQuestionCount(current),
+                      normalizedGroupSize,
+                    ))
+                  }}
+                />
+              </div>
+              <div className="field fullField">
+                <span>每组抽词数（1–{Math.min(500, normalizeLegacyGroupSize(legacyGroupSize))}）</span>
+                <input
+                  aria-label="每组抽词数"
+                  type="number"
+                  min="1"
+                  max={Math.min(500, normalizeLegacyGroupSize(legacyGroupSize))}
+                  step="1"
                   value={legacyQuestionCount}
-                  onChange={(event) => setLegacyQuestionCount(event.target.value)}
-                  onBlur={() => setLegacyQuestionCount(normalizeLegacyQuestionCount(legacyQuestionCount))}
+                  onChange={(event) => {
+                    setSelectedPreset('')
+                    setLegacyQuestionCount(event.target.value)
+                  }}
+                  onBlur={() => setLegacyQuestionCount(Math.min(
+                    normalizeLegacyQuestionCount(legacyQuestionCount),
+                    normalizeLegacyGroupSize(legacyGroupSize),
+                  ))}
                 />
               </div>
             </>
@@ -1104,10 +1158,13 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
             <input
               type="checkbox"
               checked={withChineseTranslation}
-              onChange={(event) => setWithChineseTranslation(event.target.checked)}
+              onChange={(event) => {
+                setSelectedPreset('')
+                setWithChineseTranslation(event.target.checked)
+              }}
             />
             <span className="genToggleText">
-              <strong>第一题添加中文翻译</strong>
+              <strong>第一大题添加中文翻译</strong>
               <em>开启后，中文释义会换行显示在英文释义下面</em>
             </span>
           </label>
