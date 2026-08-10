@@ -34,7 +34,7 @@ import {
   normalizeTestPaperQuestionCount,
   normalizeWithChineseTranslation,
 } from '../shared/generationModes'
-import { dedupeCacheJobs } from '../shared/cacheGroups'
+import { dedupeCacheJobs, getCacheJobIds } from '../shared/cacheGroups'
 import { collapseBatchJobs, getActionJobs } from '../shared/jobBatches'
 
 const DEFAULT_QUESTION_TYPES = ALL_QUESTION_TYPE_KEYS
@@ -410,18 +410,19 @@ function QueueJobRow({
 }
 
 function CacheSourceRow({ job, index, selected, disabled, onToggle }) {
+  const cacheJobCount = getCacheJobIds(job).length
   return (
     <label className={`genCacheRow${selected ? ' selected' : ''}${disabled ? ' disabled' : ''}`}>
       <input
         type="checkbox"
         checked={selected}
         disabled={disabled}
-        onChange={() => onToggle(job.id)}
+        onChange={() => onToggle(job)}
       />
       <span className="genCacheRowMark"><Database size={14} /></span>
       <span className="genCacheRowText">
         <strong>缓存 {String(index + 1).padStart(2, '0')}</strong>
-        <small>{job.wordCount || 0} 词 · {formatTime(job.updatedAt || job.createdAt)}</small>
+        <small>{job.wordCount || 0} 词 · {cacheJobCount > 1 ? `${cacheJobCount} 份缓存 · ` : ''}{formatTime(job.updatedAt || job.createdAt)}</small>
       </span>
     </label>
   )
@@ -526,6 +527,9 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
     () => dedupeCacheJobs(jobs.filter((job) => job.fileName === fileName)).slice(0, 20),
     [jobs, fileName],
   )
+  const selectedCacheGroupCount = useMemo(() => currentFileCacheJobs.filter((job) => (
+    getCacheJobIds(job).every((id) => selectedCacheJobIds.includes(id))
+  )).length, [currentFileCacheJobs, selectedCacheJobIds])
 
   const latestJob = activeJobs.find((job) => job.status === 'processing') || activeJobs[0] || jobs[0] || null
   const progressPercent = clampPercent(latestJob?.progress?.percent || 0)
@@ -578,7 +582,7 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
   }, [authenticated, activeJobs.length])
 
   useEffect(() => {
-    const availableIds = new Set(currentFileCacheJobs.map((job) => job.id))
+    const availableIds = new Set(currentFileCacheJobs.flatMap(getCacheJobIds))
     setSelectedCacheJobIds((current) => current.filter((id) => availableIds.has(id)))
   }, [currentFileCacheJobs])
 
@@ -599,12 +603,15 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
     })
   }
 
-  const toggleCacheJob = (jobId) => {
-    setSelectedCacheJobIds((current) => (
-      current.includes(jobId)
-        ? current.filter((id) => id !== jobId)
-        : [...current, jobId]
-    ))
+  const toggleCacheJob = (job) => {
+    const jobIds = getCacheJobIds(job)
+    const jobIdSet = new Set(jobIds)
+    setSelectedCacheJobIds((current) => {
+      const allSelected = jobIds.every((id) => current.includes(id))
+      return allSelected
+        ? current.filter((id) => !jobIdSet.has(id))
+        : [...new Set([...current, ...jobIds])]
+    })
   }
 
   const applyGenerationPreset = (preset) => {
@@ -913,7 +920,7 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
                           <CacheSourceRow
                             job={job}
                             index={index}
-                            selected={selectedCacheJobIds.includes(job.id)}
+                            selected={getCacheJobIds(job).every((id) => selectedCacheJobIds.includes(id))}
                             disabled={!isCurrentFile}
                             onToggle={toggleCacheJob}
                             key={job.id}
@@ -977,7 +984,7 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
             <div>
               <Database size={15} />
               <span>本文件可复用缓存</span>
-              <strong>{selectedCacheJobIds.length}/{currentFileCacheJobs.length}</strong>
+              <strong>{selectedCacheGroupCount}/{currentFileCacheJobs.length}</strong>
             </div>
             <small>{selectedCacheJobIds.length ? '提交后会从选中的缓存组继续生成新的随机试卷。' : '首次生成会自动建立缓存组，之后可重复抽题。'}</small>
           </div>
@@ -987,7 +994,7 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
                 <CacheSourceRow
                   job={job}
                   index={index}
-                  selected={selectedCacheJobIds.includes(job.id)}
+                  selected={getCacheJobIds(job).every((id) => selectedCacheJobIds.includes(id))}
                   onToggle={toggleCacheJob}
                   key={job.id}
                 />
