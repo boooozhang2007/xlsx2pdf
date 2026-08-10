@@ -1676,9 +1676,9 @@ const buildTestPaperBasicChoicePlan = (groups, context) => {
   groups.forEach((group, groupIndex) => {
     const compatible = group.filter((entry) => isSentenceCompatibleWord(entry.english))
     const words = shuffle(compatible.length ? compatible : group, context.rng)
-    const multipleChoice = fillToCount(words.slice(0, 10), 10, context.rng)
-    const trueFalsePool = words.length > 10 ? [...words.slice(10), ...words.slice(0, 10)] : words
-    const trueFalse = fillToCount(trueFalsePool.slice(0, 10), 10, context.rng)
+    const questionCount = Math.min(context.testPaperQuestionCount, group.length)
+    const multipleChoice = fillToCount(words, questionCount, context.rng)
+    const trueFalse = fillToCount(words, questionCount, context.rng)
     plan.set(`二_选择题:${groupIndex}`, multipleChoice)
     plan.set(`九_判断正误:${groupIndex}`, trueFalse)
     basicEntries.push(...multipleChoice, ...trueFalse)
@@ -1690,7 +1690,12 @@ const buildTestPaperSynonymChoicePlan = (groups, context) => {
   const plan = new Map()
   const synonymEntries = []
   groups.forEach((group, groupIndex) => {
-    const synonym = fillToCount(chooseSynonymWordsByCount(group, context, 10), 10, context.rng)
+    const questionCount = Math.min(context.testPaperQuestionCount, group.length)
+    const synonym = fillToCount(
+      chooseSynonymWordsByCount(group, context, questionCount),
+      questionCount,
+      context.rng,
+    )
     plan.set(`三_同义替换:${groupIndex}`, synonym)
     synonymEntries.push(...synonym)
   })
@@ -1701,9 +1706,8 @@ const buildTestPaperLexicalCandidates = (fixedGroupSets, context) => {
   const candidates = []
   fixedGroupSets.forEach((groupSet) => {
     groupSet.groups.forEach((group, groupIndex) => {
-      const candidateCount = Math.min(group.length, 60)
       const rng = createSeededRng(`${context.rngSeed}|${groupSet.label}|${groupIndex}|lexical-candidates`)
-      candidates.push(...sample(group, candidateCount, rng))
+      candidates.push(...sample(group, group.length, rng))
     })
   })
   return dedupeEntriesByKey(candidates)
@@ -2320,6 +2324,16 @@ const matchingQuestionDocxOptions = (questionKey) => {
 }
 
 const testPaperOptionLine = (options) => options.map((value, index) => `${'ABCD'[index]}. ${value}`).join('  ')
+const alphabeticLabel = (index, lowercase = false) => {
+  let value = Math.max(0, Number(index) || 0) + 1
+  let label = ''
+  while (value > 0) {
+    value -= 1
+    label = String.fromCharCode(65 + (value % 26)) + label
+    value = Math.floor(value / 26)
+  }
+  return lowercase ? label.toLowerCase() : label
+}
 const testPaperRange = (groupIndex, group, groupSize = TEST_PAPER_GROUP_SIZE) => {
   const start = groupIndex * groupSize + 1
   return [start, start + group.length - 1]
@@ -2350,8 +2364,9 @@ const addTestPaperAnswerSection = (paragraphs, answerGroups) => {
 const generateTestPaperMatchingSection = (paragraphs, group, context, answersOut) => {
   const pool = group.filter((entry) => context.lexicalCache.get(entry.key)?.definitionEn)
   if (!pool.length) throw new Error('释义匹配缺少可用的 LLM 释义结果。')
-  const chosen = fillToCount(pool, 10, context.rng)
-  paragraphs.push(paragraph('一、Matching Words with Definitions 单词释义匹配（10题）', { bold: true, size: 12, spaceBefore: 6, spaceAfter: 3 }))
+  const questionCount = Math.min(context.testPaperQuestionCount, group.length)
+  const chosen = fillToCount(pool, questionCount, context.rng)
+  paragraphs.push(paragraph(`一、Matching Words with Definitions 单词释义匹配（${chosen.length}题）`, { bold: true, size: 12, spaceBefore: 6, spaceAfter: 3 }))
   paragraphs.push(paragraph('Choose the correct word for each definition. 根据英文释义选择正确的单词。', { size: 11, spaceAfter: 4 }))
   const answers = []
   chosen.forEach((entry, index) => {
@@ -2368,8 +2383,9 @@ const generateTestPaperMatchingSection = (paragraphs, group, context, answersOut
 }
 
 const generateTestPaperMultipleChoiceSection = (paragraphs, group, groupIndex, context, answersOut) => {
-  const chosen = context.choicePlan.get(`二_选择题:${groupIndex}`) || sample(group, Math.min(10, group.length), context.rng)
-  paragraphs.push(paragraph('二、Multiple-Choice Questions 单项选择（10题）', { bold: true, size: 12, spaceBefore: 6, spaceAfter: 3 }))
+  const questionCount = Math.min(context.testPaperQuestionCount, group.length)
+  const chosen = context.choicePlan.get(`二_选择题:${groupIndex}`) || sample(group, questionCount, context.rng)
+  paragraphs.push(paragraph(`二、Multiple-Choice Questions 单项选择（${chosen.length}题）`, { bold: true, size: 12, spaceBefore: 6, spaceAfter: 3 }))
   paragraphs.push(paragraph('Choose the best word to complete each sentence. 选择最佳单词补全句子。', { size: 11, spaceAfter: 4 }))
   const answers = []
   chosen.forEach((entry, index) => {
@@ -2387,7 +2403,7 @@ const generateTestPaperMultipleChoiceSection = (paragraphs, group, groupIndex, c
 const generateTestPaperSynonymReplacementSection = (paragraphs, groupIndex, context, answersOut) => {
   const chosen = context.choicePlan.get(`三_同义替换:${groupIndex}`) || []
   if (!chosen.length) throw new Error('当前词表缺少可用的同义词结果，无法生成同义替换题。')
-  paragraphs.push(paragraph('三、Synonym Replacement 同义替换（10题）', { bold: true, size: 12, spaceBefore: 6, spaceAfter: 3 }))
+  paragraphs.push(paragraph(`三、Synonym Replacement 同义替换（${chosen.length}题）`, { bold: true, size: 12, spaceBefore: 6, spaceAfter: 3 }))
   paragraphs.push(paragraph('Choose the word closest in meaning to the underlined word. 选择与画线单词意思最接近的单词。', { size: 11, spaceAfter: 4 }))
   const answers = []
   chosen.forEach((entry, index) => {
@@ -2413,8 +2429,9 @@ const generateTestPaperMissingLettersSection = (paragraphs, group, context, answ
     return core.length >= 4 && core.length <= 14
   })
   if (!pool.length) throw new Error('缺字母填空缺少可用的拼写词条。')
-  const chosen = fillToCount(pool, 10, context.rng)
-  paragraphs.push(paragraph('四、Missing Letters 缺字母填空（10题）', { bold: true, size: 12, spaceBefore: 6, spaceAfter: 3 }))
+  const questionCount = Math.min(context.testPaperQuestionCount, group.length)
+  const chosen = fillToCount(pool, questionCount, context.rng)
+  paragraphs.push(paragraph(`四、Missing Letters 缺字母填空（${chosen.length}题）`, { bold: true, size: 12, spaceBefore: 6, spaceAfter: 3 }))
   paragraphs.push(paragraph('Fill in the missing letters and write the full word. 补全所缺字母，并写出完整单词。', { size: 11, spaceAfter: 4 }))
   const answers = []
   chosen.forEach((entry, index) => {
@@ -2440,12 +2457,15 @@ const generateTestPaperSynAntSection = (paragraphs, group, context, answersOut) 
     if (lexical.antonym) antonymPairs.push([entry.displayEnglish, lexical.antonym, 'A'])
   })
   if (!synonymPairs.length && !antonymPairs.length) throw new Error('同义反义辨析缺少可用的 LLM 词汇关系。')
+  const questionCount = Math.min(context.testPaperQuestionCount, group.length)
+  const synonymCount = Math.ceil(questionCount / 2)
+  const antonymCount = questionCount - synonymCount
   const selected = [
-    ...fillToCount(synonymPairs, Math.min(5, Math.max(1, synonymPairs.length)), context.rng),
-    ...fillToCount(antonymPairs, Math.min(5, Math.max(1, antonymPairs.length)), context.rng),
+    ...fillToCount(synonymPairs.length ? synonymPairs : antonymPairs, synonymCount, context.rng),
+    ...fillToCount(antonymPairs.length ? antonymPairs : synonymPairs, antonymCount, context.rng),
   ]
-  const pairs = fillToCount(selected, 10, context.rng)
-  paragraphs.push(paragraph('五、Synonym & Antonym 同义反义词辨析（10题）', { bold: true, size: 12, spaceBefore: 6, spaceAfter: 3 }))
+  const pairs = fillToCount(selected, questionCount, context.rng)
+  paragraphs.push(paragraph(`五、Synonym & Antonym 同义反义词辨析（${pairs.length}题）`, { bold: true, size: 12, spaceBefore: 6, spaceAfter: 3 }))
   paragraphs.push(paragraph('Write S (synonym) or A (antonym) in each bracket. 判断每组单词是同义词还是反义词，并在括号内填写 S 或 A。', { size: 11, spaceAfter: 4 }))
   const answers = []
   pairs.forEach((pair, index) => {
@@ -2455,7 +2475,7 @@ const generateTestPaperSynAntSection = (paragraphs, group, context, answersOut) 
   answersOut.push({ title: '五、同义反义词', lines: [answers.join('  ')] })
 }
 
-const generateTestPaperMatchSection = (paragraphs, group, context, relationKey, sectionTitle, answerTitle, answersOut) => {
+const generateTestPaperMatchSection = (paragraphs, group, context, relationKey, sectionNumber, englishTitle, chineseTitle, answerTitle, answersOut) => {
   const pairs = group
     .map((entry) => {
       const lexical = context.lexicalCache.get(entry.key) || {}
@@ -2464,16 +2484,17 @@ const generateTestPaperMatchSection = (paragraphs, group, context, relationKey, 
     })
     .filter(Boolean)
   if (!pairs.length) throw new Error(relationKey === 'synonym' ? '同义词匹配缺少可用的 LLM 同义词结果。' : '反义词匹配缺少可用的 LLM 反义词结果。')
-  const selected = fillToCount(pairs, 5, context.rng)
+  const questionCount = Math.min(context.testPaperQuestionCount, group.length)
+  const selected = fillToCount(pairs, questionCount, context.rng)
   const rightWords = shuffle(selected.map((item) => item[1]), context.rng)
-  paragraphs.push(paragraph(sectionTitle, { bold: true, size: 12, spaceBefore: 6, spaceAfter: 3 }))
+  paragraphs.push(paragraph(`${sectionNumber}、${englishTitle} ${chineseTitle}（${selected.length}题）`, { bold: true, size: 12, spaceBefore: 6, spaceAfter: 3 }))
   paragraphs.push(paragraph(relationKey === 'synonym'
     ? 'Match each word with its synonym on the right. 将左侧单词与右侧同义词配对。'
     : 'Match each word with its antonym on the right. 将左侧单词与右侧反义词配对。', { size: 11, spaceAfter: 4 }))
   const answers = []
   selected.forEach((pair, index) => {
-    const letter = 'abcde'[rightWords.indexOf(pair[1])] || 'a'
-    paragraphs.push(paragraph(`${index + 1}. ${pair[0]}\t${'abcde'[index]}. ${rightWords[index]}`, {
+    const letter = alphabeticLabel(rightWords.indexOf(pair[1]), true)
+    paragraphs.push(paragraph(`${index + 1}. ${pair[0]}\t${alphabeticLabel(index, true)}. ${rightWords[index]}`, {
       size: 11,
       tabs: [220],
       spaceAfter: 2,
@@ -2485,7 +2506,7 @@ const generateTestPaperMatchSection = (paragraphs, group, context, relationKey, 
 
 const generateTestPaperTrueFalseSection = (paragraphs, groupIndex, context, answersOut) => {
   const chosen = context.choicePlan.get(`九_判断正误:${groupIndex}`) || []
-  paragraphs.push(paragraph('八、T/F: True or False 判断正误（10题）', { bold: true, size: 12, spaceBefore: 6, spaceAfter: 3 }))
+  paragraphs.push(paragraph(`八、T/F: True or False 判断正误（${chosen.length}题）`, { bold: true, size: 12, spaceBefore: 6, spaceAfter: 3 }))
   paragraphs.push(paragraph('Write T (true) or F (false) for each statement. 判断每个句子的正误，正确填写 T，错误填写 F。', { size: 11, spaceAfter: 4 }))
   const answers = []
   chosen.forEach((entry, index) => {
@@ -2518,8 +2539,8 @@ const createFixedTestPaperFiles = async (groups, context) => {
     generateTestPaperSynonymReplacementSection(questionParagraphs, groupIndex, context, answerGroups)
     generateTestPaperMissingLettersSection(questionParagraphs, group, context, answerGroups)
     generateTestPaperSynAntSection(questionParagraphs, group, context, answerGroups)
-    generateTestPaperMatchSection(questionParagraphs, group, context, 'synonym', '六、Synonym Matching 同义词匹配（1组5词）', '六、同义词连线', answerGroups)
-    generateTestPaperMatchSection(questionParagraphs, group, context, 'antonym', '七、Antonym Matching 反义词匹配（1组5词）', '七、反义词连线', answerGroups)
+    generateTestPaperMatchSection(questionParagraphs, group, context, 'synonym', '六', 'Synonym Matching', '同义词匹配', '六、同义词连线', answerGroups)
+    generateTestPaperMatchSection(questionParagraphs, group, context, 'antonym', '七', 'Antonym Matching', '反义词匹配', '七、反义词连线', answerGroups)
     generateTestPaperTrueFalseSection(questionParagraphs, groupIndex, context, answerGroups)
     addTestPaperAnswerSection(questionParagraphs, answerGroups)
 

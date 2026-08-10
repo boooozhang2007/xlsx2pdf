@@ -318,7 +318,7 @@ const buildPreviewModel = (typeKey, rows) => {
 
 const formatJobMode = (job) => (
   job.generationMode === GENERATION_MODE_FIXED_TEST_PAPER
-    ? `${(job.testPaperGroupSizes || [100]).map((size) => size || '全部').join('/')} 词/组 · 抽 ${job.testPaperQuestionCount || DEFAULT_TEST_PAPER_QUESTION_COUNT} 词`
+    ? `${(job.testPaperGroupSizes || [100]).map((size) => size || '全部').join('/')} 词/组 · 每大题抽 ${job.testPaperQuestionCount || DEFAULT_TEST_PAPER_QUESTION_COUNT} 词`
     : `${job.legacyGroupSize || DEFAULT_LEGACY_GROUP_SIZE} 词/组 · 抽 ${job.legacyQuestionCount || DEFAULT_LEGACY_QUESTION_COUNT} 词`
 )
 
@@ -1099,9 +1099,9 @@ function GenWorkspace({ rows, fileName, activeSheetName }) {
                 </div>
               </div>
               <div className="field fullField">
-                <span>每组抽词数（1–500，超过本组词数时全抽）</span>
+                <span>每组每大题抽词数（1–500，超过本组词数时全抽）</span>
                 <input
-                  aria-label="测试卷每组抽词数"
+                  aria-label="测试卷每组每大题抽词数"
                   type="number"
                   min="1"
                   max="500"

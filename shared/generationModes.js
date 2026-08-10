@@ -11,7 +11,7 @@ export const GENERATION_PRESET_OPTIONS = [
   {
     key: GENERATION_PRESET_PRIMARY,
     title: '小学',
-    description: '第一大题含中文 · 测试卷和练习包均按 20/20 全抽',
+    description: '第一大题含中文 · 测试卷每大题及练习包均按 20/20 全抽',
     withChineseTranslation: true,
     legacyGroupSize: 20,
     legacyQuestionCount: 20,
