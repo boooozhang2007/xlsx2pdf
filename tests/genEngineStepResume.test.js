@@ -537,9 +537,11 @@ test('test papers honor the sampled word pool and cover a primary-school 20-word
   assert.equal((wordBankSection.match(/sampleword/g) || []).length, 20)
   assert.equal(new Set(practicedItems).size, 20)
   assert.match(xml, /英语词汇专项测试卷1-30/)
-  assert.equal((xml.match(/（20题）/g) || []).length, 8)
-  assert.match(xml, /六、Synonym Matching 同义词匹配（20题）/)
-  assert.match(xml, /t\. opposite/)
+  assert.equal((xml.match(/（20题）/g) || []).length, 6)
+  assert.match(xml, /六、Synonym Matching 同义词匹配（4组20词，每组5词）/)
+  assert.match(xml, /七、Antonym Matching 反义词匹配（4组20词，每组5词）/)
+  assert.equal((xml.match(/第 4 组/g) || []).length, 2)
+  assert.doesNotMatch(xml, /f\. (?:similar|opposite)/)
 })
 
 test('nine batch variation seeds produce nine unique fixed-test-paper question sets', async () => {

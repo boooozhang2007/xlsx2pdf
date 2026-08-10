@@ -2486,22 +2486,30 @@ const generateTestPaperMatchSection = (paragraphs, group, context, relationKey, 
   if (!pairs.length) throw new Error(relationKey === 'synonym' ? '同义词匹配缺少可用的 LLM 同义词结果。' : '反义词匹配缺少可用的 LLM 反义词结果。')
   const questionCount = Math.min(context.testPaperQuestionCount, group.length)
   const selected = fillToCount(pairs, questionCount, context.rng)
-  const rightWords = shuffle(selected.map((item) => item[1]), context.rng)
-  paragraphs.push(paragraph(`${sectionNumber}、${englishTitle} ${chineseTitle}（${selected.length}题）`, { bold: true, size: 12, spaceBefore: 6, spaceAfter: 3 }))
+  const matchGroups = chunkGroups(selected, 5)
+  paragraphs.push(paragraph(`${sectionNumber}、${englishTitle} ${chineseTitle}（${matchGroups.length}组${selected.length}词，每组5词）`, { bold: true, size: 12, spaceBefore: 6, spaceAfter: 3 }))
   paragraphs.push(paragraph(relationKey === 'synonym'
     ? 'Match each word with its synonym on the right. 将左侧单词与右侧同义词配对。'
     : 'Match each word with its antonym on the right. 将左侧单词与右侧反义词配对。', { size: 11, spaceAfter: 4 }))
-  const answers = []
-  selected.forEach((pair, index) => {
-    const letter = alphabeticLabel(rightWords.indexOf(pair[1]), true)
-    paragraphs.push(paragraph(`${index + 1}. ${pair[0]}\t${alphabeticLabel(index, true)}. ${rightWords[index]}`, {
-      size: 11,
-      tabs: [220],
-      spaceAfter: 2,
-    }))
-    answers.push(`${index + 1}-${letter}`)
+  const answerLines = []
+  matchGroups.forEach((matchGroup, groupIndex) => {
+    const rightWords = shuffle(matchGroup.map((item) => item[1]), context.rng)
+    if (matchGroups.length > 1) {
+      paragraphs.push(paragraph(`第 ${groupIndex + 1} 组`, { bold: true, size: 11, spaceBefore: 3, spaceAfter: 2 }))
+    }
+    const answers = []
+    matchGroup.forEach((pair, index) => {
+      const letter = alphabeticLabel(rightWords.indexOf(pair[1]), true)
+      paragraphs.push(paragraph(`${index + 1}. ${pair[0]}\t${alphabeticLabel(index, true)}. ${rightWords[index]}`, {
+        size: 11,
+        tabs: [220],
+        spaceAfter: 2,
+      }))
+      answers.push(`${index + 1}-${letter}`)
+    })
+    answerLines.push(matchGroups.length > 1 ? `第${groupIndex + 1}组：${answers.join('  ')}` : answers.join('  '))
   })
-  answersOut.push({ title: answerTitle, lines: [answers.join('  ')] })
+  answersOut.push({ title: answerTitle, lines: answerLines })
 }
 
 const generateTestPaperTrueFalseSection = (paragraphs, groupIndex, context, answersOut) => {
