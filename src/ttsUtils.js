@@ -8,10 +8,24 @@ export const DEFAULT_TTS_CONFIG = {
   batchSize: 30,
 }
 
-export const splitWords = (text) => String(text || '')
-  .split(/[\n,，;；\t]+/)
-  .map((item) => item.replace(/^\d+[.)、\s-]*/, '').trim())
-  .filter(Boolean)
+const PART_OF_SPEECH_TOKENS = '(?:vt|vi|v|n|adj|adv|a|ad|pron|prep|conj|num|int|interj|det|aux|pl|art)'
+
+export const splitWords = (text) => {
+  const source = String(text || '')
+    // 先整体清洗“词性 + 变形括号”注释，避免括号里的逗号/分号被当成单词分隔符，
+    // 例如 oversleep v.(overslept ;overslept) 应只算一个词。
+    .replace(new RegExp(`\\s+${PART_OF_SPEECH_TOKENS}\\.\\s*\\([^)]*\\)`, 'gi'), ' ')
+  return source
+    .split(/[\n,，;；\t]+/)
+    .map((item) => {
+      let word = item.trim()
+      word = word.replace(/^\d+[.)、\s-]*/, '')
+      // 清洗“词性 + 中文释义”尾注，例如 share vt. 分享 -> share
+      word = word.replace(new RegExp(`\\s+${PART_OF_SPEECH_TOKENS}\\.(?=\\s*[\\u4e00-\\u9fff])[\\u4e00-\\u9fff，,；;、\\s]*$`, 'gi'), '')
+      return word.trim()
+    })
+    .filter(Boolean)
+}
 
 export const uniqueKeepOrder = (items) => {
   const seen = new Set()

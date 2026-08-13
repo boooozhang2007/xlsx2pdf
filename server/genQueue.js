@@ -13,7 +13,7 @@ import {
 
 const JOB_PREFIX = 'worksheet-jobs'
 const STALE_PROCESSING_MS = Math.max(60_000, Number.parseInt(process.env.GEN_QUEUE_STALE_PROCESSING_MS || '360000', 10) || 360_000)
-const MAX_LIST_JOBS = 40
+const MAX_LIST_JOBS = Math.max(20, Number.parseInt(process.env.GEN_QUEUE_MAX_LIST_JOBS || '1000', 10) || 1000)
 const PROGRESS_WRITE_INTERVAL_MS = Math.max(200, Number.parseInt(process.env.GEN_QUEUE_PROGRESS_WRITE_INTERVAL_MS || '700', 10) || 700)
 const PROGRESS_WRITE_WORD_DELTA = Math.max(1, Number.parseInt(process.env.GEN_QUEUE_PROGRESS_WRITE_WORD_DELTA || '5', 10) || 5)
 const RENDER_PROGRESS_WRITE_INTERVAL_MS = Math.max(PROGRESS_WRITE_INTERVAL_MS, 5000)
