@@ -15,6 +15,11 @@ export const splitWords = (text) => {
     // 先整体清洗“词性 + 变形括号”注释，避免括号里的逗号/分号被当成单词分隔符，
     // 例如 oversleep v.(overslept ;overslept) 应只算一个词。
     .replace(new RegExp(`\\s+${PART_OF_SPEECH_TOKENS}\\.\\s*\\([^)]*\\)`, 'gi'), ' ')
+    // 清洗紧跟单词的“不规则动词变形”括号，例如 mean(meant,meant) -> mean。
+    // 只处理无空格紧跟、括号内为纯英文词形列表的情况，避免误伤 go along (the street)。
+    .replace(/[A-Za-z][A-Za-z'-]*\([^()]*\)/g, (match) => (
+      /[\u4e00-\u9fff]/.test(match) ? match : match.replace(/\([^()]*\)$/, '')
+    ))
   return source
     .split(/[\n,，;；\t]+/)
     .map((item) => {

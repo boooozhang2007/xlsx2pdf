@@ -15,3 +15,10 @@ test('splitWords 清理词性 + 中文释义尾注', () => {
   assert.deepEqual(splitWords('share vt. 分享'), ['share'])
   assert.deepEqual(splitWords('energy n. 精力；力量'), ['energy', '力量'])
 })
+
+test('splitWords 剥离紧跟单词的不规则动词变形括号，但保留释义短语括号', () => {
+  assert.deepEqual(splitWords('mean(meant,meant)'), ['mean'])
+  assert.deepEqual(splitWords('shave(shaved,shaved/shaven)'), ['shave'])
+  assert.deepEqual(splitWords('go along (the street)'), ['go along (the street)'])
+  assert.deepEqual(splitWords('call (sb) back'), ['call (sb) back'])
+})
