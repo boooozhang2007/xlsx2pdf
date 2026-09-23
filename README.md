@@ -2,6 +2,8 @@
 
 一个可部署到 Vercel 的网页控制台，用浏览器本地资源把英汉 XLSX 词表转换为 PDF，并提供受密码保护的单词朗读音频生成板块。
 
+> 本文档面向使用者与部署者。架构、算法、状态机与数据契约等实现细节见 [`docs/技术文档.md`](docs/技术文档.md)。
+
 ## 功能
 
 ### XLSX 转 PDF
@@ -29,7 +31,7 @@
 
 - `/gen` 进入受密码保护的练习生成板块
 - 复用主页面当前 XLSX 读表设置与已解析的英汉词表
-- 支持一次性勾选全部 11 个题型并导出 ZIP
+- 支持一次提交 1–20 份独立成品并导出 ZIP；生成模式分固定测试卷（8 个大题）与练习包（11 个题型分文件）两种
 - 生成请求会先提交到服务端队列，刷新页面后仍可继续查看任务状态与下载结果
 - 浏览器只负责提交和查询任务；Vercel Workflow 在服务端执行，关闭浏览器后仍会继续运行，并能从 R2 中恢复被中断的任务
 - 队列状态与 ZIP 成品依赖现有 R2 配置持久化
@@ -81,9 +83,11 @@ GEN_QUEUE_PROGRESS_WRITE_INTERVAL_MS=可选，队列进度写回节流间隔，�
 GEN_QUEUE_PROGRESS_WRITE_WORD_DELTA=可选，词条进度累计到多少再写回，默认 5
 GEN_QUEUE_CANCELLATION_POLL_INTERVAL_MS=可选，取消状态轮询间隔，默认 300
 GEN_QUEUE_LLM_ENTRIES_PER_STEP=可选，每个 Workflow step、每个 LLM 阶段最多处理的未缓存词条数，默认 100；较小值更不容易触发 Hobby Function 单次执行时限
-GEN_QUEUE_LLM_BATCH_ROUNDS_PER_STEP=可选，每个 Workflow step 最多连续执行的 LLM 请求轮数，默认 8；任务降级到小批次/低并发时会自动缩小单步工作量，避免超时后等待失联接管
+GEN_QUEUE_LLM_BATCH_ROUNDS_PER_STEP=可选，每个 Workflow step 最多连续执行的 LLM 请求轮数，默认 3；任务降级到小批次/低并发时会自动缩小单步工作量，避免超时后等待失联接管
 GEN_QUEUE_MAX_INTERNAL_WAIT_MS=可选，后台队列单次自动等待下次重试的最长时间，默认 45000
 GEN_QUEUE_STALE_PROCESSING_MS=可选，执行器中断后允许其他实例恢复任务的等待时间，默认 360000（6 分钟）
+GEN_QUEUE_MAX_LIST_JOBS=可选，任务列表单次返回的最大条数，默认 1000
+GEN_QUEUE_LIST_READ_CONCURRENCY=可选，任务列表读取 job.json 的并发上限，默认 12；调低可缓解 R2 限流
 R2_ENDPOINT=https://<accountid>.r2.cloudflarestorage.com
 R2_BUCKET=bucket 名称
 R2_ACCESS_KEY_ID=R2 S3 API access key

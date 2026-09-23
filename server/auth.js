@@ -98,12 +98,14 @@ export const comparePassword = (password) => timingSafeEqual(password, getEnv('T
 
 export const signShare = (payload) => sign(payload, getEnv('SHARE_SIGNING_SECRET'))
 
-export const createShareToken = ({ key, expiresAt }) => {
-  const payload = Buffer.from(JSON.stringify({ key, expiresAt }), 'utf8').toString('base64url')
+export const createShareToken = ({ key, expiresAt, purpose = 'listen' }) => {
+  const payload = Buffer.from(JSON.stringify({ key, expiresAt, purpose }), 'utf8').toString('base64url')
   return `${payload}.${signShare(payload)}`
 }
 
-export const verifyShareToken = (token) => {
+// allowLegacy：放行没有 purpose 字段的历史 token。只应给播放校验开启——本次修复前发出的
+// 二维码链接都是这种形态，而上传凭证没有历史包袱，必须严格匹配 purpose。
+export const verifyShareToken = (token, { purpose, allowLegacy = false } = {}) => {
   if (!token || typeof token !== 'string') return null
   const index = token.lastIndexOf('.')
   if (index === -1) return null
@@ -113,6 +115,7 @@ export const verifyShareToken = (token) => {
   try {
     const data = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'))
     if (!data?.key || !data?.expiresAt || Number(data.expiresAt) < Date.now()) return null
+    if (purpose && data.purpose !== purpose && !(allowLegacy && !data.purpose)) return null
     return data
   } catch {
     return null

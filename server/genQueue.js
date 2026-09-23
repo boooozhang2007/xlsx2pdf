@@ -26,6 +26,7 @@ const WORKFLOW_STEP_SOFT_LIMIT_MS = Math.max(
   Number.parseInt(process.env.GEN_QUEUE_WORKFLOW_STEP_SOFT_LIMIT_MS || '180000', 10) || 180_000,
 )
 const MAX_INTERNAL_QUEUE_WAIT_MS = Math.max(1000, Number.parseInt(process.env.GEN_QUEUE_MAX_INTERNAL_WAIT_MS || '45000', 10) || 45000)
+const LIST_READ_CONCURRENCY = Math.max(1, Number.parseInt(process.env.GEN_QUEUE_LIST_READ_CONCURRENCY || '12', 10) || 12)
 const MIN_RATE_LIMIT_DELAY_MS = Math.max(1000, Number.parseInt(process.env.VIVI_LLM_RATE_LIMIT_MIN_DELAY_MS || '10000', 10) || 10000)
 const MAX_RATE_LIMIT_DELAY_MS = Math.max(MIN_RATE_LIMIT_DELAY_MS, Number.parseInt(process.env.VIVI_LLM_RATE_LIMIT_MAX_DELAY_MS || '120000', 10) || 120000)
 const MAX_RATE_LIMIT_REQUEUES = Math.max(1, Number.parseInt(process.env.VIVI_LLM_RATE_LIMIT_MAX_REQUEUES || '8', 10) || 8)
@@ -59,6 +60,9 @@ const jobStateKey = (jobId) => `${jobPrefix(jobId)}/job.json`
 const jobPayloadKey = (jobId) => `${jobPrefix(jobId)}/payload.json`
 const jobArtifactKey = (jobId) => `${jobPrefix(jobId)}/artifact.zip`
 const jobCacheKey = (jobId) => `${jobPrefix(jobId)}/cache.json`
+// 指纹占位对象：用 IfNoneMatch 原子抢占，堵住「扫描重复任务 → 写入新任务」之间的竞态窗口。
+// 占位不设 TTL——是否算重复由持有任务的实时状态决定，持有者进入终态后下次同指纹提交会顺手清理。
+const jobLockKey = (fingerprint) => `${JOB_PREFIX}/locks/${fingerprint}.json`
 const normalizeGenerationMode = (mode) => (mode === GENERATION_MODE_LEGACY_ZIP ? GENERATION_MODE_LEGACY_ZIP : GENERATION_MODE_FIXED_TEST_PAPER)
 
 const buildJobFingerprint = ({
@@ -302,6 +306,23 @@ const writeOwnedJob = async (job, etag) => {
 }
 
 const readLatestJobState = async (jobId) => readJob(jobId).catch(() => null)
+
+// 执行器改写任务状态前的最后一道关卡：重新取 ETag、确认任务仍归本执行器所有。
+// 少了这一步，用户的取消会被紧随其后的重试入队覆盖回 queued，任务继续消耗 LLM 配额。
+// 返回 null 表示「没写成，也不是错误」——调用方应当直接放弃本次状态变更。
+const writeJobTransitionIfOwned = async (jobId, buildPatch, { allowStatuses } = {}) => {
+  const snapshot = await readJobWithMetadata(jobId).catch(() => null)
+  const current = snapshot?.value
+  if (!current) return null
+  if (allowStatuses && !allowStatuses.includes(current.status)) return null
+  try {
+    const settled = await writeOwnedJob({ ...current, ...buildPatch(current) }, snapshot.etag)
+    return settled.job
+  } catch (error) {
+    if (error?.code === 'JOB_OWNERSHIP_LOST') return null
+    throw error
+  }
+}
 
 const getLlmRetryProgressMark = (job = {}, { includeStage = false } = {}) => {
   const progress = job.progress || {}
@@ -569,18 +590,50 @@ const tuneLlmRuntimeAfterValidationFailure = (job = {}) => {
 const settleStaleCanceledJobs = async (jobs) => Promise.all((jobs || []).map(async (job) => {
   if (job?.status !== 'canceling') return job
   if (now() - Number(job.updatedAt || 0) <= STALE_PROCESSING_MS) return job
-  return writeJob({
-    ...job,
-    status: 'canceled',
-    canceledAt: job.canceledAt || now(),
-    error: '',
-    progress: {
-      ...(job.progress || createProgress(buildTotalSteps(job.questionTypes || [], job.wordCount || 0, job.generationMode), job.wordCount || 0)),
-      currentStep: '已取消',
-      message: '任务已取消。',
-    },
-  })
+
+  // 列表是只读路径，收敛前必须重新取 ETag 做条件写入，否则会覆盖仍在刷新进度的执行器状态。
+  const snapshot = await readJobWithMetadata(job.id).catch(() => null)
+  if (!snapshot?.value || snapshot.value.status !== 'canceling') return job
+  if (now() - Number(snapshot.value.updatedAt || 0) <= STALE_PROCESSING_MS) return job
+
+  try {
+    const settled = await writeOwnedJob({
+      ...snapshot.value,
+      status: 'canceled',
+      canceledAt: snapshot.value.canceledAt || now(),
+      nextAttemptAt: 0,
+      error: '',
+      progress: {
+        ...(snapshot.value.progress || createProgress(
+          buildTotalSteps(snapshot.value.questionTypes || [], snapshot.value.wordCount || 0, snapshot.value.generationMode),
+          snapshot.value.wordCount || 0,
+        )),
+        currentStep: '已取消',
+        message: '任务已取消。',
+      },
+    }, snapshot.etag)
+    return settled.job
+  } catch (error) {
+    if (error?.code === 'JOB_OWNERSHIP_LOST') return job
+    throw error
+  }
 }))
+
+// 有界并发映射：任务列表可能包含上千个 job.json，一次性并发读取会触发 R2 限流。
+export const mapWithConcurrency = async (items, limit, worker) => {
+  const list = items || []
+  const results = new Array(list.length)
+  let cursor = 0
+  const runners = Array.from({ length: Math.min(limit, list.length) }, async () => {
+    while (cursor < list.length) {
+      const index = cursor
+      cursor += 1
+      results[index] = await worker(list[index], index)
+    }
+  })
+  await Promise.all(runners)
+  return results
+}
 
 const listJobStates = async ({ includeAll = false } = {}) => {
   const objects = await listObjects({ prefix: `${JOB_PREFIX}/` })
@@ -596,7 +649,7 @@ const listJobStates = async ({ includeAll = false } = {}) => {
   const jobKeys = objects
     .map((item) => item.Key)
     .filter((key) => key?.endsWith('/job.json'))
-  const jobs = await Promise.all(jobKeys.map((key) => getObjectJson({ key }).catch(() => null)))
+  const jobs = await mapWithConcurrency(jobKeys, LIST_READ_CONCURRENCY, (key) => getObjectJson({ key }).catch(() => null))
   const normalizedJobs = (await settleStaleCanceledJobs(jobs.filter(Boolean)))
     .map((job) => ({
       ...job,
@@ -854,19 +907,17 @@ const processSingleJob = async (job) => {
       }
     }
     if (error?.code === 'JOB_CANCELED') {
-      const latestJob = await readLatestJobState(job.id)
-      await writeJob({
-        ...(latestJob || liveJob),
+      await writeJobTransitionIfOwned(job.id, (current) => ({
         status: 'canceled',
-        canceledAt: now(),
+        canceledAt: current.canceledAt || now(),
         nextAttemptAt: 0,
         error: '',
         progress: {
-          ...((latestJob && latestJob.progress) || liveJob.progress || createProgress(buildTotalSteps((latestJob && latestJob.questionTypes) || job.questionTypes || [], (latestJob && latestJob.wordCount) || job.wordCount || 0, (latestJob && latestJob.generationMode) || job.generationMode), (latestJob && latestJob.wordCount) || job.wordCount || 0)),
+          ...(current.progress || resetJobProgress(current)),
           currentStep: '已取消',
           message: '任务已取消。',
         },
-      })
+      }))
       await deleteObject({ key: jobCacheKey(job.id) }).catch(() => {})
       return
     }
@@ -890,8 +941,7 @@ const processSingleJob = async (job) => {
       const waitingMessage = prolongedWait
         ? `LLM 网关仍不可用，任务和进度已保留，将在 ${Math.max(1, Math.ceil(delayMs / 60000))} 分钟后继续重试（连续失败 ${retryCount + 1} 轮）。`
         : `LLM 请求暂时失败，${Math.max(1, Math.ceil(delayMs / 1000))} 秒后从已保存进度继续；${runtimeUpdate.reason}。${errorDetail ? ` 原因：${errorDetail}` : ''}`
-      const queuedRetryJob = await writeJob({
-        ...retryBaseJob,
+      const queuedRetryJob = await writeJobTransitionIfOwned(job.id, (current) => ({
         status: 'queued',
         error: '',
         lastLlmError: errorDetail,
@@ -903,11 +953,12 @@ const processSingleJob = async (job) => {
         llmRequestRetryProgressMark: progressMark,
         nextAttemptAt,
         progress: {
-          ...(retryBaseJob.progress || resetJobProgress(retryBaseJob)),
+          ...(current.progress || resetJobProgress(current)),
           currentStep: '等待 LLM 网关恢复',
           message: waitingMessage,
         },
-      })
+      }), { allowStatuses: ['processing'] })
+      if (!queuedRetryJob) return
       await writeJsonObject({
         key: jobPayloadKey(job.id),
         value: {
@@ -923,18 +974,17 @@ const processSingleJob = async (job) => {
     if (error?.code === 'LLM_GENERATION_INCOMPLETE') {
       const latestJobForRetry = await readLatestJobState(job.id)
       if (latestJobForRetry && ['canceling', 'canceled'].includes(latestJobForRetry.status)) {
-        await writeJob({
-          ...latestJobForRetry,
+        await writeJobTransitionIfOwned(job.id, (current) => ({
           status: 'canceled',
-          canceledAt: latestJobForRetry.canceledAt || now(),
+          canceledAt: current.canceledAt || now(),
           nextAttemptAt: 0,
           error: '',
           progress: {
-            ...(latestJobForRetry.progress || createProgress(buildTotalSteps(latestJobForRetry.questionTypes || [], latestJobForRetry.wordCount || 0, latestJobForRetry.generationMode), latestJobForRetry.wordCount || 0)),
+            ...(current.progress || resetJobProgress(current)),
             currentStep: '已取消',
             message: '任务已取消。',
           },
-        })
+        }))
         await deleteObject({ key: jobCacheKey(job.id) }).catch(() => {})
         return
       }
@@ -951,8 +1001,7 @@ const processSingleJob = async (job) => {
       const waitingMessage = retryCount >= MAX_VALIDATION_REQUEUES
         ? `LLM 仍有条目未通过校验，缓存和进度已保留，${Math.max(1, Math.ceil(delayMs / 1000))} 秒后继续补跑（连续 ${retryCount + 1} 轮）；${runtimeUpdate.reason}。`
         : `LLM 返回内容未通过校验，${Math.max(1, Math.ceil(delayMs / 1000))} 秒后自动补跑未完成条目；${runtimeUpdate.reason}。`
-      const queuedRetryJob = await writeJob({
-        ...retryBaseJob,
+      const queuedRetryJob = await writeJobTransitionIfOwned(job.id, (current) => ({
         status: 'queued',
         error: '',
         llmModel: runtimeUpdate.llmModel,
@@ -963,11 +1012,12 @@ const processSingleJob = async (job) => {
         llmValidationRetryProgressMark: progressMark,
         nextAttemptAt,
         progress: {
-          ...(retryBaseJob.progress || resetJobProgress(retryBaseJob)),
+          ...(current.progress || resetJobProgress(current)),
           currentStep: '等待题面补跑',
           message: waitingMessage,
         },
-      })
+      }), { allowStatuses: ['processing'] })
+      if (!queuedRetryJob) return
       await writeJsonObject({
         key: jobPayloadKey(job.id),
         value: {
@@ -988,18 +1038,17 @@ const processSingleJob = async (job) => {
     if (error?.code === 'LLM_RATE_LIMITED') {
       const latestJobForRetry = await readLatestJobState(job.id)
       if (latestJobForRetry && ['canceling', 'canceled'].includes(latestJobForRetry.status)) {
-        await writeJob({
-          ...latestJobForRetry,
+        await writeJobTransitionIfOwned(job.id, (current) => ({
           status: 'canceled',
-          canceledAt: latestJobForRetry.canceledAt || now(),
+          canceledAt: current.canceledAt || now(),
           nextAttemptAt: 0,
           error: '',
           progress: {
-            ...(latestJobForRetry.progress || createProgress(buildTotalSteps(latestJobForRetry.questionTypes || [], latestJobForRetry.wordCount || 0, latestJobForRetry.generationMode), latestJobForRetry.wordCount || 0)),
+            ...(current.progress || resetJobProgress(current)),
             currentStep: '已取消',
             message: '任务已取消。',
           },
-        })
+        }))
         await deleteObject({ key: jobCacheKey(job.id) }).catch(() => {})
         return
       }
@@ -1015,8 +1064,7 @@ const processSingleJob = async (job) => {
       const waitingMessage = retryCount >= MAX_RATE_LIMIT_REQUEUES
         ? `LLM 持续限流，任务和进度已保留，将在 ${Math.max(1, Math.ceil(delayMs / 1000))} 秒后继续重试（连续限流 ${retryCount + 1} 轮）。`
         : `LLM 触发限流，${Math.max(1, Math.ceil(delayMs / 1000))} 秒后自动重试；${runtimeUpdate.reason}。`
-      const queuedRetryJob = await writeJob({
-        ...retryBaseJob,
+      const queuedRetryJob = await writeJobTransitionIfOwned(job.id, (current) => ({
         status: 'queued',
         error: '',
         llmModel: runtimeUpdate.llmModel,
@@ -1027,11 +1075,12 @@ const processSingleJob = async (job) => {
         llmRateLimitRetryProgressMark: progressMark,
         nextAttemptAt,
         progress: {
-          ...(retryBaseJob.progress || resetJobProgress(retryBaseJob)),
+          ...(current.progress || resetJobProgress(current)),
           currentStep: '等待限流恢复',
           message: waitingMessage,
         },
-      })
+      }), { allowStatuses: ['processing'] })
+      if (!queuedRetryJob) return
       await writeJsonObject({
         key: jobPayloadKey(job.id),
         value: {
@@ -1049,22 +1098,23 @@ const processSingleJob = async (job) => {
       })
       return
     }
-    await writeJob({
-      ...liveJob,
+    // 只在任务仍归本执行器所有时记录失败：若用户已取消或运维已接管，交由那一方决定最终状态。
+    await writeJobTransitionIfOwned(job.id, (current) => ({
       status: 'failed',
       failedAt: now(),
       nextAttemptAt: 0,
       error: error.message || '生成失败。',
       progress: {
-        ...(liveJob.progress || createProgress(buildTotalSteps(latestJob.questionTypes || [], latestJob.wordCount || 0, latestJob.generationMode), latestJob.wordCount || 0)),
+        ...(current.progress || createProgress(buildTotalSteps(current.questionTypes || [], current.wordCount || 0, current.generationMode), current.wordCount || 0)),
         message: error.message || '生成失败。',
       },
-    })
+    }), { allowStatuses: ['processing'] })
   }
 }
 
 export const processWorksheetJobAttempt = async (jobId) => {
-  let job = await readJob(jobId)
+  const initialSnapshot = await readJobWithMetadata(jobId).catch(() => null)
+  let job = initialSnapshot?.value
   if (!job) {
     const error = new Error('未找到对应任务。')
     error.statusCode = 404
@@ -1073,18 +1123,24 @@ export const processWorksheetJobAttempt = async (jobId) => {
 
   const currentTime = now()
   if (job.status === 'canceling' && currentTime - Number(job.updatedAt || 0) > STALE_PROCESSING_MS) {
-    job = await writeJob({
-      ...job,
-      status: 'canceled',
-      canceledAt: job.canceledAt || currentTime,
-      nextAttemptAt: 0,
-      error: '',
-      progress: {
-        ...(job.progress || resetJobProgress(job)),
-        currentStep: '已取消',
-        message: '任务已取消。',
-      },
-    })
+    try {
+      const settled = await writeOwnedJob({
+        ...job,
+        status: 'canceled',
+        canceledAt: job.canceledAt || currentTime,
+        nextAttemptAt: 0,
+        error: '',
+        progress: {
+          ...(job.progress || resetJobProgress(job)),
+          currentStep: '已取消',
+          message: '任务已取消。',
+        },
+      }, initialSnapshot.etag)
+      job = settled.job
+    } catch (error) {
+      if (error?.code !== 'JOB_OWNERSHIP_LOST') throw error
+      job = await readJob(jobId)
+    }
   }
 
   if (TERMINAL_STATUSES.has(job.status)) return { ...summarizeJob(job), resumeAt: 0 }
@@ -1103,20 +1159,63 @@ export const processWorksheetJobAttempt = async (jobId) => {
 }
 
 export const failWorksheetJobStart = async (jobId, message) => {
-  const job = await readJob(jobId).catch(() => null)
+  const snapshot = await readJobWithMetadata(jobId).catch(() => null)
+  const job = snapshot?.value
   if (!job || job.status !== 'queued') return job ? summarizeJob(job) : null
-  return summarizeJob(await writeJob({
-    ...job,
-    status: 'failed',
-    failedAt: now(),
-    nextAttemptAt: 0,
-    error: message || 'Workflow 启动失败。',
-    progress: {
-      ...(job.progress || resetJobProgress(job)),
-      currentStep: 'Workflow 启动失败',
-      message: message || 'Workflow 启动失败。',
-    },
-  }))
+  try {
+    const failed = await writeOwnedJob({
+      ...job,
+      status: 'failed',
+      failedAt: now(),
+      nextAttemptAt: 0,
+      error: message || 'Workflow 启动失败。',
+      progress: {
+        ...(job.progress || resetJobProgress(job)),
+        currentStep: 'Workflow 启动失败',
+        message: message || 'Workflow 启动失败。',
+      },
+    }, snapshot.etag)
+    return summarizeJob(failed.job)
+  } catch (error) {
+    if (error?.code !== 'JOB_OWNERSHIP_LOST') throw error
+    const latest = await readJob(jobId).catch(() => null)
+    return latest ? summarizeJob(latest) : null
+  }
+}
+
+const readJobLock = async (fingerprint) => getObjectJson({ key: jobLockKey(fingerprint) }).catch(() => null)
+
+const releaseJobLock = async (fingerprint, jobId) => {
+  const lock = await readJobLock(fingerprint)
+  if (lock?.jobId && lock.jobId !== jobId) return
+  await deleteObject({ key: jobLockKey(fingerprint) }).catch(() => null)
+}
+
+// 返回 null 表示抢占成功；返回任务摘要表示同指纹任务已经在跑，调用方应直接复用它。
+const acquireJobLock = async (fingerprint, jobId) => {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      await putObject({
+        key: jobLockKey(fingerprint),
+        body: Buffer.from(JSON.stringify({ jobId, createdAt: now() })),
+        contentType: 'application/json; charset=utf-8',
+        ifNoneMatch: '*',
+      })
+      return null
+    } catch (error) {
+      const statusCode = error?.$metadata?.httpStatusCode
+      if (statusCode !== 412 && error?.name !== 'PreconditionFailed') throw error
+    }
+
+    const lock = await readJobLock(fingerprint)
+    if (!lock?.jobId) continue
+    if (lock.jobId === jobId) return null
+
+    const holder = await readJob(lock.jobId).catch(() => null)
+    if (holder && ['queued', 'processing'].includes(holder.status)) return summarizeJob(holder)
+    await deleteObject({ key: jobLockKey(fingerprint) }).catch(() => null)
+  }
+  return null
 }
 
 export const submitWorksheetJob = async ({
@@ -1192,6 +1291,12 @@ export const submitWorksheetJob = async ({
   }
 
   const id = crypto.randomUUID()
+
+  if (!allowDuplicate) {
+    const locked = await acquireJobLock(fingerprint, id)
+    if (locked) return { job: locked, created: false }
+  }
+
   const submittedAt = now()
   const totalSteps = buildTotalSteps(questionTypes, Array.isArray(rows) ? rows.length : 0, normalizedMode, normalizedTestPaperGroupSizes)
   const job = {
@@ -1234,33 +1339,38 @@ export const submitWorksheetJob = async ({
     downloadSize: 0,
   }
 
-  await Promise.all([
-    writeJsonObject({
-      key: jobPayloadKey(id),
-      value: {
-        rows,
-        fileName: job.fileName,
-        questionTypes,
-        generationMode: job.generationMode,
-        legacyGroupSize: job.legacyGroupSize,
-        legacyQuestionCount: job.legacyQuestionCount,
-        testPaperGroupSizes: job.testPaperGroupSizes,
-        testPaperQuestionCount: job.testPaperQuestionCount,
-        withChineseTranslation: job.withChineseTranslation,
-        llmModel: job.llmModel,
-        llmFallbackModels: job.llmFallbackModels,
-        llmBatchSize: job.llmBatchSize,
-        llmConcurrency: job.llmConcurrency,
-        variationSeed: job.variationSeed,
-        exportSuffix: job.exportSuffix,
-        cacheSourceJobIds: job.cacheSourceJobIds,
-      },
-    }),
-    writeJsonObject({
-      key: jobStateKey(id),
-      value: job,
-    }),
-  ])
+  try {
+    await Promise.all([
+      writeJsonObject({
+        key: jobPayloadKey(id),
+        value: {
+          rows,
+          fileName: job.fileName,
+          questionTypes,
+          generationMode: job.generationMode,
+          legacyGroupSize: job.legacyGroupSize,
+          legacyQuestionCount: job.legacyQuestionCount,
+          testPaperGroupSizes: job.testPaperGroupSizes,
+          testPaperQuestionCount: job.testPaperQuestionCount,
+          withChineseTranslation: job.withChineseTranslation,
+          llmModel: job.llmModel,
+          llmFallbackModels: job.llmFallbackModels,
+          llmBatchSize: job.llmBatchSize,
+          llmConcurrency: job.llmConcurrency,
+          variationSeed: job.variationSeed,
+          exportSuffix: job.exportSuffix,
+          cacheSourceJobIds: job.cacheSourceJobIds,
+        },
+      }),
+      writeJsonObject({
+        key: jobStateKey(id),
+        value: job,
+      }),
+    ])
+  } catch (error) {
+    if (!allowDuplicate) await releaseJobLock(fingerprint, id)
+    throw error
+  }
 
   return { job: summarizeJob(job), created: true }
 }
@@ -1583,34 +1693,19 @@ export const prepareWorksheetBatchWorkflowMigration = async (batchId, { resetRun
 
 export const getWorksheetJob = async (jobId) => summarizeJob(await readJob(jobId))
 
-export const cancelWorksheetJob = async (jobId) => {
-  const job = await readJob(jobId)
-  if (!job) {
-    const error = new Error('未找到对应任务。')
-    error.statusCode = 404
-    throw error
+const buildCancelPatch = (job, currentTime) => (job.status === 'queued'
+  ? {
+    status: 'canceled',
+    canceledAt: currentTime,
+    nextAttemptAt: 0,
+    error: '',
+    progress: {
+      ...(job.progress || createProgress(buildTotalSteps(job.questionTypes || [], job.wordCount || 0, job.generationMode), job.wordCount || 0)),
+      currentStep: '已取消',
+      message: '任务已取消。',
+    },
   }
-
-  if (!CANCELABLE_STATUSES.has(job.status)) return summarizeJob(job)
-
-  if (job.status === 'queued') {
-    const canceledJob = await writeJob({
-      ...job,
-      status: 'canceled',
-      canceledAt: now(),
-      nextAttemptAt: 0,
-      error: '',
-      progress: {
-        ...(job.progress || createProgress(buildTotalSteps(job.questionTypes || [], job.wordCount || 0, job.generationMode), job.wordCount || 0)),
-        currentStep: '已取消',
-        message: '任务已取消。',
-      },
-    })
-    return summarizeJob(canceledJob)
-  }
-
-  const cancelingJob = await writeJob({
-    ...job,
+  : {
     status: 'canceling',
     nextAttemptAt: 0,
     error: '',
@@ -1620,7 +1715,31 @@ export const cancelWorksheetJob = async (jobId) => {
       message: '正在停止任务，请等待最后一次调用完成…',
     },
   })
-  return summarizeJob(cancelingJob)
+
+export const cancelWorksheetJob = async (jobId) => {
+  // 优先条件写入，避免用略旧的快照覆盖执行器刚刷新的进度；反复被抢占时再退回无条件写入，
+  // 因为取消是用户明确意图，必须落地。
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const snapshot = await readJobWithMetadata(jobId).catch(() => null)
+    const job = snapshot?.value
+    if (!job) {
+      const error = new Error('未找到对应任务。')
+      error.statusCode = 404
+      throw error
+    }
+    if (!CANCELABLE_STATUSES.has(job.status)) return summarizeJob(job)
+
+    try {
+      const canceled = await writeOwnedJob({ ...job, ...buildCancelPatch(job, now()) }, snapshot.etag)
+      return summarizeJob(canceled.job)
+    } catch (error) {
+      if (error?.code !== 'JOB_OWNERSHIP_LOST') throw error
+    }
+  }
+
+  const latest = await readJob(jobId)
+  if (!latest || !CANCELABLE_STATUSES.has(latest.status)) return summarizeJob(latest)
+  return summarizeJob(await writeJob({ ...latest, ...buildCancelPatch(latest, now()) }))
 }
 
 export const deleteWorksheetJob = async (jobId) => {

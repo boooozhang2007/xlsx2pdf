@@ -12,4 +12,8 @@ __pycache__/
 *.pyc
 /.swc
 /.output
+/.nitro
 .reasonix/
+coverage/
+test-results/
+playwright-report/

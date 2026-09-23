@@ -857,8 +857,8 @@ test('legacy answers flow between groups in aligned ten-column rows', async () =
   const xml = findStoredZipEntry(docx, (name) => name === 'word/document.xml').toString('utf8')
   const answerTables = xml.match(/<w:tbl>[\s\S]*?<\/w:tbl>/g) || []
 
-  assert.match(xml, /第1组 五 同义反义辨析 答案/)
-  assert.match(xml, /第2组 五 同义反义辨析 答案/)
+  assert.match(xml, /第1组 六 同义反义辨析 答案/)
+  assert.match(xml, /第2组 六 同义反义辨析 答案/)
   assert.doesNotMatch(xml, /<w:pageBreakBefore\/>/)
   assert.equal(answerTables.length, 2)
   answerTables.forEach((answerTable) => {
@@ -1171,4 +1171,77 @@ test('rendering starts only after cached LLM preparation has completed', async (
   assert.ok(events.slice(0, renderStartIndex).some((step) => String(step).startsWith('预热 LLM')))
   assert.equal(events[renderStartIndex + 1], '生成测试卷')
   assert.ok(result.buffer.length > 0)
+})
+
+test('练习包各题型的答案块编号与题目编号一致', async () => {
+  const { generateWorksheetArchive } = await import('../server/genEngine.js')
+  // 四_乱序拼写与五_缺字母填空都不依赖 LLM，可直接离线生成用于编号回归。
+  const words = ['cheating', 'shareable', 'payphone', 'energetic', 'hardship', 'moveable', 'sadness', 'uplifting']
+  const rows = words.map((english, index) => ({ english, chinese: `词义${index + 1}` }))
+
+  const result = await generateWorksheetArchive({
+    rows,
+    fileName: '编号一致性测试.xlsx',
+    generationMode: 'legacy_zip',
+    questionTypes: ['四_乱序拼写', '五_缺字母填空'],
+    legacyQuestionCount: 4,
+  })
+
+  const readQuestionXml = (questionKey) => {
+    const docx = findStoredZipEntry(result.buffer, (name) => name.endsWith(`/${questionKey}.docx`))
+    assert.ok(docx, `缺少 ${questionKey}.docx`)
+    return findStoredZipEntry(docx, (name) => name === 'word/document.xml').toString('utf8')
+  }
+  const readAnswerXml = (questionKey) => {
+    const docx = findStoredZipEntry(result.buffer, (name) => name.endsWith(`/${questionKey}答案.docx`))
+    assert.ok(docx, `缺少 ${questionKey}答案.docx`)
+    return findStoredZipEntry(docx, (name) => name === 'word/document.xml').toString('utf8')
+  }
+
+  assert.match(readQuestionXml('四_乱序拼写'), /四\. Word Scramble/)
+  assert.match(readAnswerXml('四_乱序拼写'), /第1组 四 乱序拼写 答案/)
+
+  assert.match(readQuestionXml('五_缺字母填空'), /五\. Missing Letters/)
+  assert.match(readAnswerXml('五_缺字母填空'), /第1组 五 缺字母填空 答案/)
+  // 缺字母填空曾被误编为「四」，与乱序拼写撞号。
+  assert.doesNotMatch(readAnswerXml('五_缺字母填空'), /第1组 四 缺字母填空 答案/)
+})
+
+test('有界并发读取不会同时发起超过上限的请求', async () => {
+  const { mapWithConcurrency } = await import('../server/genQueue.js')
+  const items = Array.from({ length: 25 }, (_, index) => index)
+  let inFlight = 0
+  let peak = 0
+
+  const results = await mapWithConcurrency(items, 4, async (item) => {
+    inFlight += 1
+    peak = Math.max(peak, inFlight)
+    await new Promise((resolve) => setTimeout(resolve, 2))
+    inFlight -= 1
+    return item * 2
+  })
+
+  // 结果必须按下标对齐，且并发峰值不超过上限。
+  assert.deepEqual(results, items.map((item) => item * 2))
+  assert.ok(peak <= 4, `并发峰值 ${peak} 超过上限`)
+})
+
+test('有界并发在空数组与单元素时保持结果顺序', async () => {
+  const { mapWithConcurrency } = await import('../server/genQueue.js')
+  assert.deepEqual(await mapWithConcurrency([], 8, async () => 1), [])
+  assert.deepEqual(await mapWithConcurrency(['only'], 8, async (item) => item.toUpperCase()), ['ONLY'])
+})
+
+test('队列执行器内部不使用无条件写，避免覆盖取消执行器的状态', async () => {
+  const fs = await import('node:fs/promises')
+  const source = await fs.readFile(new URL('../server/genQueue.js', import.meta.url), 'utf8')
+  const start = source.indexOf('const processSingleJob = async (job)')
+  const end = source.indexOf('export const processWorksheetJobAttempt')
+  assert.ok(start > 0 && end > start, '未能定位 processSingleJob 源码区间')
+
+  const body = source.slice(start, end)
+  // 执行器共享任务所有权：状态变更必须走条件写（writeOwnedJob / writeJobTransitionIfOwned），
+  // 否则重试入队会把用户的取消覆盖回 queued，任务继续消耗 LLM 配额。
+  const unconditional = body.match(/(?<![A-Za-z])writeJob\(/g) || []
+  assert.equal(unconditional.length, 0, `执行器内仍有 ${unconditional.length} 处无条件 writeJob 调用`)
 })

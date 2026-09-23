@@ -840,6 +840,7 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
           body: JSON.stringify({
             key: start.audio[index].key,
             contentType: 'audio/mpeg',
+            uploadToken: start.uploadToken,
             base64: await blobToBase64(unit.blob),
           }),
         })
@@ -895,6 +896,7 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
         body: JSON.stringify({
           key: start.manifest.key,
           contentType: 'application/json; charset=utf-8',
+          uploadToken: start.uploadToken,
           text: JSON.stringify(manifest),
         }),
       })

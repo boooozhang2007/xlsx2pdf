@@ -1,6 +1,7 @@
 import crypto from 'node:crypto'
 import { createShareToken, readJsonBody, rejectMethod, requireSession, sendJson } from '../../auth.js'
 import { getShareTtlMs } from '../../r2.js'
+import { UPLOAD_TOKEN_TTL_MS } from '../../sharePolicy.js'
 
 const sanitizeName = (value, fallback) => {
   const slug = String(value || '')
@@ -60,7 +61,9 @@ export default async function handler(req, res) {
       shareId,
       prefix,
       expiresAt,
-      token: createShareToken({ key: manifestKey, expiresAt }),
+      // 播放 token 绑定 manifest 对象；上传 token 绑定本次分享前缀，仅用于紧接着的写入。
+      token: createShareToken({ key: manifestKey, expiresAt, purpose: 'listen' }),
+      uploadToken: createShareToken({ key: prefix, expiresAt: Date.now() + UPLOAD_TOKEN_TTL_MS, purpose: 'upload' }),
       manifest: { key: manifestKey },
       audio,
     })

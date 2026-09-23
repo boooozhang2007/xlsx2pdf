@@ -1983,7 +1983,7 @@ const writeAnswerBlock = (paragraphs, title, answers, perLine = 10) => {
   paragraphs.push(buildAnswerTable(answers, perLine))
 }
 
-const groupRange = (groupIndex, group, groupSize = GROUP_SIZE) => {
+const groupRange = (groupIndex, group, groupSize = DEFAULT_LEGACY_GROUP_SIZE) => {
   const start = groupIndex * groupSize + 1
   return [start, start + group.length - 1]
 }
@@ -2108,11 +2108,11 @@ const generateMissingLetters = (questionParagraphs, answerParagraphs, group, gro
     questionParagraphs.push(paragraph(`${index + 1}. ${chars.join(' ')}${meaningSuffix}`, { keepLines: true }))
     answers.push([index + 1, entry.displayEnglish])
   })
-  writeAnswerBlock(answerParagraphs, `第${groupIndex + 1}组 四 缺字母填空 答案`, answers)
+  writeAnswerBlock(answerParagraphs, `第${groupIndex + 1}组 五 缺字母填空 答案`, answers)
 }
 
 const generateSynAntJudge = (questionParagraphs, answerParagraphs, group, groupIndex, context) => {
-  questionParagraphs.push(paragraph('五. Synonym & Antonym 同义反义词辨析', { bold: true, size: 12, spaceBefore: 6, spaceAfter: 4 }))
+  questionParagraphs.push(paragraph('六. Synonym & Antonym 同义反义词辨析', { bold: true, size: 12, spaceBefore: 6, spaceAfter: 4 }))
   questionParagraphs.push(paragraph('Write S (synonym 同义) or A (antonym 反义) for each pair. 每组单词括号内填写S或A。', { spaceAfter: 6 }))
   const synPairs = []
   const antPairs = []
@@ -2141,7 +2141,7 @@ const generateSynAntJudge = (questionParagraphs, answerParagraphs, group, groupI
     questionParagraphs.push(paragraph(text, { size: lineSize, keepLines: true }))
     answers.push([index + 1, pair[2]])
   })
-  writeAnswerBlock(answerParagraphs, `第${groupIndex + 1}组 五 同义反义辨析 答案`, answers)
+  writeAnswerBlock(answerParagraphs, `第${groupIndex + 1}组 六 同义反义辨析 答案`, answers)
 }
 
 const buildMatchingParagraphBlock = (pairs, rightWords, { columnBreakBefore = false } = {}) => {
@@ -2251,7 +2251,7 @@ const generateTrueFalse = (questionParagraphs, answerParagraphs, group, groupInd
     questionParagraphs.push(paragraph(`${index + 1}. (    ) ${isTrue ? tfTrue : tfFalse}`, { keepLines: true }))
     answers.push([index + 1, isTrue ? 'T' : 'F'])
   })
-  writeAnswerBlock(answerParagraphs, `第${groupIndex + 1}组 八 判断正误 答案`, answers)
+  writeAnswerBlock(answerParagraphs, `第${groupIndex + 1}组 九 判断正误 答案`, answers)
 }
 
 const createDocxParagraphs = (title) => [paragraph(title, { size: 16, bold: true, align: 'center', spaceAfter: 8 })]
@@ -2542,6 +2542,7 @@ const createFixedTestPaperFiles = async (groups, context) => {
     if (context.includeWordBank !== false) {
       questionParagraphs.push(paragraph(buildWordBankLine(group), { size: 11, spaceAfter: 8 }))
     }
+    // 测试卷按自身 1-8 大题顺序编号，与题型 key 里的 11 类编号（缺乱序拼写与两个翻译题）不同，属预期行为。
     generateTestPaperMatchingSection(questionParagraphs, group, context, answerGroups)
     generateTestPaperMultipleChoiceSection(questionParagraphs, group, groupIndex, context, answerGroups)
     generateTestPaperSynonymReplacementSection(questionParagraphs, groupIndex, context, answerGroups)
@@ -2822,8 +2823,8 @@ const createNonTranslationFiles = async (questionKey, groups, context) => {
     if (questionKey === '四_乱序拼写') generateScramble(questionParagraphs, answerParagraphs, group, groupIndex, context)
     if (questionKey === '五_缺字母填空') generateMissingLetters(questionParagraphs, answerParagraphs, group, groupIndex, context)
     if (questionKey === '六_同义反义辨析') generateSynAntJudge(questionParagraphs, answerParagraphs, group, groupIndex, context)
-    if (questionKey === '七_同义词匹配') generateMatchBlocks(questionParagraphs, answerParagraphs, group, groupIndex, context, 'synonym', '七. Synonym Matching 同义词匹配', '六 同义词匹配')
-    if (questionKey === '八_反义词匹配') generateMatchBlocks(questionParagraphs, answerParagraphs, group, groupIndex, context, 'antonym', '八. Antonym Matching 反义词匹配', '七 反义词匹配')
+    if (questionKey === '七_同义词匹配') generateMatchBlocks(questionParagraphs, answerParagraphs, group, groupIndex, context, 'synonym', '七. Synonym Matching 同义词匹配', '七 同义词匹配')
+    if (questionKey === '八_反义词匹配') generateMatchBlocks(questionParagraphs, answerParagraphs, group, groupIndex, context, 'antonym', '八. Antonym Matching 反义词匹配', '八 反义词匹配')
     if (questionKey === '九_判断正误') generateTrueFalse(questionParagraphs, answerParagraphs, group, groupIndex, context)
     if (COMPACT_GROUP_BLOCK_QUESTION_KEYS.has(questionKey) && context.questionsPerGroup <= 10) {
       const groupBlockEnd = questionParagraphs.length - 1

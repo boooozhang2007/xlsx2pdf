@@ -7,6 +7,7 @@ import {
   sendJson,
   verifySession,
 } from '../../auth.js'
+import { checkLoginAllowed, clearLoginFailures, recordLoginFailure } from '../../loginThrottle.js'
 
 const getAction = (req) => {
   const url = new URL(req.url, `https://${req.headers.host || 'localhost'}`)
@@ -15,10 +16,23 @@ const getAction = (req) => {
 
 const handleLogin = async (req, res) => {
   if (req.method !== 'POST') return rejectMethod(res, 'POST')
+
+  const allowed = await checkLoginAllowed(req.headers)
+  if (!allowed.allowed) {
+    res.setHeader('retry-after', String(allowed.retryAfterSeconds))
+    return sendJson(res, 429, {
+      ok: false,
+      error: `尝试次数过多，请 ${allowed.retryAfterSeconds} 秒后再试。`,
+    })
+  }
+
   const { password } = await readJsonBody(req)
   if (!comparePassword(password || '')) {
+    await recordLoginFailure(req.headers)
     return sendJson(res, 401, { ok: false, error: '访问密码不正确。' })
   }
+
+  await clearLoginFailures(req.headers)
   res.setHeader('set-cookie', createSessionCookie())
   return sendJson(res, 200, { ok: true })
 }

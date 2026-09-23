@@ -265,14 +265,33 @@ const drawTemplatePage = (page, {
   })
 }
 
+// STSong.ttf 约 11.7MB，缓存抓取结果避免每次导出都重新下载。
+let templateAssetsPromise = null
+
+const loadTemplateAssets = async () => {
+  if (!templateAssetsPromise) {
+    templateAssetsPromise = Promise.all([
+      fetch('/STSong.ttf').then((res) => {
+        if (!res.ok) throw new Error('无法读取 STSong.ttf')
+        return res.arrayBuffer()
+      }),
+      fetch('/fourline.png').then((res) => {
+        if (!res.ok) throw new Error('无法读取 fourline.png')
+        return res.arrayBuffer()
+      }),
+    ]).catch((error) => {
+      templateAssetsPromise = null
+      throw error
+    })
+  }
+  return templateAssetsPromise
+}
+
 export const createPdfFromRows = async (rows, config, inputFileName = 'example.xlsx') => {
   const pdfDoc = await PDFDocument.create()
   pdfDoc.registerFontkit(fontkit)
 
-  const [cjkBytes, gridBytes] = await Promise.all([
-    fetch('/STSong.ttf').then((res) => res.arrayBuffer()),
-    fetch('/fourline.png').then((res) => res.arrayBuffer()),
-  ])
+  const [cjkBytes, gridBytes] = await loadTemplateAssets()
 
   const cjkFont = await pdfDoc.embedFont(cjkBytes, { subset: true })
   const enFont = await pdfDoc.embedFont(StandardFonts.Helvetica)
