@@ -9,6 +9,7 @@ import shareUploadHandler from '../../../server/handlers/share/upload.js'
 import shareFinalizeHandler from '../../../server/handlers/share/finalize.js'
 import azureHandler from '../../../server/handlers/tts/azure.js'
 import edgeHandler from '../../../server/handlers/tts/edge.js'
+import rimeHandler from '../../../server/handlers/tts/rime.js'
 import voicesHandler from '../../../server/handlers/tts/voices.js'
 import { runNodeHandler } from '../../../server/nitroAdapter.js'
 
@@ -24,6 +25,7 @@ const handlers = new Map([
   ['/api/share/finalize', shareFinalizeHandler],
   ['/api/tts/azure', azureHandler],
   ['/api/tts/edge', edgeHandler],
+  ['/api/tts/rime', rimeHandler],
   ['/api/tts/voices', voicesHandler],
 ])
 

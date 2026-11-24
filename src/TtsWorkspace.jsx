@@ -47,6 +47,11 @@ const readFileAsArrayBuffer = (file) =>
   })
 
 const defaultVoices = {
+  rime: [
+    { id: 'celeste', name: 'Celeste · US · Female', accent: 'us', provider: 'rime' },
+    { id: 'astra', name: 'Astra · US · Female', accent: 'us', provider: 'rime' },
+    { id: 'albion', name: 'Albion · GB · Male', accent: 'gb', provider: 'rime' },
+  ],
   edge: [
     { id: 'en-US-JennyNeural', name: 'Jenny · US · Female', accent: 'us', provider: 'edge' },
     { id: 'en-GB-SoniaNeural', name: 'Sonia · UK · Female', accent: 'gb', provider: 'edge' },
@@ -59,7 +64,23 @@ const defaultVoices = {
   ],
 }
 
-const getAudioEndpoint = (provider) => (provider === 'edge' ? '/api/tts/edge' : '/api/tts/azure')
+const getAudioEndpoint = (provider) => {
+  if (provider === 'edge') return '/api/tts/edge'
+  if (provider === 'rime') return '/api/tts/rime'
+  return '/api/tts/azure'
+}
+
+const voiceConfigKey = (provider) => {
+  if (provider === 'edge') return 'edgeVoice'
+  if (provider === 'rime') return 'rimeVoice'
+  return 'azureVoice'
+}
+
+const providerLabel = (provider) => {
+  if (provider === 'edge') return 'Edge-TTS'
+  if (provider === 'rime') return 'Rime'
+  return 'Azure'
+}
 
 const pad3 = (value) => String(Math.max(1, Number.parseInt(value, 10) || 1)).padStart(3, '0')
 
@@ -241,7 +262,7 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
   const [voices, setVoices] = useState(defaultVoices)
   const [config, setConfig] = useState(DEFAULT_TTS_CONFIG)
   const [wordText, setWordText] = useState('')
-  const [status, setStatus] = useState('输入访问密码后即可使用 Edge TTS。')
+  const [status, setStatus] = useState('输入访问密码后即可使用 Rime 朗读。')
   const [audioItems, setAudioItems] = useState([])
   const [busy, setBusy] = useState(false)
   const [qrUrl, setQrUrl] = useState('')
@@ -270,7 +291,7 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
     })
   }, [batches])
   const currentVoiceList = (voices[config.provider] || []).filter((voice) => voice.accent === config.accent)
-  const currentVoice = config.provider === 'edge' ? config.edgeVoice : config.azureVoice
+  const currentVoice = config[voiceConfigKey(config.provider)]
   const isEdge = isEdgeBrowser()
   const safeSelectedAudioIndex = audioItems.length ? Math.min(selectedAudioIndex, audioItems.length - 1) : 0
   const selectedAudioItem = audioItems[safeSelectedAudioIndex] || null
@@ -328,8 +349,8 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
     if (!authenticated) return
     apiJson('/api/tts/voices')
       .then((data) => {
-        setVoices({ azure: data.azure || defaultVoices.azure, edge: data.edge || defaultVoices.edge })
-        setStatus('已载入音色列表，Edge-TTS 为默认生成通道。')
+        setVoices({ rime: data.rime || defaultVoices.rime, azure: data.azure || defaultVoices.azure, edge: data.edge || defaultVoices.edge })
+        setStatus('已载入音色列表，Rime 为默认生成通道。')
       })
       .catch((err) => setStatus(`音色列表读取失败，使用内置音色：${err.message}`))
   }, [authenticated])
@@ -343,7 +364,7 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
 
   useEffect(() => {
     if (!currentVoiceList.length) return
-    const key = config.provider === 'edge' ? 'edgeVoice' : 'azureVoice'
+    const key = voiceConfigKey(config.provider)
     if (!currentVoiceList.some((voice) => voice.id === config[key])) {
       setConfig((current) => ({ ...current, [key]: currentVoiceList[0].id }))
     }
@@ -642,9 +663,9 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
     pauseMs: config.pauseMs,
   })
 
-  const generateEdgeBatch = async (batch, index) => {
+  const generateSegmentedBatch = async (batch, index, provider) => {
     const meta = batchMetas[index] || buildBatchMeta(batch, index)
-    const data = await apiJson('/api/tts/edge', {
+    const data = await apiJson(getAudioEndpoint(provider), {
       method: 'POST',
       body: JSON.stringify({ ...buildPayload(batch), segmented: true }),
     })
@@ -656,7 +677,7 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
         blob,
       }
     })
-    if (!segments.length) throw new Error('Edge-TTS 未返回可播放片段。')
+    if (!segments.length) throw new Error(`${providerLabel(provider)} 未返回可播放片段。`)
     const blob = await mergeSegmentBlobsToMp3(segments, config.pauseMs)
     return {
       id: `${Date.now()}-${index}`,
@@ -665,14 +686,25 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
       words: batch,
       label: meta.title,
       ...meta,
-      provider: 'edge',
+      provider,
       pauseMs: config.pauseMs,
       edgeSegmentCount: segments.length,
     }
   }
 
+  const generateEdgeBatch = (batch, index) => generateSegmentedBatch(batch, index, 'edge')
+
   const generateBatch = async (batch, index) => {
     if (config.provider === 'edge') return generateEdgeBatch(batch, index)
+    if (config.provider === 'rime') {
+      try {
+        return await generateSegmentedBatch(batch, index, 'rime')
+      } catch (error) {
+        // Rime 额度不足或上游异常时自动回退 Edge-TTS，保证生成可用。
+        console.warn('Rime 生成失败，自动回退 Edge-TTS：', error)
+        return generateEdgeBatch(batch, index)
+      }
+    }
 
     const meta = batchMetas[index] || buildBatchMeta(batch, index)
     try {
@@ -987,7 +1019,8 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
             <span>朗读设置</span>
           </div>
           <SelectField label="生成通道" value={config.provider} onChange={(provider) => updateTtsConfig({ provider })}>
-            <option value="edge">Edge-TTS（默认）</option>
+            <option value="rime">Rime（默认）</option>
+            <option value="edge">Edge-TTS</option>
             <option value="azure">Azure API</option>
           </SelectField>
           <SelectField label="英/美音" value={config.accent} onChange={(accent) => updateTtsConfig({ accent })}>
@@ -997,7 +1030,7 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
           <SelectField
             label="朗读者音色"
             value={currentVoice}
-            onChange={(voice) => updateTtsConfig(config.provider === 'edge' ? { edgeVoice: voice } : { azureVoice: voice })}
+            onChange={(voice) => updateTtsConfig({ [voiceConfigKey(config.provider)]: voice })}
           >
             {currentVoiceList.map((voice) => (
               <option key={voice.id} value={voice.id}>
@@ -1291,7 +1324,7 @@ function TtsWorkspace({ rows, loadWorkbook, fileName, activeSheetName }) {
                       <strong>{item.title || '单词朗读'}</strong>
                       <span>
                         {item.firstWord && item.lastWord ? `${item.firstWord} → ${item.lastWord} · ` : ''}
-                        {item.totalWords || 0} 词 · {item.batchCount || item.itemCount || 0} 批次 · {item.provider === 'edge' ? 'Edge-TTS' : 'Azure'}
+                        {item.totalWords || 0} 词 · {item.batchCount || item.itemCount || 0} 批次 · {providerLabel(item.provider)}
                       </span>
                       <small>
                         {new Date(item.createdAt || item.updatedAt || Date.now()).toLocaleString('zh-CN')}

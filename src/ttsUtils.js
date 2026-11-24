@@ -1,8 +1,9 @@
 export const DEFAULT_TTS_CONFIG = {
-  provider: 'edge',
+  provider: 'rime',
   accent: 'us',
   azureVoice: 'en-US-JennyNeural',
   edgeVoice: 'en-US-JennyNeural',
+  rimeVoice: 'celeste',
   rate: 0,
   pauseMs: 800,
   batchSize: 30,

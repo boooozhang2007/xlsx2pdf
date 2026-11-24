@@ -292,7 +292,7 @@ function App() {
       mockRight: (row) => row.chinese || '—',
     },
     tts: {
-      pill: 'Edge TTS + 手机二维码播放',
+      pill: 'Rime TTS + 手机二维码播放',
       title: '生成单词朗读音频。',
       description: '粘贴或导入词表，选择英/美音、速度、音色和停顿，生成可试听 MP3，并用二维码在手机播放。',
       mockTitle: 'Audio batches',

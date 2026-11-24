@@ -21,7 +21,7 @@
 - `/tts` 进入受访问密码保护的朗读板块
 - 支持粘贴单词、从 XLSX 导入、复用当前词表英文列
 - 支持美音/英音、朗读速度、朗读者音色、单词间停顿、单批单词数量
-- Azure Speech TTS 为优先生成通道，Edge-TTS Node 函数为备用通道；Edge-TTS 会按片段生成并在播放器/手机播放页用自定义延迟模拟停顿
+- Rime（Coda）为优先生成通道，Edge-TTS 为备用通道，Azure Speech 为第三通道；Rime 与 Edge-TTS 都按片段生成并在播放器/手机播放页用自定义延迟模拟停顿
 - 检测 Microsoft Edge 后可用 Web Speech API 做本机试听 fallback（不导出本机 Edge 音频）
 - 支持在线播放、下载 MP3、上传到 Cloudflare R2 后生成手机播放二维码
 - `/listen?token=...` 为移动端适配播放页，支持保存到当前设备播放库、复制长期链接、逐段下载
@@ -62,6 +62,7 @@ npm run build
 ```text
 TTS_ACCESS_PASSWORD=访问密码
 TTS_SESSION_SECRET=用于签名会话 cookie 的长随机字符串
+RIME_API_KEY=Rime API token（https://app.rime.ai/tokens/）
 AZURE_SPEECH_KEY=Azure Speech 资源密钥
 AZURE_SPEECH_REGION=Azure Speech 区域，例如 eastus
 VIVI_LLM_API_KEY=练习生成所用 LLM API key
@@ -126,7 +127,7 @@ npx vercel
 - `src/GenWorkspace.jsx`：受保护的练习生成工作台
 - `src/MobileListenPage.jsx`：手机播放页面
 - `workflows/`：服务端练习生成 Workflow
-- `server/handlers/`：Nitro 内部 API handlers，包含认证、Azure TTS、Edge-TTS 和 R2 分享签名
+- `server/handlers/`：Nitro 内部 API handlers，包含认证、Rime TTS、Edge-TTS、Azure TTS 和 R2 分享签名
 - `server/`：API 与 Workflow 复用的认证、生成、TTS、R2 工具
 - `src/pdf.js`：使用 `pdf-lib` 生成 PDF
 - `src/utils.js`：单元格读取、列号转换、文本换行等工具
